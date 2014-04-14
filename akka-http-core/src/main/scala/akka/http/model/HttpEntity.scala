@@ -9,7 +9,8 @@ import java.io.File
 import org.reactivestreams.api.Producer
 import scala.collection.immutable
 import akka.util.ByteString
-import waves.StreamProducer
+import waves.{ Flow, StreamProducer }
+import akka.actor.ActorRefFactory
 
 /**
  * Models the entity (aka "body" or "content) of an HTTP message.
@@ -24,6 +25,11 @@ sealed trait HttpEntity extends japi.HttpEntity {
    * The `ContentType` associated with this entity.
    */
   def contentType: ContentType
+
+  /**
+   * A stream of the data of this entity.
+   */
+  def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString]
 }
 
 object HttpEntity {
@@ -67,6 +73,8 @@ object HttpEntity {
                      data: Producer[ByteString]) extends Regular with japi.HttpEntityDefault {
     require(contentLength >= 0, "contentLength must be non-negative")
     def isKnownEmpty = contentLength == 0
+
+    def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString] = data
   }
 
   /**
@@ -76,6 +84,8 @@ object HttpEntity {
    */
   case class CloseDelimited(contentType: ContentType, data: Producer[ByteString]) extends HttpEntity with japi.HttpEntityCloseDelimited {
     def isKnownEmpty = data eq StreamProducer.EmptyProducer
+
+    def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString] = data
   }
 
   /**
@@ -83,6 +93,8 @@ object HttpEntity {
    */
   case class Chunked(contentType: ContentType, chunks: Producer[ChunkStreamPart]) extends Regular with japi.HttpEntityChunked {
     def isKnownEmpty = chunks eq StreamProducer.EmptyProducer
+    def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString] =
+      Flow(chunks).map(_.data).toProducer
 
     // Java API
     def getChunks: Producer[japi.ChunkStreamPart] = chunks.asInstanceOf[Producer[japi.ChunkStreamPart]]
