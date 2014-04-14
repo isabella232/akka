@@ -30,6 +30,9 @@ sealed trait HttpEntity extends japi.HttpEntity {
    * A stream of the data of this entity.
    */
   def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString]
+
+  // Java API
+  def getDataBytes(refFactory: ActorRefFactory): Producer[ByteString] = dataBytes(refFactory)
 }
 
 object HttpEntity {
