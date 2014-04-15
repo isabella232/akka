@@ -1,6 +1,6 @@
 package akka.http.model.japi;
 
-public interface HttpResponseBuilder {
+public interface HttpResponseBuilder extends HttpEntityRegularBuilder<HttpResponseBuilder> {
     HttpResponse build();
 
     HttpResponseBuilder protocol(HttpProtocol protocol);

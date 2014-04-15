@@ -18,6 +18,7 @@ public class JAPIPlayground {
     public HttpResponse handleRequest(HttpRequest request) {
         return
             HttpResponse()
+                .entity("Not found")
                 .status(404)
                 .build();
     }

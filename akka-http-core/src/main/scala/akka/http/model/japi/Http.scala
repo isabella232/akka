@@ -6,11 +6,13 @@ import java.lang.Iterable
 import akka.http.{ model ⇒ sc }
 import akka.http.model.HttpMethods
 import scala.reflect.ClassTag
+import akka.util.ByteString
+import java.io.File
 
 object Http {
   def HttpRequest(): HttpRequestBuilder = HttpRequest(sc.HttpRequest())
   def HttpRequest(request: HttpRequest): HttpRequestBuilder =
-    new HttpRequestBuilder with CommonBuilder {
+    new HttpRequestBuilder with CommonBuilder[HttpRequestBuilder] {
       protected def initialProtocol: HttpProtocol = request.protocol
       protected def initialHeaders: Iterable[HttpHeader] = request.getHeaders
 
@@ -18,7 +20,7 @@ object Http {
       var uri: sc.Uri = cast[sc.Uri](request.uri)
       var entity: sc.HttpEntity.Regular = cast[sc.HttpEntity.Regular](request.entity)
 
-      def entity(entity: HttpEntity): HttpRequestBuilder = {
+      def entity(entity: HttpEntityRegular): HttpRequestBuilder = {
         this.entity = cast[sc.HttpEntity.Regular](entity)
         this
       }
@@ -38,7 +40,7 @@ object Http {
 
   def HttpResponse(): HttpResponseBuilder = HttpResponse(sc.HttpResponse())
   def HttpResponse(response: HttpResponse): HttpResponseBuilder =
-    new HttpResponseBuilder with CommonBuilder {
+    new HttpResponseBuilder with CommonBuilder[HttpResponseBuilder] {
       protected def initialProtocol: HttpProtocol = response.protocol
       protected def initialHeaders: Iterable[HttpHeader] = response.getHeaders
 
@@ -54,14 +56,16 @@ object Http {
         this.entity = cast[sc.HttpEntity](entity)
         this
       }
+      protected def entity(e: HttpEntityRegular): HttpResponseBuilder = entity(e: HttpEntity)
 
       def build(): HttpResponse =
         sc.HttpResponse(status, headers.toList, entity, protocol)
     }
 
-  private trait CommonBuilder {
+  private trait CommonBuilder[T] extends HttpEntityRegularBuilder[T] {
     protected def initialHeaders: Iterable[HttpHeader]
     protected def initialProtocol: HttpProtocol
+    protected def entity(entity: HttpEntityRegular): T
 
     var protocol: sc.HttpProtocol = cast[sc.HttpProtocol](initialProtocol)
     var headers = ListBuffer.empty[sc.HttpHeader]
@@ -82,10 +86,30 @@ object Http {
       this.protocol = cast[sc.HttpProtocol](protocol)
       this
     }
+
+    def entity(string: String): T = entity(HttpEntity(string))
+    def entity(bytes: Array[Byte]): T = entity(HttpEntity(bytes))
+    def entity(bytes: ByteString): T = entity(HttpEntity(bytes))
+    def entity(contentType: ContentType, string: String): T = entity(HttpEntity(contentType, string))
+    def entity(contentType: ContentType, bytes: Array[Byte]): T = entity(HttpEntity(contentType, bytes))
+    def entity(contentType: ContentType, bytes: ByteString): T = entity(HttpEntity(contentType, bytes))
+    def entity(contentType: ContentType, file: File): T = entity(HttpEntity(contentType, file))
   }
 
   def Uri(uri: String): Uri = Uri(uri)
   def StatusCode(code: Int): StatusCode = sc.StatusCode.int2StatusCode(code)
+
+  def HttpEntity(string: String): HttpEntityRegular = sc.HttpEntity(string)
+  def HttpEntity(bytes: Array[Byte]): HttpEntityRegular = sc.HttpEntity(bytes)
+  def HttpEntity(bytes: ByteString): HttpEntityRegular = sc.HttpEntity(bytes)
+  def HttpEntity(contentType: ContentType, string: String): HttpEntityRegular =
+    sc.HttpEntity(cast[sc.ContentType](contentType), string)
+  def HttpEntity(contentType: ContentType, bytes: Array[Byte]): HttpEntityRegular =
+    sc.HttpEntity(cast[sc.ContentType](contentType), bytes)
+  def HttpEntity(contentType: ContentType, bytes: ByteString): HttpEntityRegular =
+    sc.HttpEntity(cast[sc.ContentType](contentType), bytes)
+  def HttpEntity(contentType: ContentType, file: File): HttpEntityRegular =
+    sc.HttpEntity(cast[sc.ContentType](contentType), file)
 
   def cast[T](obj: AnyRef)(implicit classTag: ClassTag[T]): T =
     try classTag.runtimeClass.cast(obj).asInstanceOf[T]
