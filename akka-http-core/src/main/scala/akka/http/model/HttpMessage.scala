@@ -13,7 +13,7 @@ import headers._
 /**
  * Common base class of HttpRequest and HttpResponse.
  */
-sealed abstract class HttpMessage {
+sealed abstract class HttpMessage extends japi.HttpMessage {
   type Self <: HttpMessage
 
   def isRequest: Boolean
@@ -60,7 +60,7 @@ sealed abstract class HttpMessage {
   }
 
   /** Returns the first header of the given type if there is one */
-  def header[T <: HttpHeader: ClassTag]: Option[T] = {
+  def header[T <: japi.HttpHeader: ClassTag]: Option[T] = {
     val erasure = classTag[T].runtimeClass
     headers.find(erasure.isInstance).asInstanceOf[Option[T]]
   }
@@ -71,6 +71,11 @@ sealed abstract class HttpMessage {
    * - HttpResponse and the server will close the connection after this response
    */
   def connectionCloseExpected: Boolean = HttpMessage.connectionCloseExpected(protocol, header[Connection])
+
+  // Java API
+  import collection.JavaConverters._
+  def getHeaders: java.lang.Iterable[japi.HttpHeader] = (headers: immutable.Seq[japi.HttpHeader]).asJava
+  def getHeader[T <: japi.HttpHeader](headerClass: Class[T]): akka.japi.Option[T] = header(ClassTag(headerClass))
 }
 
 object HttpMessage {
@@ -88,7 +93,7 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
                        uri: Uri = Uri./,
                        headers: immutable.Seq[HttpHeader] = Nil,
                        entity: HttpEntity.Regular = HttpEntity.Empty,
-                       protocol: HttpProtocol = HttpProtocols.`HTTP/1.1`) extends HttpMessage {
+                       protocol: HttpProtocol = HttpProtocols.`HTTP/1.1`) extends HttpMessage with japi.HttpRequest {
   require(!uri.isEmpty, "An HttpRequest must not have an empty Uri")
 
   type Self = HttpRequest
@@ -261,7 +266,7 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
 case class HttpResponse(status: StatusCode = StatusCodes.OK,
                         headers: immutable.Seq[HttpHeader] = Nil,
                         entity: HttpEntity = HttpEntity.Empty,
-                        protocol: HttpProtocol = HttpProtocols.`HTTP/1.1`) extends HttpMessage {
+                        protocol: HttpProtocol = HttpProtocols.`HTTP/1.1`) extends HttpMessage with japi.HttpResponse {
   type Self = HttpResponse
 
   def isRequest = false

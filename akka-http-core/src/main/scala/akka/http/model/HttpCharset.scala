@@ -38,7 +38,7 @@ object HttpCharsetRange {
 }
 
 case class HttpCharset private[http] (override val value: String)(val aliases: immutable.Seq[String])
-  extends SingletonValueRenderable with WithQValue[HttpCharsetRange] {
+  extends SingletonValueRenderable with WithQValue[HttpCharsetRange] with japi.HttpCharset {
   @transient private[this] var _nioCharset: Charset = Charset.forName(value)
   def nioCharset: Charset = _nioCharset
 

@@ -24,7 +24,7 @@ object ContentTypeRange {
   implicit def apply(mediaRange: MediaRange): ContentTypeRange = apply(mediaRange, HttpCharsetRange.`*`)
 }
 
-case class ContentType(mediaType: MediaType, definedCharset: Option[HttpCharset]) extends ValueRenderable {
+case class ContentType(mediaType: MediaType, definedCharset: Option[HttpCharset]) extends ValueRenderable with japi.ContentType {
   def render[R <: Rendering](r: R): r.type = definedCharset match {
     case Some(cs) ⇒ r ~~ mediaType ~~ ContentType.`; charset=` ~~ cs
     case _        ⇒ r ~~ mediaType
@@ -40,6 +40,9 @@ case class ContentType(mediaType: MediaType, definedCharset: Option[HttpCharset]
     if (noCharsetDefined || charset != definedCharset.get) copy(definedCharset = Some(charset)) else this
   def withoutDefinedCharset =
     if (isCharsetDefined) copy(definedCharset = None) else this
+
+  // Java API
+  def getDefinedCharset: japi.HttpCharset = definedCharset.getOrElse(null)
 }
 
 object ContentType {

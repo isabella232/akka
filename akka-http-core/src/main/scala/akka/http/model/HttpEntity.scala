@@ -14,7 +14,7 @@ import waves.StreamProducer
 /**
  * Models the entity (aka "body" or "content) of an HTTP message.
  */
-sealed trait HttpEntity {
+sealed trait HttpEntity extends japi.HttpEntity {
   /**
    * Determines whether this entity is known to be empty.
    */
@@ -64,7 +64,7 @@ object HttpEntity {
    */
   case class Default(contentType: ContentType,
                      contentLength: Long,
-                     data: Producer[ByteString]) extends Regular {
+                     data: Producer[ByteString]) extends Regular with japi.HttpEntityDefault {
     require(contentLength >= 0, "contentLength must be non-negative")
     def isKnownEmpty = contentLength == 0
   }
@@ -74,22 +74,25 @@ object HttpEntity {
    * The content-length of such responses is unknown at the time the response headers have been received.
    * Note that this type of HttpEntity cannot be used for HttpRequests!
    */
-  case class CloseDelimited(contentType: ContentType, data: Producer[ByteString]) extends HttpEntity {
+  case class CloseDelimited(contentType: ContentType, data: Producer[ByteString]) extends HttpEntity with japi.HttpEntityCloseDelimited {
     def isKnownEmpty = data eq StreamProducer.EmptyProducer
   }
 
   /**
    * The model for the entity of a chunked HTTP message (with `Transfer-Encoding: chunked`).
    */
-  case class Chunked(contentType: ContentType, chunks: Producer[ChunkStreamPart]) extends Regular {
+  case class Chunked(contentType: ContentType, chunks: Producer[ChunkStreamPart]) extends Regular with japi.HttpEntityChunked {
     def isKnownEmpty = chunks eq StreamProducer.EmptyProducer
+
+    // Java API
+    def getChunks: Producer[japi.ChunkStreamPart] = chunks.asInstanceOf[Producer[japi.ChunkStreamPart]]
   }
 
   /**
    * An element of the HttpEntity data stream.
    * Can be either a `Chunk` or a `LastChunk`.
    */
-  sealed trait ChunkStreamPart {
+  sealed trait ChunkStreamPart extends japi.ChunkStreamPart {
     def data: ByteString
     def extension: String
     def isLastChunk: Boolean

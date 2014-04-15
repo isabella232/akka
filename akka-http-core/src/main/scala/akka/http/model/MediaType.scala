@@ -137,7 +137,7 @@ sealed abstract case class MediaType private[http] (value: String)(val mainType:
                                                                    val binary: Boolean,
                                                                    val fileExtensions: immutable.Seq[String],
                                                                    val parameters: Map[String, String])
-  extends LazyValueBytesRenderable with WithQValue[MediaRange] {
+  extends LazyValueBytesRenderable with WithQValue[MediaRange] with japi.MediaType {
   def isApplication = false
   def isAudio = false
   def isImage = false
