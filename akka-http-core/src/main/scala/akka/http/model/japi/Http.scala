@@ -149,6 +149,9 @@ object Http {
       u.withPath(newPath)
     }
 
+    def fragment(fragment: Option[String]): UriBuilder = t(_.copy(fragment = fragment))
+    def fragment(fragment: String): UriBuilder = t(_.withFragment(fragment))
+
     def build(): Uri = JavaUri(uri)
   }
   def Uri(uri: String): Uri = Uri(model.Uri(uri))
@@ -184,6 +187,8 @@ object Http {
     def parameter(key: String): Option[String] = uri.query.get(key)
 
     case class Param(key: String, value: String) extends japi.Uri.Parameter
+
+    def fragment: Option[String] = uri.fragment
   }
 
   def Uri(uri: model.Uri): Uri = JavaUri(uri)

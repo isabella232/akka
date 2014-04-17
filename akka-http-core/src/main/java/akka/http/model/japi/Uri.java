@@ -33,5 +33,5 @@ public interface Uri {
         String value();
     }
 
-    //Option<String> getFragment();
+    Option<String> fragment();
 }

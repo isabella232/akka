@@ -1,5 +1,7 @@
 package akka.http.model.japi;
 
+import akka.japi.Option;
+
 public interface UriBuilder {
     UriBuilder scheme(String scheme);
 
@@ -14,6 +16,9 @@ public interface UriBuilder {
     UriBuilder toRelative();
 
     UriBuilder addParameter(String key, String value);
+
+    UriBuilder fragment(String fragment);
+    UriBuilder fragment(Option<String> fragment);
 
     Uri build();
 }
