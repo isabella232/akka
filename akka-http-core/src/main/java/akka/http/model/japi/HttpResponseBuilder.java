@@ -9,4 +9,5 @@ public interface HttpResponseBuilder extends HttpEntityRegularBuilder<HttpRespon
     HttpResponseBuilder entity(HttpEntity entity);
     HttpResponseBuilder addHeader(HttpHeader header);
     HttpResponseBuilder addHeaders(Iterable<HttpHeader> headers);
+    HttpResponseBuilder removeHeader(String headerName);
 }

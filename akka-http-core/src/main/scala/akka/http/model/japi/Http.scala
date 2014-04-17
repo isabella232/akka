@@ -87,6 +87,11 @@ object Http {
       this.headers += cast[model.HttpHeader](header)
       this
     }
+    def removeHeader(headerName: String): this.type = {
+      val lowerHeaderName = headerName.toLowerCase()
+      this.headers = this.headers.filterNot(_.is(lowerHeaderName))
+      this
+    }
 
     def protocol(protocol: HttpProtocol): this.type = {
       this.protocol = cast[model.HttpProtocol](protocol)

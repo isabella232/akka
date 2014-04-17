@@ -8,6 +8,8 @@ public interface HttpRequestBuilder extends HttpEntityRegularBuilder<HttpRequest
     HttpRequestBuilder uri(Uri relativeUri);
     HttpRequestBuilder uri(String path);
     HttpRequestBuilder entity(HttpEntityRegular entity);
+
     HttpRequestBuilder addHeader(HttpHeader header);
     HttpRequestBuilder addHeaders(Iterable<HttpHeader> headers);
+    HttpRequestBuilder removeHeader(String headerName);
 }

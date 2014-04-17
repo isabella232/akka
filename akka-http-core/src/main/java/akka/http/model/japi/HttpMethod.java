@@ -4,6 +4,7 @@ import akka.http.model.HttpMethods;
 
 public interface HttpMethod {
     String value();
+
     boolean isSafe();
     boolean isIdempotent();
     boolean isEntityAccepted();
