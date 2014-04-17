@@ -76,6 +76,10 @@ sealed abstract class HttpMessage extends japi.HttpMessage {
   import collection.JavaConverters._
   def getHeaders: java.lang.Iterable[japi.HttpHeader] = (headers: immutable.Seq[japi.HttpHeader]).asJava
   def getHeader[T <: japi.HttpHeader](headerClass: Class[T]): akka.japi.Option[T] = header(ClassTag(headerClass))
+  def getHeader(headerName: String): akka.japi.Option[japi.HttpHeader] = {
+    val lowerCased = headerName.toLowerCase
+    headers.find(_.is(lowerCased))
+  }
 }
 
 object HttpMessage {
