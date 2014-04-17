@@ -7,6 +7,7 @@ import akka.util.ByteString
 import org.reactivestreams.api.{ Processor, Producer, Consumer }
 import java.net.InetSocketAddress
 import akka.actor._
+import scala.util.control.NoStackTrace
 import scala.collection._
 import scala.concurrent.duration.FiniteDuration
 import akka.io.Inet.SocketOption
@@ -51,6 +52,8 @@ object StreamTcp extends ExtensionId[StreamTcpExt] with ExtensionIdProvider {
                   options: immutable.Traversable[SocketOption] = Nil,
                   settings: MaterializerSettings)
 
+  case object BindFailedException extends RuntimeException with NoStackTrace
+  case object UnbindFailedException extends RuntimeException with NoStackTrace
 }
 
 /**
