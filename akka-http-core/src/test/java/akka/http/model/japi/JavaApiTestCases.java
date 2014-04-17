@@ -7,13 +7,13 @@ public class JavaApiTestCases {
     public static HttpRequest buildRequest() {
         return
             HttpRequest()
-                .method(HttpMethod.POST)
+                .method(HttpMethods.POST)
                 .uri("/send")
                 .build();
     }
     /** A simple handler for an Http server */
     public static HttpResponse handleRequest(HttpRequest request) {
-        if (request.method() == HttpMethod.GET) {
+        if (request.method() == HttpMethods.GET) {
             Uri uri = request.getUri();
             if (uri.path().equals("/hello")) {
                 String name = uri.parameter("name").getOrElse("Mister X");
@@ -32,7 +32,7 @@ public class JavaApiTestCases {
             return
                 HttpResponse()
                     .entity("Unsupported method")
-                    .status(405)
+                    .status(StatusCodes.MethodNotAllowed)
                     .build();
     }
     /** Adds authentication to an existing request */

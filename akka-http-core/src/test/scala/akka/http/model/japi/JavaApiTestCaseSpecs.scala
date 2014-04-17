@@ -34,7 +34,7 @@ class JavaApiTestCaseSpecs extends FreeSpec with MustMatchers {
         }
       }
     }
-    "addAuthentication" in {
+    "addAuthentication" in pendingUntilFixed {
       JavaApiTestCases.addAuthentication(model.HttpRequest()) must be(
         model.HttpRequest(headers = immutable.Seq(model.headers.Authorization(BasicHttpCredentials("username", "password")))))
     }
