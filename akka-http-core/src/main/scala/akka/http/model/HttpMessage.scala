@@ -258,6 +258,9 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
       case _                     ⇒ throw new IllegalArgumentException("entity must be HttpEntity.Regular")
     }
     else this
+
+  // Java API
+  def getUri: japi.Uri = japi.Http.Uri(uri)
 }
 
 /**

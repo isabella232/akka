@@ -21,7 +21,7 @@ import Uri._
  * All members of this class represent the *decoded* URI elements (i.e. without percent-encoding).
  */
 sealed abstract case class Uri(scheme: String, authority: Authority, path: Path, query: Query,
-                               fragment: Option[String]) extends japi.Uri {
+                               fragment: Option[String]) {
 
   def isAbsolute: Boolean = !isRelative
   def isRelative: Boolean = scheme.isEmpty
