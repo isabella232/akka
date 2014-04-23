@@ -108,6 +108,7 @@ object Http {
   }
 
   def UriBuilder(): UriBuilder = UriBuilder(JavaUri(model.Uri()))
+  def UriBuilder(uri: String): UriBuilder = UriBuilder(Uri(uri))
   def UriBuilder(reference: Uri): UriBuilder = new UriBuilder {
     var uri = cast[JavaUri](reference).uri
 
@@ -168,7 +169,6 @@ object Http {
 
     def path(): String = uri.path.toString
     def pathSegments(): Iterable[String] = {
-
       import model.Uri.Path
       import Path._
       def gatherSegments(path: Path): List[String] = path match {
