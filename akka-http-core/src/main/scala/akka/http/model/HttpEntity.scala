@@ -33,6 +33,12 @@ sealed trait HttpEntity extends japi.HttpEntity {
 
   // Java API
   def getDataBytes(refFactory: ActorRefFactory): Producer[ByteString] = dataBytes(refFactory)
+
+  // default implementations, should be overridden
+  def isCloseDelimited: Boolean = false
+  def isDefault: Boolean = false
+  def isChunked: Boolean = false
+  def isRegular: Boolean = false
 }
 
 object HttpEntity {
@@ -63,7 +69,9 @@ object HttpEntity {
    * it is either chunked or defines a content-length that is known a-priori.
    * Close-delimited entities are not `Regular` as they exists primarily for backwards compatibility with HTTP/1.0.
    */
-  sealed trait Regular extends HttpEntity with japi.HttpEntityRegular
+  sealed trait Regular extends HttpEntity with japi.HttpEntityRegular {
+    override def isRegular: Boolean = true
+  }
 
   // TODO: re-establish serializability
   // TODO: equal/hashcode ?
@@ -76,6 +84,7 @@ object HttpEntity {
                      data: Producer[ByteString]) extends Regular with japi.HttpEntityDefault {
     require(contentLength >= 0, "contentLength must be non-negative")
     def isKnownEmpty = contentLength == 0
+    override def isDefault: Boolean = true
 
     def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString] = data
   }
@@ -87,6 +96,7 @@ object HttpEntity {
    */
   case class CloseDelimited(contentType: ContentType, data: Producer[ByteString]) extends HttpEntity with japi.HttpEntityCloseDelimited {
     def isKnownEmpty = data eq StreamProducer.EmptyProducer
+    override def isCloseDelimited: Boolean = true
 
     def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString] = data
   }
@@ -96,6 +106,7 @@ object HttpEntity {
    */
   case class Chunked(contentType: ContentType, chunks: Producer[ChunkStreamPart]) extends Regular with japi.HttpEntityChunked {
     def isKnownEmpty = chunks eq StreamProducer.EmptyProducer
+    override def isChunked: Boolean = true
     def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString] =
       Flow(chunks).map(_.data).toProducer
 
@@ -110,14 +121,14 @@ object HttpEntity {
   sealed trait ChunkStreamPart extends japi.ChunkStreamPart {
     def data: ByteString
     def extension: String
-    def isLastChunk: Boolean
+    def isRegularChunk: Boolean = !isLastChunk
   }
 
   /**
    * An intermediate entity chunk guaranteed to carry non-empty data.
    */
   case class Chunk(data: ByteString, extension: String = "") extends ChunkStreamPart {
-    def isLastChunk = false
+    def isLastChunk: Boolean = false
   }
 
   /**

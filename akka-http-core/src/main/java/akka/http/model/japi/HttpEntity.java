@@ -7,6 +7,11 @@ import org.reactivestreams.api.Producer;
 
 public interface HttpEntity {
     boolean isKnownEmpty();
+    boolean isRegular();
+    boolean isChunked();
+    boolean isDefault();
+    boolean isCloseDelimited();
+
     ContentType contentType();
 
     Producer<ByteString> getDataBytes(ActorRefFactory refFactory);

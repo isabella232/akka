@@ -4,4 +4,6 @@ import akka.util.ByteString;
 
 public interface ChunkStreamPart {
     ByteString data();
+    boolean isRegularChunk();
+    boolean isLastChunk();
 }
