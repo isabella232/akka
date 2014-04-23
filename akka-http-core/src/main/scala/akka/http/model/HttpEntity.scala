@@ -121,6 +121,7 @@ object HttpEntity {
   sealed trait ChunkStreamPart extends japi.ChunkStreamPart {
     def data: ByteString
     def extension: String
+
     def isRegularChunk: Boolean = !isLastChunk
   }
 
@@ -132,7 +133,7 @@ object HttpEntity {
   }
 
   /**
-   * An intermediate entity chunk guaranteed to carry non-empty data.
+   * The last chunk carrying no data and possibly a sequence of trailer headers.
    */
   case class LastChunk(extension: String = "", trailer: immutable.Seq[HttpHeader] = Nil) extends ChunkStreamPart {
     def data = ByteString.empty
