@@ -183,7 +183,7 @@ object Http {
 
     def parameterMap(): util.Map[String, String] = uri.query.toMap.asJava
     def parameters(): Iterable[japi.Uri.Parameter] = uri.query.map(t ⇒ Param(t._1, t._2): japi.Uri.Parameter).toIterable.asJava
-    def containsParameter(key: String): Boolean = uri.query.toMap.contains(key)
+    def containsParameter(key: String): Boolean = uri.query.get(key).isDefined
     def parameter(key: String): Option[String] = uri.query.get(key)
 
     case class Param(key: String, value: String) extends japi.Uri.Parameter
