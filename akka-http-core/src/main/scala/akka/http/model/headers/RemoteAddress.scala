@@ -2,12 +2,13 @@
  * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package akka.http.model.headers
+package akka.http.model
+package headers
 
 import java.net.{ UnknownHostException, InetAddress }
 import akka.http.util._
 
-sealed abstract class RemoteAddress extends ValueRenderable {
+sealed abstract class RemoteAddress extends ValueRenderable with japi.headers.RemoteAddress {
   def toOption: Option[InetAddress]
 }
 

@@ -10,7 +10,7 @@ import org.parboiled2.CharPredicate
 import akka.http.util._
 import UriRendering.UriRenderer
 
-case class LinkValue(uri: Uri, params: immutable.Seq[LinkParam]) extends ValueRenderable {
+case class LinkValue(uri: Uri, params: immutable.Seq[LinkParam]) extends ValueRenderable with japi.headers.LinkValue {
   import LinkParam.paramsRenderer
   def render[R <: Rendering](r: R): r.type = {
     r ~~ '<' ~~ uri ~~ '>'

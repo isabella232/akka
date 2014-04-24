@@ -8,14 +8,21 @@ import language.implicitConversions
 import scala.collection.immutable
 import java.nio.charset.Charset
 import akka.http.util._
+import java.lang.Iterable
 
 /**
  * A charset range as encountered in `Accept-Charset`. Can either be a single charset, or `*`
  * if all charsets are supported and optionally a qValue for selecting this choice.
  */
-sealed abstract class HttpCharsetRange extends ValueRenderable with WithQValue[HttpCharsetRange] {
+sealed abstract class HttpCharsetRange extends ValueRenderable with WithQValue[HttpCharsetRange] with japi.HttpCharsetRange {
   def qValue: Float
   def matches(charset: HttpCharset): Boolean
+
+  // Java API
+  def matches(charset: japi.HttpCharset): Boolean = {
+    import japi.JavaMapping.Implicits._
+    matches(charset.asScala)
+  }
 }
 
 object HttpCharsetRange {
@@ -48,6 +55,12 @@ case class HttpCharset private[http] (override val value: String)(val aliases: i
   }
 
   def withQValue(qValue: Float): HttpCharsetRange = HttpCharsetRange(this, qValue.toFloat)
+
+  // Java API
+  def getAliases: Iterable[String] = {
+    import collection.JavaConverters._
+    aliases.asJava
+  }
 }
 
 object HttpCharset {

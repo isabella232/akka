@@ -2,11 +2,12 @@
  * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package akka.http.model.headers
+package akka.http.model
+package headers
 
 import akka.http.util.{ Rendering, ValueRenderable }
 
-sealed trait RangeUnit extends ValueRenderable
+sealed trait RangeUnit extends ValueRenderable with japi.headers.RangeUnit
 
 object RangeUnit {
   object Bytes extends RangeUnit {

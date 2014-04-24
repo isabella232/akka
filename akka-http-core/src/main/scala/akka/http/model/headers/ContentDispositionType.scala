@@ -2,16 +2,21 @@
  * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package akka.http.model.headers
+package akka.http.model
+package headers
 
 import akka.http.util.{ Rendering, SingletonValueRenderable, Renderable }
 
-sealed trait ContentDispositionType extends Renderable
+sealed trait ContentDispositionType extends Renderable with japi.headers.ContentDispositionType
 
 object ContentDispositionType {
-  case object inline extends ContentDispositionType with SingletonValueRenderable
-  case object attachment extends ContentDispositionType with SingletonValueRenderable
-  case object `form-data` extends ContentDispositionType with SingletonValueRenderable
+  protected abstract class Predefined extends ContentDispositionType with SingletonValueRenderable {
+    def name: String = value
+  }
+
+  case object inline extends Predefined
+  case object attachment extends Predefined
+  case object `form-data` extends Predefined
   case class Ext(name: String) extends ContentDispositionType {
     def render[R <: Rendering](r: R): r.type = r ~~ name
   }

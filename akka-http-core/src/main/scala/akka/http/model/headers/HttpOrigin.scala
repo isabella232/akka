@@ -11,7 +11,7 @@ import org.parboiled2.UTF8
 import akka.http.model.parser.UriParser
 import akka.http.util._
 
-abstract class HttpOriginRange extends ValueRenderable {
+abstract class HttpOriginRange extends ValueRenderable with japi.headers.HttpOriginRange {
   def matches(origin: HttpOrigin): Boolean
 }
 object HttpOriginRange {
@@ -30,7 +30,7 @@ object HttpOriginRange {
   }
 }
 
-case class HttpOrigin(scheme: String, host: Host) extends ValueRenderable {
+case class HttpOrigin(scheme: String, host: Host) extends ValueRenderable with japi.headers.HttpOrigin {
   def render[R <: Rendering](r: R): r.type = host.renderValue(r ~~ scheme ~~ "://")
 }
 object HttpOrigin {

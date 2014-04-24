@@ -8,7 +8,7 @@ package headers
 import scala.collection.immutable
 import akka.http.util._
 
-sealed abstract class LanguageRange extends ValueRenderable with WithQValue[LanguageRange] {
+sealed abstract class LanguageRange extends ValueRenderable with WithQValue[LanguageRange] with japi.headers.LanguageRange {
   def qValue: Float
   def primaryTag: String
   def subTags: immutable.Seq[String]
@@ -31,7 +31,7 @@ object LanguageRange {
   object `*` extends `*`(1.0f)
 }
 
-case class Language(primaryTag: String, subTags: immutable.Seq[String], qValue: Float = 1.0f) extends LanguageRange {
+case class Language(primaryTag: String, subTags: immutable.Seq[String], qValue: Float = 1.0f) extends LanguageRange with japi.headers.Language {
   def matches(lang: Language): Boolean = lang.primaryTag == this.primaryTag && lang.subTags == this.subTags
   def withQValue(qValue: Float) = Language(primaryTag, subTags, qValue)
 }

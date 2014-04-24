@@ -9,7 +9,7 @@ import org.parboiled2.util.Base64
 import akka.http.model.HttpCharsets._
 import akka.http.util.{ Rendering, ValueRenderable }
 
-sealed trait HttpCredentials extends ValueRenderable
+sealed trait HttpCredentials extends ValueRenderable with japi.headers.HttpCredentials
 
 case class BasicHttpCredentials(username: String, password: String) extends HttpCredentials {
   def render[R <: Rendering](r: R): r.type = {

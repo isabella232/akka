@@ -18,7 +18,7 @@ case class HttpCookie(
   path: Option[String] = None,
   secure: Boolean = false,
   httpOnly: Boolean = false,
-  extension: Option[String] = None) extends ValueRenderable {
+  extension: Option[String] = None) extends ValueRenderable with japi.headers.HttpCookie {
 
   import HttpCookie._
 

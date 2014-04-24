@@ -2,13 +2,14 @@
  * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package akka.http.model.headers
+package akka.http.model
+package headers
 
 import scala.annotation.tailrec
 import scala.collection.immutable
 import akka.http.util._
 
-sealed trait CacheDirective extends Renderable {
+sealed trait CacheDirective extends Renderable with japi.headers.CacheDirective {
   def value: String
 }
 

@@ -2,7 +2,6 @@ package akka.http.model.japi
 
 import java.lang.Iterable
 import java.io.File
-import scala.reflect.ClassTag
 import scala.collection.mutable.ListBuffer
 import akka.util.ByteString
 import akka.http.model
@@ -11,7 +10,7 @@ import akka.japi.Option
 import java.util
 import scala.annotation.tailrec
 
-import collection.JavaConverters._
+import JavaMapping.Implicits._
 
 object Http {
   def HttpRequest(): HttpRequestBuilder = HttpRequest(model.HttpRequest())
@@ -20,16 +19,16 @@ object Http {
       protected def initialProtocol: HttpProtocol = request.protocol
       protected def initialHeaders: Iterable[HttpHeader] = request.getHeaders
 
-      var method: model.HttpMethod = cast[model.HttpMethod](request.method)
-      var uri: model.Uri = cast[JavaUri](request.getUri).uri
-      var entity: model.HttpEntity.Regular = cast[model.HttpEntity.Regular](request.entity)
+      var method: model.HttpMethod = request.method.asScala
+      var uri: model.Uri = request.getUri.asScala
+      var entity: model.HttpEntity.Regular = request.entity.asScala
 
       def entity(entity: HttpEntityRegular): HttpRequestBuilder = {
-        this.entity = cast[model.HttpEntity.Regular](entity)
+        this.entity = entity.asScala
         this
       }
       def uri(relativeUri: Uri): HttpRequestBuilder = {
-        this.uri = cast[JavaUri](relativeUri).uri
+        this.uri = relativeUri.asScala
         this
       }
       def uri(path: String): HttpRequestBuilder = {
@@ -38,7 +37,7 @@ object Http {
       }
 
       def method(method: HttpMethod): HttpRequestBuilder = {
-        this.method = cast[model.HttpMethod](method)
+        this.method = method.asScala
         this
       }
       def build(): HttpRequest =
@@ -56,11 +55,11 @@ object Http {
 
       def status(code: Int): HttpResponseBuilder = status(StatusCode(code))
       def status(statusCode: StatusCode): HttpResponseBuilder = {
-        this.status = cast[model.StatusCode](statusCode)
+        this.status = statusCode.asScala
         this
       }
       def entity(entity: HttpEntity): HttpResponseBuilder = {
-        this.entity = cast[model.HttpEntity](entity)
+        this.entity = entity.asScala
         this
       }
       protected def entity(e: HttpEntityRegular): HttpResponseBuilder = entity(e: HttpEntity)
@@ -74,17 +73,17 @@ object Http {
     protected def initialProtocol: HttpProtocol
     protected def entity(entity: HttpEntityRegular): T
 
-    var protocol: model.HttpProtocol = cast[model.HttpProtocol](initialProtocol)
+    var protocol: model.HttpProtocol = initialProtocol.asScala
     var headers = ListBuffer.empty[model.HttpHeader]
     addHeaders(initialHeaders)
 
     def addHeaders(headers: Iterable[HttpHeader]): this.type = {
-      this.headers ++= headers.asScala.map(cast[model.HttpHeader])
+      this.headers ++= headers.asScala
       this
     }
 
     def addHeader(header: HttpHeader): this.type = {
-      this.headers += cast[model.HttpHeader](header)
+      this.headers += header.asScala
       this
     }
     def removeHeader(headerName: String): this.type = {
@@ -94,7 +93,7 @@ object Http {
     }
 
     def protocol(protocol: HttpProtocol): this.type = {
-      this.protocol = cast[model.HttpProtocol](protocol)
+      this.protocol = protocol.asScala
       this
     }
 
@@ -110,7 +109,7 @@ object Http {
   def UriBuilder(): UriBuilder = UriBuilder(JavaUri(model.Uri()))
   def UriBuilder(uri: String): UriBuilder = UriBuilder(Uri(uri))
   def UriBuilder(reference: Uri): UriBuilder = new UriBuilder {
-    var uri = cast[JavaUri](reference).uri
+    var uri = reference.asScala
 
     def t(f: model.Uri ⇒ model.Uri): UriBuilder = {
       this.uri = f(uri)
@@ -157,7 +156,7 @@ object Http {
   }
   def Uri(uri: String): Uri = Uri(model.Uri(uri))
 
-  private case class JavaUri(uri: model.Uri) extends Uri {
+  private[japi] case class JavaUri(uri: model.Uri) extends Uri {
     def isRelative: Boolean = uri.isRelative
     def isAbsolute: Boolean = uri.isAbsolute
     def isEmpty: Boolean = uri.isEmpty
@@ -168,6 +167,8 @@ object Http {
     def userInfo(): String = uri.authority.userinfo
 
     def path(): String = uri.path.toString
+
+    import collection.JavaConverters._
     def pathSegments(): Iterable[String] = {
       import model.Uri.Path
       import Path._
@@ -176,7 +177,7 @@ object Http {
         case Segment(head, tail) ⇒ head :: gatherSegments(tail)
         case Slash(tail)         ⇒ gatherSegments(tail)
       }
-      gatherSegments(uri.path).toIterable.asJava
+      gatherSegments(uri.path).asJava
     }
 
     def queryString(): String = uri.query.toString
@@ -199,19 +200,11 @@ object Http {
   def HttpEntity(bytes: Array[Byte]): HttpEntityRegular = model.HttpEntity(bytes)
   def HttpEntity(bytes: ByteString): HttpEntityRegular = model.HttpEntity(bytes)
   def HttpEntity(contentType: ContentType, string: String): HttpEntityRegular =
-    model.HttpEntity(cast[model.ContentType](contentType), string)
+    model.HttpEntity(contentType.asScala, string)
   def HttpEntity(contentType: ContentType, bytes: Array[Byte]): HttpEntityRegular =
-    model.HttpEntity(cast[model.ContentType](contentType), bytes)
+    model.HttpEntity(contentType.asScala, bytes)
   def HttpEntity(contentType: ContentType, bytes: ByteString): HttpEntityRegular =
-    model.HttpEntity(cast[model.ContentType](contentType), bytes)
+    model.HttpEntity(contentType.asScala, bytes)
   def HttpEntity(contentType: ContentType, file: File): HttpEntityRegular =
-    model.HttpEntity(cast[model.ContentType](contentType), file)
-
-  def cast[T](obj: AnyRef)(implicit classTag: ClassTag[T]): T =
-    try classTag.runtimeClass.cast(obj).asInstanceOf[T]
-    catch {
-      case exp: ClassCastException ⇒
-        throw new IllegalArgumentException(s"Illegal custom subclass of $classTag. " +
-          s"Please use only the provided factories in akka.http.model.japi.Http")
-    }
+    model.HttpEntity(contentType.asScala, file)
 }

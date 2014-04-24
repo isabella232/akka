@@ -2,11 +2,12 @@
  * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package akka.http.model.headers
+package akka.http.model
+package headers
 
 import akka.http.util.{ Rendering, SingletonValueRenderable, Renderable }
 
-sealed trait TransferEncoding extends Renderable
+sealed trait TransferEncoding extends Renderable with japi.headers.TransferEncoding
 
 object TransferEncodings {
   case object chunked extends TransferEncoding with SingletonValueRenderable
