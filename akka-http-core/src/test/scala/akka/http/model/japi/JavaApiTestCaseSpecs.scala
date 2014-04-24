@@ -4,7 +4,7 @@ import scala.collection.immutable
 
 import akka.http.model
 import org.scalatest.{ MustMatchers, FreeSpec }
-import akka.http.model.headers.{ HttpCookie, BasicHttpCredentials }
+import akka.http.model.headers.BasicHttpCredentials
 
 class JavaApiTestCaseSpecs extends FreeSpec with MustMatchers {
   "JavaApiTestCases should work as intended" - {
@@ -17,11 +17,11 @@ class JavaApiTestCaseSpecs extends FreeSpec with MustMatchers {
     "handleRequest" - {
       "wrong method" in {
         JavaApiTestCases.handleRequest(model.HttpRequest(model.HttpMethods.HEAD)) must be(
-          model.HttpResponse(model.StatusCodes.MethodNotAllowed, entity = "Unsupported method"))
+          model.HttpResponse(model.StatusCodes.MethodNotAllowed, "Unsupported method"))
       }
       "missing path" in {
         JavaApiTestCases.handleRequest(model.HttpRequest(uri = "/blubber")) must be(
-          model.HttpResponse(model.StatusCodes.NotFound, entity = "Not found"))
+          model.HttpResponse(model.StatusCodes.NotFound, "Not found"))
       }
       "happy path" - {
         "with name parameter" in {
@@ -39,7 +39,7 @@ class JavaApiTestCaseSpecs extends FreeSpec with MustMatchers {
         model.HttpRequest(headers = immutable.Seq(model.headers.Authorization(BasicHttpCredentials("username", "password")))))
     }
     "removeCookies" in {
-      val testRequest = model.HttpRequest(headers = immutable.Seq(model.headers.Cookie(HttpCookie("test", "blub"))))
+      val testRequest = model.HttpRequest(headers = immutable.Seq(model.headers.Cookie(model.headers.HttpCookie("test", "blub"))))
       JavaApiTestCases.removeCookies(testRequest) must be(
         model.HttpRequest())
     }
