@@ -320,8 +320,8 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
     }
 
     "Transfer-Encoding" in {
-      "Transfer-Encoding: chunked" =!= `Transfer-Encoding`(TransferEncoding.chunked)
-      "Transfer-Encoding: gzip" =!= `Transfer-Encoding`(TransferEncoding.gzip)
+      "Transfer-Encoding: chunked" =!= `Transfer-Encoding`(TransferEncodings.chunked)
+      "Transfer-Encoding: gzip" =!= `Transfer-Encoding`(TransferEncodings.gzip)
     }
 
     "Range" in {

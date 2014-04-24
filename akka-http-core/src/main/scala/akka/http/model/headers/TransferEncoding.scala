@@ -8,7 +8,7 @@ import akka.http.util.{ Rendering, SingletonValueRenderable, Renderable }
 
 sealed trait TransferEncoding extends Renderable
 
-object TransferEncoding {
+object TransferEncodings {
   case object chunked extends TransferEncoding with SingletonValueRenderable
   case object compress extends TransferEncoding with SingletonValueRenderable
   case object deflate extends TransferEncoding with SingletonValueRenderable

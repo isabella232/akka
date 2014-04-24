@@ -479,7 +479,7 @@ final case class `Transfer-Encoding`(encodings: immutable.Seq[TransferEncoding])
   import `Transfer-Encoding`.encodingsRenderer
   require(encodings.nonEmpty, "encodings must not be empty")
   def renderValue[R <: Rendering](r: R): r.type = r ~~ encodings
-  def hasChunked: Boolean = encodings contains TransferEncoding.chunked
+  def hasChunked: Boolean = encodings contains TransferEncodings.chunked
   protected def companion = `Transfer-Encoding`
 }
 
