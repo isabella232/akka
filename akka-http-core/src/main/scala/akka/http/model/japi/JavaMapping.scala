@@ -83,6 +83,8 @@ object JavaMapping {
     def toScala(javaObject: J): S = cast[S](javaObject)
   }
 
+  implicit object DateTime extends Inherited[DateTime, akka.http.util.DateTime]
+
   implicit object ContentType extends Inherited[ContentType, model.ContentType]
   implicit object HttpCharset extends Inherited[HttpCharset, model.HttpCharset]
   implicit object HttpCharsetRange extends Inherited[HttpCharsetRange, model.HttpCharsetRange]

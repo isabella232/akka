@@ -15,8 +15,6 @@ abstract class HttpOriginRange extends ValueRenderable with japi.headers.HttpOri
   def matches(origin: HttpOrigin): Boolean
 }
 object HttpOriginRange {
-  implicit val originsRenderer: Renderer[Seq[HttpOrigin]] = Renderer.seqRenderer(" ", "null")
-
   case object `*` extends HttpOriginRange {
     def matches(origin: HttpOrigin) = true
     def render[R <: Rendering](r: R): r.type = r ~~ '*'
@@ -34,6 +32,8 @@ case class HttpOrigin(scheme: String, host: Host) extends ValueRenderable with j
   def render[R <: Rendering](r: R): r.type = host.renderValue(r ~~ scheme ~~ "://")
 }
 object HttpOrigin {
+  implicit val originsRenderer: Renderer[Seq[HttpOrigin]] = Renderer.seqRenderer(" ", "null")
+
   implicit def apply(str: String): HttpOrigin = {
     val parser = new UriParser(str, UTF8, Uri.ParsingMode.Relaxed)
     parser.parseOrigin()
