@@ -8,11 +8,11 @@ package headers
 import akka.http.util._
 
 case class HttpChallenge(scheme: String, realm: String,
-                         params: Map[String, String] = Map.empty) extends ValueRenderable with japi.headers.HttpChallenge {
+                         parameters: Map[String, String] = Map.empty) extends ValueRenderable with japi.headers.HttpChallenge {
 
   def render[R <: Rendering](r: R): r.type = {
     r ~~ scheme ~~ " realm=" ~~# realm
-    if (params.nonEmpty) params.foreach { case (k, v) ⇒ r ~~ ',' ~~ k ~~ '=' ~~# v }
+    if (parameters.nonEmpty) parameters.foreach { case (k, v) ⇒ r ~~ ',' ~~ k ~~ '=' ~~# v }
     r
   }
 }
