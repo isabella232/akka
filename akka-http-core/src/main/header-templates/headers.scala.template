@@ -1,0 +1,113 @@
+/**
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ */
+
+package akka.http.model
+package headers
+
+import java.net.InetSocketAddress
+import scala.annotation.{ tailrec, implicitNotFound }
+import scala.collection.immutable
+import akka.http.util._
+
+object ProtectedHeaderCreation {
+  @implicitNotFound("Headers of this type are managed automatically by akka-http-core. If you are sure that creating " +
+    "instances manually is required in your use case `import HttpHeaders.ProtectedHeaderCreation.enable` to override " +
+    "this warning.")
+  sealed trait Enabled
+  implicit def enable: Enabled = null
+}
+import ProtectedHeaderCreation.enable
+
+sealed abstract class ModeledCompanion extends Renderable {
+  val name = getClass.getSimpleName.replace("$minus", "-").dropRight(1) // trailing $
+  val lowercaseName = name.toLowerCase
+  private[this] val nameBytes = name.getAsciiBytes
+  def render[R <: Rendering](r: R): r.type = r ~~ nameBytes ~~ ':' ~~ ' '
+}
+
+sealed abstract class ModeledHeader extends HttpHeader with Serializable {
+  def name: String = companion.name
+  def value: String = renderValue(new StringRendering).get
+  def lowercaseName: String = companion.lowercaseName
+  def render[R <: Rendering](r: R): r.type = renderValue(r ~~ companion)
+  def renderValue[R <: Rendering](r: R): r.type
+  protected def companion: ModeledCompanion
+}
+
+// http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-6.1
+object Connection extends ModeledCompanion {
+  def apply(first: String, more: String*): Connection = apply(immutable.Seq(first +: more: _*))
+  implicit val tokensRenderer = Renderer.defaultSeqRenderer[String] // cache
+}
+final case class Connection(tokens: immutable.Seq[String]) extends ModeledHeader {
+  require(tokens.nonEmpty, "tokens must not be empty")
+  import Connection.tokensRenderer
+  def renderValue[R <: Rendering](r: R): r.type = r ~~ tokens
+  def hasClose = has("close")
+  def hasKeepAlive = has("keep-alive")
+  @tailrec private def has(item: String, ix: Int = 0): Boolean =
+    if (ix < tokens.length)
+      if (tokens(ix) equalsIgnoreCase item) true
+      else has(item, ix + 1)
+    else false
+  protected def companion = Connection
+}
+
+// http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-3.3.2
+object `Content-Length` extends ModeledCompanion
+final case class `Content-Length`(length: Long)(implicit ev: ProtectedHeaderCreation.Enabled) extends ModeledHeader {
+  def renderValue[R <: Rendering](r: R): r.type = r ~~ length
+  protected def companion = `Content-Length`
+}
+
+// http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-5.1.1
+object Expect extends ModeledCompanion {
+  val `100-continue` = new Expect() {}
+}
+sealed abstract case class Expect private () extends ModeledHeader {
+  def renderValue[R <: Rendering](r: R): r.type = r ~~ "100-continue"
+  protected def companion = Expect
+}
+
+// http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-5.4
+object Host extends ModeledCompanion {
+  def apply(address: InetSocketAddress): Host = apply(address.getHostName, address.getPort)
+  def apply(host: String): Host = apply(host, 0)
+  def apply(host: String, port: Int): Host = apply(Uri.Host(host), port)
+  val empty = Host("")
+}
+final case class Host(host: Uri.Host, port: Int = 0) extends ModeledHeader with japi.headers.Host {
+  import UriRendering.HostRenderer
+  require((port >> 16) == 0, "Illegal port: " + port)
+  def isEmpty = host.isEmpty
+  def renderValue[R <: Rendering](r: R): r.type = if (port > 0) r ~~ host ~~ ':' ~~ port else r ~~ host
+  protected def companion = Host
+  def equalsIgnoreCase(other: Host): Boolean = host.equalsIgnoreCase(other.host) && port == other.port
+}
+
+// http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-3.5
+// http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-26#section-3.2
+object `If-Range` extends ModeledCompanion {
+  def apply(tag: EntityTag): `If-Range` = apply(Left(tag))
+  def apply(timestamp: DateTime): `If-Range` = apply(Right(timestamp))
+}
+final case class `If-Range`(entityTagOrDateTime: Either[EntityTag, DateTime]) extends ModeledHeader {
+  def renderValue[R <: Rendering](r: R): r.type =
+    entityTagOrDateTime match {
+      case Left(tag)       ⇒ r ~~ tag
+      case Right(dateTime) ⇒ dateTime.renderRfc1123DateTimeString(r)
+    }
+  protected def companion = `If-Range`
+}
+
+// FIXME: resurrect SSL-Session-Info header once akka.io.SslTlsSupport supports it
+final case class RawHeader(name: String, value: String) extends HttpHeader with japi.headers.RawHeader {
+  val lowercaseName = name.toLowerCase
+  def render[R <: Rendering](r: R): r.type = r ~~ name ~~ ':' ~~ ' ' ~~ value
+}
+
+import japi.JavaMapping.Implicits._
+
+// AUTO-GENERATED
+

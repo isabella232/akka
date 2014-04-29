@@ -1,0 +1,9 @@
+name: Range
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-26#section-3.1
+rendering: r ~~ rangeUnit ~~ '=' ~~ ranges
+parameters:
+  rangeUnit: headers.RangeUnit
+  ranges: Seq[headers.ByteRange]
+object:
+  def apply(first: ByteRange, more: ByteRange*): Range = apply(immutable.Seq(first +: more: _*))
+  def apply(ranges: immutable.Seq[ByteRange]): Range = Range(RangeUnit.Bytes, ranges)

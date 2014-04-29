@@ -1,0 +1,5 @@
+name: If-Range
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-26#section-3.2 + http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-3.5
+rendering: entityTagOrDateTime match { case Left(tag)       ⇒ r ~~ tag ; case Right(dateTime) ⇒ dateTime.renderRfc1123DateTimeString(r) }
+parameters:
+  entityTagOrDateTime: Either[headers.EntityTag, DateTime]

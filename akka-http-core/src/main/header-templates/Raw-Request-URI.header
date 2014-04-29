@@ -1,0 +1,6 @@
+name: Raw-Request-URI
+parameters:
+  uri: String
+docs:
+  Custom header we use for transporting the raw request URI either to the application (server-side)
+  or to the request rendering stage (client-side).

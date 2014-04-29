@@ -1,0 +1,7 @@
+name: Server
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-7.4.2
+parameters:
+  products: Seq[headers.ProductVersion]
+object:
+  def apply(products: String): Server = apply(ProductVersion.parseMultiple(products))
+seqRendererSeparator: " "

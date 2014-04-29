@@ -1,0 +1,4 @@
+name: Accept-Encoding
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-5.3.4
+parameters:
+  encodings: Seq[headers.HttpEncodingRange]

@@ -1,0 +1,5 @@
+name: Location
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-7.1.2
+rendering: { import UriRendering.UriRenderer; r ~~ uri }
+parameters:
+  uri: Uri

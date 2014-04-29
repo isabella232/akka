@@ -1,0 +1,9 @@
+name: Cookie
+spec: https://tools.ietf.org/html/rfc6265#section-4.2
+parameters:
+  cookies: Seq[headers.HttpCookie]
+seqRendererSeparator: "; "
+object:
+  implicit val cookieNameValueOnlyRenderer: Renderer[HttpCookie] = new Renderer[HttpCookie] {
+    def render[R <: Rendering](r: R, c: HttpCookie): r.type = r ~~ c.name ~~ '=' ~~ c.content
+  }

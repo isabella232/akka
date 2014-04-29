@@ -1,0 +1,5 @@
+name: Last-Modified
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-2.2
+rendering: date.renderRfc1123DateTimeString(r)
+parameters:
+  date: DateTime

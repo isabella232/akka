@@ -1,0 +1,6 @@
+name: ETag
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-2.3
+parameters:
+  etag: headers.EntityTag
+object:
+  def apply(tag: String, weak: Boolean = false): ETag = ETag(EntityTag(tag, weak))

@@ -1,0 +1,5 @@
+name: If-Unmodified-Since
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-3.4
+rendering: date.renderRfc1123DateTimeString(r)
+parameters:
+  date: DateTime

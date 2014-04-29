@@ -1,0 +1,5 @@
+name: Accept-Ranges
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-26#section-2.3
+rendering: if (rangeUnits.isEmpty) r ~~ "none" else r ~~ rangeUnits
+parameters:
+  rangeUnits: Seq[headers.RangeUnit]

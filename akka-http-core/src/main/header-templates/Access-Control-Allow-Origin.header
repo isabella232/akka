@@ -1,0 +1,4 @@
+name: Access-Control-Allow-Origin
+spec: http://www.w3.org/TR/cors/#access-control-allow-origin-response-header
+parameters:
+  range: headers.HttpOriginRange

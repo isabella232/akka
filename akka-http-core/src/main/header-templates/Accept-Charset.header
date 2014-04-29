@@ -1,0 +1,4 @@
+name: Accept-Charset
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-5.3.3
+parameters:
+  charsetRanges: Seq[HttpCharsetRange]

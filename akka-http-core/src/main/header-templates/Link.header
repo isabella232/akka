@@ -1,0 +1,6 @@
+name: Link
+spec: http://tools.ietf.org/html/rfc5988#section-5
+parameters:
+  values: Seq[headers.LinkValue]
+object:
+  def apply(uri: Uri, first: LinkParam, more: LinkParam*): Link = apply(immutable.Seq(LinkValue(uri, first +: more: _*)))

@@ -1,0 +1,7 @@
+name: User-Agent
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-5.5.3
+parameters:
+  products: Seq[headers.ProductVersion]
+object:
+  def apply(products: String): `User-Agent` = apply(ProductVersion.parseMultiple(products))
+seqRendererSeparator: " "

@@ -1,0 +1,4 @@
+name: Proxy-Authorization
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p7-auth-26#section-4.4
+parameters:
+  credentials: headers.HttpCredentials

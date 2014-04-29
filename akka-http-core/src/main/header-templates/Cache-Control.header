@@ -1,0 +1,4 @@
+name: Cache-Control
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p6-cache-26#section-5.2
+parameters:
+   directives: Seq[headers.CacheDirective]

@@ -303,7 +303,26 @@ object AkkaBuild extends Build {
       libraryDependencies ++= Dependencies.httpCore,
       // FIXME include mima when akka-http-core-2.3.x is released
       //previousArtifact := akkaPreviousArtifact("akka-http-core")
-      previousArtifact := None
+      previousArtifact := None,
+      (sourceGenerators in Compile) <+= (simpleRun in akkaHttpCoreCodeGen) map { _ =>
+        Nil: Seq[File]
+      },
+      watchSources <++= (sourceDirectory in Compile, excludeFilter in Global) map { (source, excl) =>
+        (source / "header-templates") descendantsExcept ("*.header", excl) get
+      }
+    )
+  )
+
+  lazy val simpleRun = TaskKey[Unit]("akka-simple-run")
+
+  lazy val akkaHttpCoreCodeGen = Project(
+    id = "akka-http-core-code-gen",
+    base = file("akka-http-core-code-gen"),
+    settings = defaultSettings ++ formatSettings ++ seq(
+      libraryDependencies ++= Seq(Dependencies.Compile.parboiled2, Dependencies.Compile.shapeless),
+      simpleRun <<= (fullClasspath in Runtime, runner in run, streams) map { (cp, runner, s) =>
+        runner.run("akka.http.GenerateHeadersApp", Attributed.data(cp), Nil, s.log)
+      }
     )
   )
 

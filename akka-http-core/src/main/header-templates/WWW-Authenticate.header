@@ -1,0 +1,4 @@
+name: WWW-Authenticate
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p7-auth-26#section-4.1
+parameters:
+  challenges: Seq[headers.HttpChallenge]

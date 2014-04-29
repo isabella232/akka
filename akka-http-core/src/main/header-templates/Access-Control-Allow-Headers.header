@@ -1,0 +1,4 @@
+name: Access-Control-Allow-Headers
+spec: http://www.w3.org/TR/cors/#access-control-allow-headers-response-header
+parameters:
+  headers: Seq[String]

@@ -1,0 +1,8 @@
+name: If-Match
+spec: http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-3.1
+parameters:
+  m: headers.EntityTagRange
+object:
+  val `*` = `If-Match`(EntityTagRange.`*`)
+  def apply(first: EntityTag, more: EntityTag*): `If-Match` =
+    `If-Match`(EntityTagRange(first +: more: _*))

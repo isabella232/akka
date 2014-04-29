@@ -1,0 +1,4 @@
+name: Access-Control-Max-Age
+spec: http://www.w3.org/TR/cors/#access-control-max-age-response-header
+parameters:
+  deltaSeconds: Long
