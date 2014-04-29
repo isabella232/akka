@@ -11,8 +11,13 @@ import org.parboiled2.UTF8
 import akka.http.model.parser.UriParser
 import akka.http.util._
 
+import akka.http.model.japi.JavaMapping.Implicits._
+
 abstract class HttpOriginRange extends ValueRenderable with japi.headers.HttpOriginRange {
   def matches(origin: HttpOrigin): Boolean
+
+  // Java API
+  def matches(origin: japi.headers.HttpOrigin): Boolean = matches(origin.asScala)
 }
 object HttpOriginRange {
   case object `*` extends HttpOriginRange {

@@ -9,10 +9,15 @@ import org.parboiled2.util.Base64
 import akka.http.model.HttpCharsets._
 import akka.http.util.{ Rendering, ValueRenderable }
 
+import akka.http.model.japi.JavaMapping.Implicits._
+
 sealed trait HttpCredentials extends ValueRenderable with japi.headers.HttpCredentials {
   def scheme: String
   def token: String
   def parameters: Map[String, String]
+
+  // Java API
+  def getParameters: java.util.Map[String, String] = parameters.asJava
 }
 
 case class BasicHttpCredentials(username: String, password: String) extends HttpCredentials {
@@ -67,5 +72,5 @@ case class GenericHttpCredentials(scheme: String, token: String,
 }
 
 object GenericHttpCredentials {
-  def apply(scheme: String, params: Map[String, String]): GenericHttpCredentials = apply(scheme, "", params)
+  def apply(scheme: String, parameters: Map[String, String]): GenericHttpCredentials = apply(scheme, "", parameters)
 }

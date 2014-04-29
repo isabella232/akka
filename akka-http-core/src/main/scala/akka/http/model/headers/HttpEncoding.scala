@@ -7,10 +7,14 @@ package headers
 
 import language.implicitConversions
 import akka.http.util._
+import akka.http.model.japi.JavaMapping.Implicits._
 
 sealed abstract class HttpEncodingRange extends ValueRenderable with WithQValue[HttpEncodingRange] with japi.headers.HttpEncodingRange {
   def qValue: Float
   def matches(encoding: HttpEncoding): Boolean
+
+  // Java API
+  def matches(encoding: japi.headers.HttpEncoding): Boolean = matches(encoding.asScala)
 }
 
 object HttpEncodingRange {

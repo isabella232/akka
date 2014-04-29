@@ -5,7 +5,7 @@
 package akka.http.model
 package headers
 
-import scala.annotation.tailrec
+import scala.annotation.{ varargs, tailrec }
 import scala.collection.immutable
 import akka.http.util._
 
@@ -68,7 +68,7 @@ object CacheDirectives {
 
   // http://tools.ietf.org/html/draft-ietf-httpbis-p6-cache-26#section-5.2.1.4
   case object `no-cache` extends SingletonValueRenderable with RequestDirective with ResponseDirective {
-    def apply(fieldNames: String*): `no-cache` = apply(immutable.Seq(fieldNames: _*))
+    @varargs def apply(fieldNames: String*): `no-cache` = apply(immutable.Seq(fieldNames: _*))
   }
 
   // http://tools.ietf.org/html/draft-ietf-httpbis-p6-cache-26#section-5.2.1.5
@@ -94,7 +94,7 @@ object CacheDirectives {
   // http://tools.ietf.org/html/draft-ietf-httpbis-p6-cache-26#section-5.2.2.6
   case class `private`(fieldNames: immutable.Seq[String]) extends FieldNamesDirective with ResponseDirective
   object `private` {
-    def apply(fieldNames: String*): `private` = apply(immutable.Seq(fieldNames: _*))
+    @varargs def apply(fieldNames: String*): `private` = apply(immutable.Seq(fieldNames: _*))
   }
 
   // http://tools.ietf.org/html/draft-ietf-httpbis-p6-cache-26#section-5.2.2.7

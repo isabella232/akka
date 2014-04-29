@@ -10,20 +10,28 @@ import org.parboiled2.CharPredicate
 import akka.http.util._
 import UriRendering.UriRenderer
 
-case class LinkValue(uri: Uri, params: immutable.Seq[LinkParam]) extends ValueRenderable with japi.headers.LinkValue {
+import akka.http.model.japi.JavaMapping.Implicits._
+
+case class LinkValue(uri: Uri, parameters: immutable.Seq[LinkParam]) extends ValueRenderable with japi.headers.LinkValue {
   import LinkParam.paramsRenderer
   def render[R <: Rendering](r: R): r.type = {
     r ~~ '<' ~~ uri ~~ '>'
-    if (params.nonEmpty) r ~~ "; " ~~ params
+    if (parameters.nonEmpty) r ~~ "; " ~~ parameters
     r
   }
+
+  def getUri: japi.Uri = uri.asJava
+  def getParameters: java.lang.Iterable[japi.headers.LinkParam] = parameters.asJava
 }
 
 object LinkValue {
   def apply(uri: Uri, params: LinkParam*): LinkValue = apply(uri, immutable.Seq(params: _*))
 }
 
-sealed abstract class LinkParam extends ToStringRenderable
+sealed abstract class LinkParam extends ToStringRenderable with japi.headers.LinkParam {
+  val key: String = getClass.getSimpleName
+  def value: AnyRef
+}
 
 object LinkParam {
   implicit val paramsRenderer: Renderer[Seq[LinkParam]] = Renderer.seqRenderer(separator = "; ")
@@ -47,6 +55,8 @@ object LinkParam {
 
   // http://tools.ietf.org/html/rfc5988#section-5.2
   case class anchor(uri: Uri) extends LinkParam {
+    def value: AnyRef = uri
+
     def render[R <: Rendering](r: R): r.type = r ~~ "anchor=\"" ~~ uri ~~ '"'
   }
 
@@ -61,11 +71,15 @@ object LinkParam {
 
   // http://tools.ietf.org/html/rfc5988#section-5.4
   case class hreflang(lang: Language) extends LinkParam {
+    def value: AnyRef = lang
+
     def render[R <: Rendering](r: R): r.type = r ~~ "hreflang=" ~~ lang
   }
 
   // http://tools.ietf.org/html/rfc5988#section-5.4
   case class media(desc: String) extends LinkParam {
+    def value: AnyRef = desc
+
     def render[R <: Rendering](r: R): r.type = {
       r ~~ "media="
       if (reserved matchesAny desc) r ~~ '"' ~~ desc ~~ '"' else r ~~ desc
@@ -74,11 +88,15 @@ object LinkParam {
 
   // http://tools.ietf.org/html/rfc5988#section-5.4
   case class title(title: String) extends LinkParam {
+    def value: AnyRef = title
+
     def render[R <: Rendering](r: R): r.type = r ~~ "title=\"" ~~ title ~~ '"'
   }
 
   // http://tools.ietf.org/html/rfc5988#section-5.4
   case class `title*`(title: String) extends LinkParam {
+    def value: AnyRef = title
+
     def render[R <: Rendering](r: R): r.type = {
       r ~~ "title*="
       if (reserved matchesAny title) r ~~ '"' ~~ title ~~ '"' else r ~~ title
@@ -87,6 +105,8 @@ object LinkParam {
 
   // http://tools.ietf.org/html/rfc5988#section-5.4
   case class `type`(mediaType: MediaType) extends LinkParam {
+    def value: AnyRef = mediaType
+
     def render[R <: Rendering](r: R): r.type = {
       r ~~ "type="
       if (reserved matchesAny mediaType.value) r ~~ '"' ~~ mediaType.value ~~ '"' else r ~~ mediaType.value

@@ -6,6 +6,9 @@ package akka.http.model
 package headers
 
 import akka.http.util._
+import java.util
+
+import akka.http.model.japi.JavaMapping.Implicits._
 
 case class HttpChallenge(scheme: String, realm: String,
                          parameters: Map[String, String] = Map.empty) extends ValueRenderable with japi.headers.HttpChallenge {
@@ -15,4 +18,7 @@ case class HttpChallenge(scheme: String, realm: String,
     if (parameters.nonEmpty) parameters.foreach { case (k, v) ⇒ r ~~ ',' ~~ k ~~ '=' ~~# v }
     r
   }
+
+  // Java API
+  def getParameters: util.Map[String, String] = parameters.asJava
 }

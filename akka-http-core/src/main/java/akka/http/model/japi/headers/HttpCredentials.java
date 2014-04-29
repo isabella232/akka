@@ -1,5 +1,10 @@
 package akka.http.model.japi.headers;
 
+import java.util.Map;
+
 public interface HttpCredentials {
-    //TODO: needs to be filled
+    String scheme();
+    String token();
+
+    Map<String, String> getParameters();
 }

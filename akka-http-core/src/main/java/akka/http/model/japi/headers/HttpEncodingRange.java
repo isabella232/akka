@@ -1,5 +1,6 @@
 package akka.http.model.japi.headers;
 
 public interface HttpEncodingRange {
-    //TODO: needs to be filled
+    float qValue();
+    boolean matches(HttpEncoding encoding);
 }

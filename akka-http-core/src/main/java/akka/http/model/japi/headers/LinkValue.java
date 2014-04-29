@@ -1,5 +1,8 @@
 package akka.http.model.japi.headers;
 
+import akka.http.model.japi.Uri;
+
 public interface LinkValue {
-    //TODO: needs to be filled
+    Uri getUri();
+    Iterable<LinkParam> getParameters();
 }

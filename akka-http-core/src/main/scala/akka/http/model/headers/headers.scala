@@ -77,7 +77,7 @@ object Host extends ModeledCompanion {
   def apply(host: String, port: Int): Host = apply(Uri.Host(host), port)
   val empty = Host("")
 }
-final case class Host(host: Uri.Host, port: Int = 0) extends ModeledHeader {
+final case class Host(host: Uri.Host, port: Int = 0) extends ModeledHeader with japi.headers.Host {
   import UriRendering.HostRenderer
   require((port >> 16) == 0, "Illegal port: " + port)
   def isEmpty = host.isEmpty

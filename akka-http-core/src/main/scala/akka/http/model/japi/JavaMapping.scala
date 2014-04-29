@@ -4,7 +4,9 @@ import scala.collection.immutable
 import scala.reflect.ClassTag
 
 import akka.http.model
-import java.{ util ⇒ ju }
+import java.{ util ⇒ ju, lang }
+import akka.japi
+import java.net.InetAddress
 
 trait J2SMapping[J] {
   type S
@@ -68,11 +70,19 @@ object JavaMapping {
       def toScala(javaObject: ju.Map[K, V]): immutable.Map[K, V] = javaObject.asScala.toMap
       def toJava(scalaObject: immutable.Map[K, V]): ju.Map[K, V] = scalaObject.asJava
     }
+  implicit def option[_J, _S](implicit mapping: JavaMapping[_J, _S]): JavaMapping[akka.japi.Option[_J], Option[_S]] =
+    new JavaMapping[akka.japi.Option[_J], Option[_S]] {
+      def toScala(javaObject: japi.Option[_J]): Option[_S] = javaObject.asScala.map(mapping.toScala)
+      def toJava(scalaObject: Option[_S]): japi.Option[_J] = japi.Option.fromScalaOption(scalaObject.map(mapping.toJava))
+    }
 
-  implicit object StringIdentity extends Identity[String] /*JavaMapping[java.lang.String, String] {
-    def toScala(javaObject: String): String = javaObject
-    def toJava(scalaObject: String): String = scalaObject
-  }*/
+  implicit object StringIdentity extends Identity[String]
+
+  implicit object LongMapping extends JavaMapping[java.lang.Long, Long] {
+    def toScala(javaObject: lang.Long): Long = javaObject
+    def toJava(scalaObject: Long): lang.Long = scalaObject
+  }
+  implicit object InetAddressIdentity extends Identity[InetAddress]
 
   class Identity[T] extends JavaMapping[T, T] {
     def toScala(javaObject: T): T = javaObject
@@ -114,6 +124,7 @@ object JavaMapping {
   implicit object HttpOriginRange extends Inherited[headers.HttpOriginRange, model.headers.HttpOriginRange]
   implicit object Language extends Inherited[headers.Language, model.headers.Language]
   implicit object LanguageRange extends Inherited[headers.LanguageRange, model.headers.LanguageRange]
+  implicit object LinkParam extends Inherited[headers.LinkParam, model.headers.LinkParam]
   implicit object LinkValue extends Inherited[headers.LinkValue, model.headers.LinkValue]
   implicit object ProductVersion extends Inherited[headers.ProductVersion, model.headers.ProductVersion]
   implicit object RangeUnit extends Inherited[headers.RangeUnit, model.headers.RangeUnit]

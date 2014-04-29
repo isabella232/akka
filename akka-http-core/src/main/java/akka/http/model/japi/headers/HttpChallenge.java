@@ -1,5 +1,10 @@
 package akka.http.model.japi.headers;
 
+import java.util.Map;
+
 public interface HttpChallenge {
-    //TODO: needs to be filled
+    String scheme();
+    String realm();
+
+    Map<String, String> getParameters();
 }

@@ -8,6 +8,8 @@ package headers
 import scala.collection.immutable
 import akka.http.util._
 
+import akka.http.model.japi.JavaMapping.Implicits._
+
 sealed abstract class LanguageRange extends ValueRenderable with WithQValue[LanguageRange] with japi.headers.LanguageRange {
   def qValue: Float
   def primaryTag: String
@@ -19,6 +21,10 @@ sealed abstract class LanguageRange extends ValueRenderable with WithQValue[Lang
     if (qValue < 1.0f) r ~~ ";q=" ~~ qValue
     r
   }
+
+  // Java API
+  def matches(language: japi.headers.Language): Boolean = matches(language.asScala)
+  def getSubTags: java.lang.Iterable[String] = subTags.asJava
 }
 object LanguageRange {
   case class `*`(qValue: Float) extends LanguageRange {

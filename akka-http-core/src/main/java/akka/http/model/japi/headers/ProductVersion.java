@@ -1,5 +1,7 @@
 package akka.http.model.japi.headers;
 
 public interface ProductVersion {
-    //TODO: needs to be filled
+    String product();
+    String version();
+    String comment();
 }

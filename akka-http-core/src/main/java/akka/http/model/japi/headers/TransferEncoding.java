@@ -1,5 +1,9 @@
 package akka.http.model.japi.headers;
 
+import java.util.Map;
+
 public interface TransferEncoding {
-    //TODO: needs to be filled
+    String name();
+
+    Map<String, String> getParameters();
 }
