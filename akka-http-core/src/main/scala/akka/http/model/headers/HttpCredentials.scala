@@ -9,15 +9,24 @@ import org.parboiled2.util.Base64
 import akka.http.model.HttpCharsets._
 import akka.http.util.{ Rendering, ValueRenderable }
 
-sealed trait HttpCredentials extends ValueRenderable with japi.headers.HttpCredentials
+sealed trait HttpCredentials extends ValueRenderable with japi.headers.HttpCredentials {
+  def scheme: String
+  def token: String
+  def parameters: Map[String, String]
+}
 
 case class BasicHttpCredentials(username: String, password: String) extends HttpCredentials {
-  def render[R <: Rendering](r: R): r.type = {
+  val cookie = {
     val userPass = username + ':' + password
     val bytes = userPass.getBytes(`ISO-8859-1`.nioCharset)
-    val cookie = Base64.rfc2045.encodeToChar(bytes, false)
-    r ~~ "Basic " ~~ cookie
+    Base64.rfc2045.encodeToChar(bytes, false)
   }
+
+  def render[R <: Rendering](r: R): r.type = r ~~ "Basic " ~~ cookie
+
+  def scheme: String = "Basic"
+  def token = cookie.toString
+  def parameters = Map.empty
 }
 
 object BasicHttpCredentials {
@@ -33,11 +42,13 @@ object BasicHttpCredentials {
 
 case class OAuth2BearerToken(token: String) extends HttpCredentials {
   def render[R <: Rendering](r: R): r.type = r ~~ "Bearer " ~~ token
+
+  def scheme: String = "Bearer"
+  def parameters: Map[String, String] = Map.empty
 }
 
 case class GenericHttpCredentials(scheme: String, token: String,
                                   parameters: Map[String, String] = Map.empty) extends HttpCredentials {
-
   def render[R <: Rendering](r: R): r.type = {
     r ~~ scheme
     if (!token.isEmpty) r ~~ ' ' ~~ token
