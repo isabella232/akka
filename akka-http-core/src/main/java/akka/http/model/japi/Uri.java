@@ -14,7 +14,7 @@ public interface Uri {
 
     String scheme();
 
-    String host();
+    Host host();
     int port();
     String userInfo();
 

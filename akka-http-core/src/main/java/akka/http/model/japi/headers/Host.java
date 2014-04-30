@@ -1,6 +1,6 @@
 package akka.http.model.japi.headers;
 
 public interface Host {
-    //host();
+    akka.http.model.japi.Host host();
     int port();
 }

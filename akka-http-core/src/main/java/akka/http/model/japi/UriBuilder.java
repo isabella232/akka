@@ -5,6 +5,7 @@ import akka.japi.Option;
 public interface UriBuilder {
     UriBuilder scheme(String scheme);
 
+    UriBuilder host(Host host);
     UriBuilder host(String host);
     UriBuilder port(int port);
     UriBuilder userInfo(String userInfo);

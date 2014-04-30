@@ -118,6 +118,7 @@ object Http {
 
     def scheme(scheme: String): UriBuilder = t(_.withScheme(scheme))
 
+    def host(host: Host): UriBuilder = t(_.withHost(host.asScala))
     def host(host: String): UriBuilder = t(_.withHost(host))
     def port(port: Int): UriBuilder = t(_.withPort(port))
     def userInfo(userInfo: String): UriBuilder = t(_.withUserInfo(userInfo))
@@ -162,7 +163,7 @@ object Http {
     def isEmpty: Boolean = uri.isEmpty
 
     def scheme(): String = uri.scheme
-    def host(): String = uri.authority.host.toString()
+    def host(): Host = uri.authority.host
     def port(): Int = uri.authority.port
     def userInfo(): String = uri.authority.userinfo
 

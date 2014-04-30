@@ -96,6 +96,7 @@ object JavaMapping {
   implicit object DateTime extends Inherited[DateTime, akka.http.util.DateTime]
 
   implicit object ContentType extends Inherited[ContentType, model.ContentType]
+  implicit object Host extends Inherited[Host, model.Uri.Host]
   implicit object HttpCharset extends Inherited[HttpCharset, model.HttpCharset]
   implicit object HttpCharsetRange extends Inherited[HttpCharsetRange, model.HttpCharsetRange]
   implicit object HttpEntity extends Inherited[HttpEntity, model.HttpEntity]
