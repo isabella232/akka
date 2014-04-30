@@ -53,12 +53,14 @@ public class JavaApiTestCases {
 
     /** Build a uri to send a form */
     public static Uri createUriForOrder(String orderId, String price, String amount) {
-        return
-            UriBuilder()
-                .path("/order")
-                .addParameter("orderId", orderId)
-                .addParameter("price", price)
-                .addParameter("amount", amount)
-                .build();
+        return Uri()
+            .path("/order")
+            .addParameter("orderId", orderId)
+            .addParameter("price", price)
+            .addParameter("amount", amount);
+    }
+
+    public static Uri addSessionId(Uri uri) {
+        return uri.addParameter("session", "abcdefghijkl");
     }
 }

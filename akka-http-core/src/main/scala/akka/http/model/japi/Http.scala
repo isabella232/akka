@@ -106,55 +106,7 @@ object Http {
     def entity(contentType: ContentType, file: File): T = entity(HttpEntity(contentType, file))
   }
 
-  def UriBuilder(): UriBuilder = UriBuilder(JavaUri(model.Uri()))
-  def UriBuilder(uri: String): UriBuilder = UriBuilder(Uri(uri))
-  def UriBuilder(reference: Uri): UriBuilder = new UriBuilder {
-    var uri = reference.asScala
-
-    def t(f: model.Uri ⇒ model.Uri): UriBuilder = {
-      this.uri = f(uri)
-      this
-    }
-
-    def scheme(scheme: String): UriBuilder = t(_.withScheme(scheme))
-
-    def host(host: Host): UriBuilder = t(_.withHost(host.asScala))
-    def host(host: String): UriBuilder = t(_.withHost(host))
-    def port(port: Int): UriBuilder = t(_.withPort(port))
-    def userInfo(userInfo: String): UriBuilder = t(_.withUserInfo(userInfo))
-
-    def path(path: String): UriBuilder = t(_.withPath(model.Uri.Path(path)))
-
-    def toRelative: UriBuilder = t(_.toRelative)
-
-    def query(query: String): UriBuilder = t(_.withQuery(query))
-    def addParameter(key: String, value: String): UriBuilder = t { u ⇒
-      u.withQuery(((key -> value) +: u.query.reverse).reverse)
-    }
-
-    def addPathSegment(segment: String): UriBuilder = t { u ⇒
-      import model.Uri.Path
-      import Path._
-
-      @tailrec def endsWithSlash(path: Path): Boolean = path match {
-        case Empty               ⇒ false
-        case Slash(Empty)        ⇒ true
-        case Slash(tail)         ⇒ endsWithSlash(tail)
-        case Segment(head, tail) ⇒ endsWithSlash(tail)
-      }
-
-      val newPath =
-        if (endsWithSlash(u.path)) u.path ++ Path(segment)
-        else u.path ++ Path./(segment)
-
-      u.withPath(newPath)
-    }
-
-    def fragment(fragment: Option[String]): UriBuilder = t(_.copy(fragment = fragment))
-    def fragment(fragment: String): UriBuilder = t(_.withFragment(fragment))
-
-    def build(): Uri = JavaUri(uri)
-  }
+  def Uri(): Uri = Uri(model.Uri())
   def Uri(uri: String): Uri = Uri(model.Uri(uri))
 
   private[japi] case class JavaUri(uri: model.Uri) extends Uri {
@@ -191,6 +143,47 @@ object Http {
     case class Param(key: String, value: String) extends japi.Uri.Parameter
 
     def fragment: Option[String] = uri.fragment
+
+    // Modification methods
+
+    def t(f: model.Uri ⇒ model.Uri): Uri = JavaUri(f(uri))
+
+    def scheme(scheme: String): Uri = t(_.withScheme(scheme))
+
+    def host(host: Host): Uri = t(_.withHost(host.asScala))
+    def host(host: String): Uri = t(_.withHost(host))
+    def port(port: Int): Uri = t(_.withPort(port))
+    def userInfo(userInfo: String): Uri = t(_.withUserInfo(userInfo))
+
+    def path(path: String): Uri = t(_.withPath(model.Uri.Path(path)))
+
+    def toRelative: Uri = t(_.toRelative)
+
+    def query(query: String): Uri = t(_.withQuery(query))
+    def addParameter(key: String, value: String): Uri = t { u ⇒
+      u.withQuery(((key -> value) +: u.query.reverse).reverse)
+    }
+
+    def addPathSegment(segment: String): Uri = t { u ⇒
+      import model.Uri.Path
+      import Path._
+
+      @tailrec def endsWithSlash(path: Path): Boolean = path match {
+        case Empty               ⇒ false
+        case Slash(Empty)        ⇒ true
+        case Slash(tail)         ⇒ endsWithSlash(tail)
+        case Segment(head, tail) ⇒ endsWithSlash(tail)
+      }
+
+      val newPath =
+        if (endsWithSlash(u.path)) u.path ++ Path(segment)
+        else u.path ++ Path./(segment)
+
+      u.withPath(newPath)
+    }
+
+    def fragment(fragment: Option[String]): Uri = t(_.copy(fragment = fragment))
+    def fragment(fragment: String): Uri = t(_.withFragment(fragment))
   }
 
   def Uri(uri: model.Uri): Uri = JavaUri(uri)

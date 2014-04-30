@@ -7,30 +7,25 @@ class JavaApiSpec extends FreeSpec with MustMatchers {
   "The Java API should work for" - {
     "work with Uris" - {
       "addParameter" in {
-        Http.UriBuilder(Http.Uri("/abc"))
-          .addParameter("name", "paul")
-          .build() must be(Http.Uri("/abc?name=paul"))
+        Http.Uri("/abc")
+          .addParameter("name", "paul") must be(Http.Uri("/abc?name=paul"))
       }
       "addSegment" in {
-        Http.UriBuilder(Http.Uri("/abc"))
-          .addPathSegment("def")
-          .build() must be(Http.Uri("/abc/def"))
+        Http.Uri("/abc")
+          .addPathSegment("def") must be(Http.Uri("/abc/def"))
 
-        Http.UriBuilder(Http.Uri("/abc/"))
-          .addPathSegment("def")
-          .build() must be(Http.Uri("/abc/def"))
+        Http.Uri("/abc/")
+          .addPathSegment("def") must be(Http.Uri("/abc/def"))
       }
       "scheme/host/port" in {
-        Http.UriBuilder(Http.Uri("/abc"))
+        Http.Uri("/abc")
           .scheme("http")
           .host("example.com")
-          .port(8258)
-          .build() must be(Http.Uri("http://example.com:8258/abc"))
+          .port(8258) must be(Http.Uri("http://example.com:8258/abc"))
       }
       "toRelative" in {
-        Http.UriBuilder(Http.Uri("http://example.com/abc"))
-          .toRelative
-          .build() must be(Http.Uri("/abc"))
+        Http.Uri("http://example.com/abc")
+          .toRelative must be(Http.Uri("/abc"))
       }
       "pathSegments" in {
         Http.Uri("/abc/def/ghi/jkl")

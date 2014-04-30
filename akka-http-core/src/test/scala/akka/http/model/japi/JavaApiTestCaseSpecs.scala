@@ -47,5 +47,9 @@ class JavaApiTestCaseSpecs extends FreeSpec with MustMatchers {
       JavaApiTestCases.createUriForOrder("123", "149", "42") must be(
         Http.Uri(model.Uri("/order?orderId=123&price=149&amount=42")))
     }
+    "addSessionId" in {
+      val origin = Http.Uri("/order?orderId=123")
+      JavaApiTestCases.addSessionId(origin) must be(Http.Uri("/order?orderId=123&session=abcdefghijkl"))
+    }
   }
 }

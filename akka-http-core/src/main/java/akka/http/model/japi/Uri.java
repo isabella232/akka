@@ -34,4 +34,23 @@ public interface Uri {
     }
 
     Option<String> fragment();
+
+    // Modification methods
+    Uri scheme(String scheme);
+
+    Uri host(Host host);
+    Uri host(String host);
+    Uri port(int port);
+    Uri userInfo(String userInfo);
+
+    Uri path(String path);
+    Uri addPathSegment(String segment);
+    Uri query(String query);
+
+    Uri toRelative();
+
+    Uri addParameter(String key, String value);
+
+    Uri fragment(String fragment);
+    Uri fragment(Option<String> fragment);
 }
