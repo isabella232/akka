@@ -15,6 +15,7 @@ import akka.http.model.parser.UriParser
 import akka.http.model.parser.CharacterClasses._
 import akka.http.util._
 import Uri._
+import java.net.InetAddress
 
 /**
  * An immutable model of an internet URI as defined by http://tools.ietf.org/html/rfc3986.
@@ -310,8 +311,14 @@ object Uri {
     def address: String
     def isEmpty: Boolean
     def toOption: Option[NonEmptyHost]
+    def inetAddresses: immutable.Seq[InetAddress]
     def equalsIgnoreCase(other: Host): Boolean
     override def toString() = UriRendering.HostRenderer.render(new StringRendering, this).get
+
+    // default implementations
+    def isNamedHost: Boolean = false
+    def isIPv6: Boolean = false
+    def isIPv4: Boolean = false
   }
   object Host {
     case object Empty extends Host {
@@ -319,6 +326,8 @@ object Uri {
       def isEmpty = true
       def toOption = None
       def equalsIgnoreCase(other: Host): Boolean = other eq this
+
+      def inetAddresses = Nil
     }
     def apply(string: String, charset: Charset = UTF8, mode: Uri.ParsingMode = Uri.ParsingMode.Relaxed): Host =
       if (!string.isEmpty) new UriParser(string, UTF8, mode).parseHost() else Empty
@@ -334,6 +343,9 @@ object Uri {
       case IPv4Host(`bytes`, _) ⇒ true
       case _                    ⇒ false
     }
+
+    override def isIPv4: Boolean = true
+    def inetAddresses = immutable.Seq(InetAddress.getByAddress(bytes.toArray))
   }
   object IPv4Host {
     def apply(address: String): IPv4Host = apply(address.split('.').map(_.toInt.toByte))
@@ -352,6 +364,9 @@ object Uri {
       case IPv6Host(`bytes`, _) ⇒ true
       case _                    ⇒ false
     }
+
+    override def isIPv6: Boolean = true
+    def inetAddresses = immutable.Seq(InetAddress.getByAddress(bytes.toArray))
   }
   object IPv6Host {
     def apply(bytes: String, address: String): IPv6Host = {
@@ -366,6 +381,9 @@ object Uri {
       case NamedHost(otherAddress) ⇒ address equalsIgnoreCase otherAddress
       case _                       ⇒ false
     }
+
+    override def isNamedHost: Boolean = true
+    def inetAddresses = InetAddress.getAllByName(address).toList
   }
 
   sealed abstract class Path {
