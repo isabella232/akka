@@ -352,9 +352,7 @@ final case class `Content-Type`(contentType: ContentType) extends ModeledHeader 
 // https://tools.ietf.org/html/rfc6265#section-4.2
 object Cookie extends ModeledCompanion {
   implicit val cookieNameValueOnlyRenderer: Renderer[HttpCookie] = new Renderer[HttpCookie] {
-
     def render[R <: Rendering](r: R, c: HttpCookie): r.type = r ~~ c.name ~~ '=' ~~ c.content
-
   }
 
   def apply(cookies: HttpCookie*): Cookie = apply(immutable.Seq(cookies: _*))
@@ -391,9 +389,7 @@ final case class ETag(etag: EntityTag) extends ModeledHeader with japi.headers.E
 // http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-3.1
 object `If-Match` extends ModeledCompanion {
   val `*` = `If-Match`(EntityTagRange.`*`)
-
   def apply(first: EntityTag, more: EntityTag*): `If-Match` =
-
     `If-Match`(EntityTagRange(first +: more: _*))
 
 }
@@ -414,9 +410,7 @@ final case class `If-Modified-Since`(date: DateTime) extends ModeledHeader with 
 // http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-3.2
 object `If-None-Match` extends ModeledCompanion {
   val `*` = `If-None-Match`(EntityTagRange.`*`)
-
   def apply(first: EntityTag, more: EntityTag*): `If-None-Match` =
-
     `If-None-Match`(EntityTagRange(first +: more: _*))
 
 }
@@ -507,7 +501,6 @@ final case class `Proxy-Authorization`(credentials: HttpCredentials) extends Mod
 // http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-26#section-3.1
 object Range extends ModeledCompanion {
   def apply(first: ByteRange, more: ByteRange*): Range = apply(immutable.Seq(first +: more: _*))
-
   def apply(ranges: immutable.Seq[ByteRange]): Range = Range(RangeUnit.Bytes, ranges)
 
   implicit val rangesRenderer = Renderer.defaultSeqRenderer[ByteRange] // cache
@@ -607,7 +600,6 @@ final case class `WWW-Authenticate`(challenges: immutable.Seq[HttpChallenge]) ex
 // http://en.wikipedia.org/wiki/X-Forwarded-For
 object `X-Forwarded-For` extends ModeledCompanion {
   def apply(first: String, more: String*): `X-Forwarded-For` =
-
     apply(immutable.Seq((first +: more).map(RemoteAddress.apply): _*))
 
   def apply(addresses: RemoteAddress*): `X-Forwarded-For` = apply(immutable.Seq(addresses: _*))
