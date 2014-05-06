@@ -10,6 +10,9 @@ import akka.japi.Option
 import java.util
 import scala.annotation.tailrec
 
+import HttpRequest.{ Builder ⇒ HttpRequestBuilder }
+import HttpResponse.{ Builder ⇒ HttpResponseBuilder }
+
 import JavaMapping.Implicits._
 
 object Http {
@@ -68,7 +71,7 @@ object Http {
         model.HttpResponse(status, headers.toList, entity, protocol)
     }
 
-  private trait MessageBuilder[T] extends HttpEntityRegularBuilder[T] {
+  private trait MessageBuilder[T] extends HttpEntityRegular.Builder[T] {
     protected def initialHeaders: Iterable[HttpHeader]
     protected def initialProtocol: HttpProtocol
     protected def entity(entity: HttpEntityRegular): T

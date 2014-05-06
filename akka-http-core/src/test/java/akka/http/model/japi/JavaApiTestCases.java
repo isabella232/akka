@@ -1,12 +1,10 @@
 package akka.http.model.japi;
 
-import static akka.http.model.japi.Http.*;
-
 public class JavaApiTestCases {
     /** Builds a request for use on the client side */
     public static HttpRequest buildRequest() {
         return
-            HttpRequest()
+            HttpRequest.Builder.create()
                 .method(HttpMethods.POST)
                 .uri("/send")
                 .build();
@@ -19,18 +17,18 @@ public class JavaApiTestCases {
                 String name = uri.parameter("name").getOrElse("Mister X");
 
                 return
-                    HttpResponse()
+                    HttpResponse.Builder.create()
                         .entity("Hello " + name + "!")
                         .build();
             } else
                 return
-                    HttpResponse()
+                    HttpResponse.Builder.create()
                         .entity("Not found")
                         .status(404)
                         .build();
         } else
             return
-                HttpResponse()
+                HttpResponse.Builder.create()
                     .entity("Unsupported method")
                     .status(StatusCodes.MethodNotAllowed)
                     .build();
@@ -38,7 +36,7 @@ public class JavaApiTestCases {
     /** Adds authentication to an existing request */
     public static HttpRequest addAuthentication(HttpRequest request) {
         return
-            HttpRequest(request)
+            HttpRequest.Builder.create(request)
                 //.addHeader(Http.Headers.Authorization.basic("username", "password"))
                 .build();
     }
@@ -46,14 +44,14 @@ public class JavaApiTestCases {
     /** Removes cookies from an existing request */
     public static HttpRequest removeCookies(HttpRequest request) {
         return
-            HttpRequest(request)
+            HttpRequest.Builder.create(request)
                 .removeHeader("Cookie")
                 .build();
     }
 
     /** Build a uri to send a form */
     public static Uri createUriForOrder(String orderId, String price, String amount) {
-        return Uri()
+        return Http.Uri()
             .path("/order")
             .addParameter("orderId", orderId)
             .addParameter("price", price)
