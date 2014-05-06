@@ -11,6 +11,8 @@ import scala.collection.immutable
 import akka.util.ByteString
 import waves.{ Flow, StreamProducer }
 import akka.actor.ActorRefFactory
+import java.lang.Iterable
+import japi.JavaMapping.Implicits._
 
 /**
  * Models the entity (aka "body" or "content) of an HTTP message.
@@ -42,17 +44,17 @@ sealed trait HttpEntity extends japi.HttpEntity {
 }
 
 object HttpEntity {
-  implicit def apply(string: String): Regular = apply(ContentTypes.`text/plain(UTF-8)`, string)
-  implicit def apply(bytes: Array[Byte]): Regular = apply(ContentTypes.`application/octet-stream`, bytes)
-  implicit def apply(data: ByteString): Regular = apply(ContentTypes.`application/octet-stream`, data)
-  def apply(contentType: ContentType, string: String): Regular =
+  implicit def apply(string: String): Default = apply(ContentTypes.`text/plain(UTF-8)`, string)
+  implicit def apply(bytes: Array[Byte]): Default = apply(ContentTypes.`application/octet-stream`, bytes)
+  implicit def apply(data: ByteString): Default = apply(ContentTypes.`application/octet-stream`, data)
+  def apply(contentType: ContentType, string: String): Default =
     if (string.isEmpty) empty(contentType) else apply(contentType, ByteString(string.getBytes(contentType.charset.nioCharset)))
-  def apply(contentType: ContentType, bytes: Array[Byte]): Regular =
+  def apply(contentType: ContentType, bytes: Array[Byte]): Default =
     if (bytes.length == 0) empty(contentType) else apply(contentType, ByteString(bytes))
-  def apply(contentType: ContentType, data: ByteString): Regular =
+  def apply(contentType: ContentType, data: ByteString): Default =
     if (data.isEmpty) empty(contentType) else Default(contentType, data.length, StreamProducer.of(data))
 
-  def apply(contentType: ContentType, file: File): Regular = {
+  def apply(contentType: ContentType, file: File): Default = {
     val fileLength = file.length
     if (fileLength > 0) Default(contentType, fileLength, StreamProducer.empty) // TODO: attach from-file-Producer
     else empty(contentType)
@@ -128,16 +130,19 @@ object HttpEntity {
   /**
    * An intermediate entity chunk guaranteed to carry non-empty data.
    */
-  case class Chunk(data: ByteString, extension: String = "") extends ChunkStreamPart {
-    def isLastChunk: Boolean = false
+  case class Chunk(data: ByteString, extension: String = "") extends ChunkStreamPart with japi.Chunk {
+    def isLastChunk = false
   }
 
   /**
    * The last chunk carrying no data and possibly a sequence of trailer headers.
    */
-  case class LastChunk(extension: String = "", trailer: immutable.Seq[HttpHeader] = Nil) extends ChunkStreamPart {
+  case class LastChunk(extension: String = "", trailer: immutable.Seq[HttpHeader] = Nil) extends ChunkStreamPart with japi.LastChunk {
     def data = ByteString.empty
     def isLastChunk = true
+
+    // Java API
+    def getTrailerHeaders: Iterable[japi.HttpHeader] = trailer.asJava
   }
   object LastChunk extends LastChunk("", Nil)
 }

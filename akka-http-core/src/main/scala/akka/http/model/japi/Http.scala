@@ -2,6 +2,7 @@ package akka.http.model.japi
 
 import java.lang.Iterable
 import java.io.File
+import scala.collection.immutable
 import scala.collection.mutable.ListBuffer
 import akka.util.ByteString
 import akka.http.model
@@ -56,7 +57,7 @@ object Http {
       var status: model.StatusCode = model.StatusCodes.OK
       var entity: model.HttpEntity = model.HttpEntity.Empty
 
-      def status(code: Int): HttpResponseBuilder = status(StatusCode(code))
+      def status(code: Int): HttpResponseBuilder = status(StatusCodes.get(code))
       def status(statusCode: StatusCode): HttpResponseBuilder = {
         this.status = statusCode.asScala
         this
@@ -100,13 +101,13 @@ object Http {
       this
     }
 
-    def entity(string: String): T = entity(HttpEntity(string))
-    def entity(bytes: Array[Byte]): T = entity(HttpEntity(bytes))
-    def entity(bytes: ByteString): T = entity(HttpEntity(bytes))
-    def entity(contentType: ContentType, string: String): T = entity(HttpEntity(contentType, string))
-    def entity(contentType: ContentType, bytes: Array[Byte]): T = entity(HttpEntity(contentType, bytes))
-    def entity(contentType: ContentType, bytes: ByteString): T = entity(HttpEntity(contentType, bytes))
-    def entity(contentType: ContentType, file: File): T = entity(HttpEntity(contentType, file))
+    def entity(string: String): T = entity(HttpEntity.C.create(string))
+    def entity(bytes: Array[Byte]): T = entity(HttpEntity.C.create(bytes))
+    def entity(bytes: ByteString): T = entity(HttpEntity.C.create(bytes))
+    def entity(contentType: ContentType, string: String): T = entity(HttpEntity.C.create(contentType, string))
+    def entity(contentType: ContentType, bytes: Array[Byte]): T = entity(HttpEntity.C.create(contentType, bytes))
+    def entity(contentType: ContentType, bytes: ByteString): T = entity(HttpEntity.C.create(contentType, bytes))
+    def entity(contentType: ContentType, file: File): T = entity(HttpEntity.C.create(contentType, file))
   }
 
   def Uri(): Uri = Uri(model.Uri())
@@ -190,18 +191,4 @@ object Http {
   }
 
   def Uri(uri: model.Uri): Uri = JavaUri(uri)
-
-  def StatusCode(code: Int): StatusCode = model.StatusCode.int2StatusCode(code)
-
-  def HttpEntity(string: String): HttpEntityRegular = model.HttpEntity(string)
-  def HttpEntity(bytes: Array[Byte]): HttpEntityRegular = model.HttpEntity(bytes)
-  def HttpEntity(bytes: ByteString): HttpEntityRegular = model.HttpEntity(bytes)
-  def HttpEntity(contentType: ContentType, string: String): HttpEntityRegular =
-    model.HttpEntity(contentType.asScala, string)
-  def HttpEntity(contentType: ContentType, bytes: Array[Byte]): HttpEntityRegular =
-    model.HttpEntity(contentType.asScala, bytes)
-  def HttpEntity(contentType: ContentType, bytes: ByteString): HttpEntityRegular =
-    model.HttpEntity(contentType.asScala, bytes)
-  def HttpEntity(contentType: ContentType, file: File): HttpEntityRegular =
-    model.HttpEntity(contentType.asScala, file)
 }
