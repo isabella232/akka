@@ -2,7 +2,9 @@ package akka.http.model.japi;
 
 import java.util.Map;
 
-public abstract class MediaRanges {
+public final class MediaRanges {
+    private MediaRanges() {}
+
     public static final MediaRange All = akka.http.model.MediaRanges.$times$div$times();
     public static final MediaRange AllApplication = akka.http.model.MediaRanges.application$div$times();
     public static final MediaRange AllAudio = akka.http.model.MediaRanges.audio$div$times();

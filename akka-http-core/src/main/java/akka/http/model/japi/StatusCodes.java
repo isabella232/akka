@@ -1,6 +1,8 @@
 package akka.http.model.japi;
 
-public abstract class StatusCodes {
+public final class StatusCodes {
+    private StatusCodes() {}
+
     public static final StatusCode Continue = akka.http.model.StatusCodes.Continue();
     public static final StatusCode SwitchingProtocols = akka.http.model.StatusCodes.SwitchingProtocols();
     public static final StatusCode Processing = akka.http.model.StatusCodes.Processing();

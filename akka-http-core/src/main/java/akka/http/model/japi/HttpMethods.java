@@ -1,6 +1,8 @@
 package akka.http.model.japi;
 
-public abstract class HttpMethods {
+public final class HttpMethods {
+    private HttpMethods() {}
+
     public static final HttpMethod CONNECT = akka.http.model.HttpMethods.CONNECT();
     public static final HttpMethod DELETE  = akka.http.model.HttpMethods.DELETE();
     public static final HttpMethod GET     = akka.http.model.HttpMethods.GET();

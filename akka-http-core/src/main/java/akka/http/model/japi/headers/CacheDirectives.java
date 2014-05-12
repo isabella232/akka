@@ -1,6 +1,8 @@
 package akka.http.model.japi.headers;
 
-public abstract class CacheDirectives {
+public final class CacheDirectives {
+    private CacheDirectives() {}
+
     public static CacheDirective max_age(long deltaSeconds) {
         return new akka.http.model.headers.CacheDirectives.max$minusage(deltaSeconds);
     }
