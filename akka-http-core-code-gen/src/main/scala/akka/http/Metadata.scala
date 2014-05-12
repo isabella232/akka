@@ -63,7 +63,7 @@ case class HeaderPackageType(name: String) extends SimpleType {
 }
 case class HeaderParameter(name: String, tpe: HeaderType, defaultValue: Option[String]) {
   def javaGetterDefinition: String =
-    s"${tpe.javaType} $javaMethodName();"
+    s"public abstract ${tpe.javaType} $javaMethodName();"
 
   def javaDefinitionInScala: String =
     s"$name: ${tpe.javaTypeAsScala}"

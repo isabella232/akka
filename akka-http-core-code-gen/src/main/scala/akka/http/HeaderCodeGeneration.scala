@@ -20,7 +20,7 @@ object HeaderCodeGeneration {
        |/**
        | *  Model for the `$name` header.${documentation.map(_.split("\n").map("\n *  " + _).mkString).getOrElse("")}${specSource.map("\n *  Specification: " + _).getOrElse("")}
        | */
-       |public interface $javaIdentifier {
+       |public abstract class $javaIdentifier extends akka.http.model.HttpHeader {
        |    ${javaParameterGetterDefinitions("\n    ")}
        |}
        |""".stripMargin
@@ -78,7 +78,7 @@ object HeaderCodeGeneration {
            |""".stripMargin
 
     s"""${specSource.map("// " + _ + "\n").getOrElse("")}object $scalaIdentifier extends ModeledCompanion$companionBody
-       |final case class $scalaIdentifier($scalaParameterDefinitions) extends ModeledHeader with japi.headers.$javaIdentifier {
+       |final case class $scalaIdentifier($scalaParameterDefinitions) extends japi.headers.$javaIdentifier with ModeledHeader {
        |$extraClassBody  def renderValue[R <: Rendering](r: R): r.type = $renderCode
        |  protected def companion = $scalaIdentifier
        |$extraJavaApi}
