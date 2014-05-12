@@ -1,9 +1,9 @@
 package akka.http.model.japi;
 
-import akka.actor.ActorRefFactory;
 import akka.http.model.HttpEntity$;
 import akka.util.ByteString;
 import org.reactivestreams.api.Producer;
+import scala.concurrent.ExecutionContext;
 
 import java.io.File;
 
@@ -16,7 +16,7 @@ public interface HttpEntity {
 
     ContentType contentType();
 
-    Producer<ByteString> getDataBytes(ActorRefFactory refFactory);
+    Producer<ByteString> getDataBytes(ExecutionContext executionContext);
 
     public static abstract class C {
         public static final HttpEntity Empty = HttpEntity$.MODULE$.Empty();

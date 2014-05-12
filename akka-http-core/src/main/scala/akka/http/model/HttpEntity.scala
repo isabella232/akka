@@ -10,9 +10,9 @@ import org.reactivestreams.api.Producer
 import scala.collection.immutable
 import akka.util.ByteString
 import waves.{ Flow, StreamProducer }
-import akka.actor.ActorRefFactory
 import java.lang.Iterable
 import japi.JavaMapping.Implicits._
+import scala.concurrent.ExecutionContext
 
 /**
  * Models the entity (aka "body" or "content) of an HTTP message.
@@ -31,10 +31,10 @@ sealed trait HttpEntity extends japi.HttpEntity {
   /**
    * A stream of the data of this entity.
    */
-  def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString]
+  def dataBytes(implicit ec: ExecutionContext): Producer[ByteString]
 
   // Java API
-  def getDataBytes(refFactory: ActorRefFactory): Producer[ByteString] = dataBytes(refFactory)
+  def getDataBytes(executionContext: ExecutionContext): Producer[ByteString] = dataBytes(executionContext)
 
   // default implementations, should be overridden
   def isCloseDelimited: Boolean = false
@@ -88,7 +88,7 @@ object HttpEntity {
     def isKnownEmpty = contentLength == 0
     override def isDefault: Boolean = true
 
-    def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString] = data
+    def dataBytes(implicit ec: ExecutionContext): Producer[ByteString] = data
   }
 
   /**
@@ -100,7 +100,7 @@ object HttpEntity {
     def isKnownEmpty = data eq StreamProducer.EmptyProducer
     override def isCloseDelimited: Boolean = true
 
-    def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString] = data
+    def dataBytes(implicit ec: ExecutionContext): Producer[ByteString] = data
   }
 
   /**
@@ -109,7 +109,7 @@ object HttpEntity {
   case class Chunked(contentType: ContentType, chunks: Producer[ChunkStreamPart]) extends Regular with japi.HttpEntityChunked {
     def isKnownEmpty = chunks eq StreamProducer.EmptyProducer
     override def isChunked: Boolean = true
-    def dataBytes(implicit refFactory: ActorRefFactory): Producer[ByteString] =
+    def dataBytes(implicit ec: ExecutionContext): Producer[ByteString] =
       Flow(chunks).map(_.data).toProducer
 
     // Java API
