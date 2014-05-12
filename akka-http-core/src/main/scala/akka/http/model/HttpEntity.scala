@@ -83,7 +83,7 @@ object HttpEntity {
    */
   case class Default(contentType: ContentType,
                      contentLength: Long,
-                     data: Producer[ByteString]) extends Regular with japi.HttpEntityDefault {
+                     data: Producer[ByteString]) extends japi.HttpEntityDefault with Regular {
     require(contentLength >= 0, "contentLength must be non-negative")
     def isKnownEmpty = contentLength == 0
     override def isDefault: Boolean = true
@@ -96,7 +96,7 @@ object HttpEntity {
    * The content-length of such responses is unknown at the time the response headers have been received.
    * Note that this type of HttpEntity cannot be used for HttpRequests!
    */
-  case class CloseDelimited(contentType: ContentType, data: Producer[ByteString]) extends HttpEntity with japi.HttpEntityCloseDelimited {
+  case class CloseDelimited(contentType: ContentType, data: Producer[ByteString]) extends japi.HttpEntityCloseDelimited with HttpEntity {
     def isKnownEmpty = data eq StreamProducer.EmptyProducer
     override def isCloseDelimited: Boolean = true
 
@@ -106,7 +106,7 @@ object HttpEntity {
   /**
    * The model for the entity of a chunked HTTP message (with `Transfer-Encoding: chunked`).
    */
-  case class Chunked(contentType: ContentType, chunks: Producer[ChunkStreamPart]) extends Regular with japi.HttpEntityChunked {
+  case class Chunked(contentType: ContentType, chunks: Producer[ChunkStreamPart]) extends japi.HttpEntityChunked with Regular {
     def isKnownEmpty = chunks eq StreamProducer.EmptyProducer
     override def isChunked: Boolean = true
     def dataBytes(implicit ec: ExecutionContext): Producer[ByteString] =
@@ -130,14 +130,14 @@ object HttpEntity {
   /**
    * An intermediate entity chunk guaranteed to carry non-empty data.
    */
-  case class Chunk(data: ByteString, extension: String = "") extends ChunkStreamPart with japi.Chunk {
+  case class Chunk(data: ByteString, extension: String = "") extends japi.Chunk with ChunkStreamPart {
     def isLastChunk = false
   }
 
   /**
    * The last chunk carrying no data and possibly a sequence of trailer headers.
    */
-  case class LastChunk(extension: String = "", trailer: immutable.Seq[HttpHeader] = Nil) extends ChunkStreamPart with japi.LastChunk {
+  case class LastChunk(extension: String = "", trailer: immutable.Seq[HttpHeader] = Nil) extends japi.LastChunk with ChunkStreamPart {
     def data = ByteString.empty
     def isLastChunk = true
 

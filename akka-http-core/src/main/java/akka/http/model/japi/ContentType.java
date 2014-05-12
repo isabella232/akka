@@ -1,17 +1,15 @@
 package akka.http.model.japi;
 
-public interface ContentType {
-    MediaType mediaType();
+public abstract class ContentType {
+    public abstract MediaType mediaType();
 
-    boolean isCharsetDefined();
-    HttpCharset getDefinedCharset();
+    public abstract boolean isCharsetDefined();
+    public abstract HttpCharset getDefinedCharset();
 
-    public static abstract class C {
-        public static ContentType create(MediaType mediaType, HttpCharset charset) {
-            return akka.http.model.ContentType.apply((akka.http.model.MediaType) mediaType, (akka.http.model.HttpCharset) charset);
-        }
-        public static ContentType create(MediaType mediaType) {
-            return akka.http.model.ContentType.apply((akka.http.model.MediaType) mediaType);
-        }
+    public static ContentType create(MediaType mediaType, HttpCharset charset) {
+        return akka.http.model.ContentType.apply((akka.http.model.MediaType) mediaType, (akka.http.model.HttpCharset) charset);
+    }
+    public static ContentType create(MediaType mediaType) {
+        return akka.http.model.ContentType.apply((akka.http.model.MediaType) mediaType);
     }
 }

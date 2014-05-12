@@ -1,9 +1,9 @@
 package akka.http.model.japi;
 
-public interface HttpMethod {
-    String value();
+public abstract class HttpMethod {
+    public abstract String value();
 
-    boolean isSafe();
-    boolean isIdempotent();
-    boolean isEntityAccepted();
+    public abstract boolean isSafe();
+    public abstract boolean isIdempotent();
+    public abstract boolean isEntityAccepted();
 }

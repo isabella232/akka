@@ -2,6 +2,6 @@ package akka.http.model.japi;
 
 import org.reactivestreams.api.Producer;
 
-public interface HttpEntityChunked extends HttpEntityRegular {
-    Producer<ChunkStreamPart> getChunks();
+public abstract class HttpEntityChunked implements HttpEntityRegular {
+    public abstract Producer<ChunkStreamPart> getChunks();
 }

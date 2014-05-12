@@ -9,7 +9,7 @@ import scala.collection.immutable
 import akka.http.util._
 import java.util
 
-sealed abstract class MediaRange extends Renderable with WithQValue[MediaRange] with japi.MediaRange {
+sealed abstract class MediaRange extends japi.MediaRange with Renderable with WithQValue[MediaRange] {
   def value: String
   def mainType: String
   def parameters: Map[String, String]
@@ -148,7 +148,7 @@ sealed abstract case class MediaType private[http] (value: String)(val mainType:
                                                                    val binary: Boolean,
                                                                    val fileExtensions: immutable.Seq[String],
                                                                    val parameters: Map[String, String])
-  extends LazyValueBytesRenderable with WithQValue[MediaRange] with japi.MediaType {
+  extends japi.MediaType with LazyValueBytesRenderable with WithQValue[MediaRange] {
   def isApplication = false
   def isAudio = false
   def isImage = false

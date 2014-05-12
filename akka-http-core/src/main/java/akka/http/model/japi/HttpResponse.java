@@ -1,7 +1,7 @@
 package akka.http.model.japi;
 
-public interface HttpResponse extends HttpMessage {
-    StatusCode status();
+public abstract class HttpResponse implements HttpMessage {
+    public abstract StatusCode status();
 
     public static abstract class Builder implements HttpEntityRegular.Builder<Builder> {
         public static Builder create() {

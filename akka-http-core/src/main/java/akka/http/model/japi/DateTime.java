@@ -2,36 +2,34 @@ package akka.http.model.japi;
 
 import akka.japi.Option;
 
-public interface DateTime {
-    int year();
-    int month();
-    int day();
-    int hour();
-    int minute();
-    int second();
-    int weekday();
-    long clicks();
-    boolean isLeapYear();
+public abstract class DateTime {
+    public abstract int year();
+    public abstract int month();
+    public abstract int day();
+    public abstract int hour();
+    public abstract int minute();
+    public abstract int second();
+    public abstract int weekday();
+    public abstract long clicks();
+    public abstract boolean isLeapYear();
 
-    String weekdayStr();
-    String monthStr();
-    String toIsoDateString();
-    String toIsoDateTimeString();
-    String toIsoLikeDateTimeString();
-    String toRfc1123DateTimeString();
+    public abstract String weekdayStr();
+    public abstract String monthStr();
+    public abstract String toIsoDateString();
+    public abstract String toIsoDateTimeString();
+    public abstract String toIsoLikeDateTimeString();
+    public abstract String toRfc1123DateTimeString();
 
-    class C {
-        public static DateTime now() {
-            return akka.http.util.DateTime.now();
-        }
-        public static Option<DateTime> fromIsoDateTimeString(String isoDateTimeString) {
-            return Util.convertOption(akka.http.util.DateTime.fromIsoDateTimeString(isoDateTimeString));
-        }
-        public static DateTime create(long clicks) {
-            return akka.http.util.DateTime.apply(clicks);
-        }
-        public static DateTime create(int year, int month, int day, int hour, int minute, int second) {
-            return akka.http.util.DateTime.apply(year, month, day, hour, minute, second);
-        }
+    public static DateTime now() {
+        return akka.http.util.DateTime.now();
+    }
+    public static Option<DateTime> fromIsoDateTimeString(String isoDateTimeString) {
+        return Util.convertOption(akka.http.util.DateTime.fromIsoDateTimeString(isoDateTimeString));
+    }
+    public static DateTime create(long clicks) {
+        return akka.http.util.DateTime.apply(clicks);
+    }
+    public static DateTime create(int year, int month, int day, int hour, int minute, int second) {
+        return akka.http.util.DateTime.apply(year, month, day, hour, minute, second);
     }
 }

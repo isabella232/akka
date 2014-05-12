@@ -1,8 +1,8 @@
 package akka.http.model.japi;
 
-public interface HttpCharset {
-    String value();
-    HttpCharsetRange withQValue(float qValue);
+public abstract class HttpCharset {
+    public abstract String value();
+    public abstract HttpCharsetRange withQValue(float qValue);
 
-    Iterable<String> getAliases();
+    public abstract Iterable<String> getAliases();
 }

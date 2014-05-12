@@ -15,7 +15,7 @@ import akka.http.util.{ SingletonValueRenderable, ObjectRegistry }
 case class HttpMethod private[http] (override val value: String,
                                      isSafe: Boolean,
                                      isIdempotent: Boolean,
-                                     isEntityAccepted: Boolean) extends SingletonValueRenderable with japi.HttpMethod {
+                                     isEntityAccepted: Boolean) extends japi.HttpMethod with SingletonValueRenderable {
   // for faster equality checks we use the hashcode of the method name (and make sure it's distinct during registration)
   private[http] val fingerprint = value.##
 

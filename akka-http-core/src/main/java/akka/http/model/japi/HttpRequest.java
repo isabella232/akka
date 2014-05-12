@@ -1,10 +1,10 @@
 package akka.http.model.japi;
 
-public interface HttpRequest extends HttpMessage {
-    HttpMethod method();
-    Uri getUri();
+public abstract class HttpRequest implements HttpMessage {
+    public abstract HttpMethod method();
+    public abstract Uri getUri();
 
-    HttpEntityRegular entity();
+    public abstract HttpEntityRegular entity();
 
     public static abstract class Builder implements HttpEntityRegular.Builder<Builder> {
         public static Builder create() {

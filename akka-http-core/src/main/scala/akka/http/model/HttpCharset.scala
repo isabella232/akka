@@ -14,7 +14,7 @@ import java.lang.Iterable
  * A charset range as encountered in `Accept-Charset`. Can either be a single charset, or `*`
  * if all charsets are supported and optionally a qValue for selecting this choice.
  */
-sealed abstract class HttpCharsetRange extends ValueRenderable with WithQValue[HttpCharsetRange] with japi.HttpCharsetRange {
+sealed abstract class HttpCharsetRange extends japi.HttpCharsetRange with ValueRenderable with WithQValue[HttpCharsetRange] {
   def qValue: Float
   def matches(charset: HttpCharset): Boolean
 
@@ -45,7 +45,7 @@ object HttpCharsetRange {
 }
 
 case class HttpCharset private[http] (override val value: String)(val aliases: immutable.Seq[String])
-  extends SingletonValueRenderable with WithQValue[HttpCharsetRange] with japi.HttpCharset {
+  extends japi.HttpCharset with SingletonValueRenderable with WithQValue[HttpCharsetRange] {
   @transient private[this] var _nioCharset: Charset = Charset.forName(value)
   def nioCharset: Charset = _nioCharset
 

@@ -7,7 +7,7 @@ package akka.http.model
 import akka.http.util.{ SingletonValueRenderable, ObjectRegistry }
 
 /** The protocol of an HTTP message */
-case class HttpProtocol private[http] (override val value: String) extends SingletonValueRenderable with japi.HttpProtocol
+case class HttpProtocol private[http] (override val value: String) extends japi.HttpProtocol with SingletonValueRenderable
 
 object HttpProtocols extends ObjectRegistry[String, HttpProtocol] {
   private def register(p: HttpProtocol): HttpProtocol = register(p.value, p)

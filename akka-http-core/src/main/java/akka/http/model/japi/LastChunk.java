@@ -1,7 +1,11 @@
 package akka.http.model.japi;
 
-public interface LastChunk extends ChunkStreamPart {
-    String extension();
+import akka.http.model.HttpEntity;
 
-    Iterable<HttpHeader> getTrailerHeaders();
+public abstract class LastChunk implements ChunkStreamPart {
+    public abstract Iterable<HttpHeader> getTrailerHeaders();
+
+    public static LastChunk create(String extension, Iterable<HttpHeader> trailers) {
+        return new HttpEntity.LastChunk(extension, Util.<HttpHeader, akka.http.model.HttpHeader>convertIterable(trailers));
+    }
 }

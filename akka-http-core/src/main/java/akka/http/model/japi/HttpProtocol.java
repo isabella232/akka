@@ -1,5 +1,5 @@
 package akka.http.model.japi;
 
-public interface HttpProtocol {
-    String value();
+public abstract class HttpProtocol {
+    public abstract String value();
 }
