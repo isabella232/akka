@@ -4,7 +4,7 @@ import akka.util.ByteString;
 
 import java.io.File;
 
-public interface HttpEntityRegular extends HttpEntity {
+public abstract class HttpEntityRegular extends HttpEntity {
     public static interface Builder<This> {
         This entity(String string);
         This entity(byte[] bytes);

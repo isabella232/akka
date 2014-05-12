@@ -71,7 +71,7 @@ object HttpEntity {
    * it is either chunked or defines a content-length that is known a-priori.
    * Close-delimited entities are not `Regular` as they exists primarily for backwards compatibility with HTTP/1.0.
    */
-  sealed trait Regular extends HttpEntity with japi.HttpEntityRegular {
+  sealed trait Regular extends japi.HttpEntityRegular with HttpEntity {
     override def isRegular: Boolean = true
   }
 

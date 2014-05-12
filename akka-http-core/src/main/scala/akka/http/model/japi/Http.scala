@@ -101,13 +101,13 @@ object Http {
       this
     }
 
-    def entity(string: String): T = entity(HttpEntity.C.create(string))
-    def entity(bytes: Array[Byte]): T = entity(HttpEntity.C.create(bytes))
-    def entity(bytes: ByteString): T = entity(HttpEntity.C.create(bytes))
-    def entity(contentType: ContentType, string: String): T = entity(HttpEntity.C.create(contentType, string))
-    def entity(contentType: ContentType, bytes: Array[Byte]): T = entity(HttpEntity.C.create(contentType, bytes))
-    def entity(contentType: ContentType, bytes: ByteString): T = entity(HttpEntity.C.create(contentType, bytes))
-    def entity(contentType: ContentType, file: File): T = entity(HttpEntity.C.create(contentType, file))
+    def entity(string: String): T = entity(HttpEntity.create(string))
+    def entity(bytes: Array[Byte]): T = entity(HttpEntity.create(bytes))
+    def entity(bytes: ByteString): T = entity(HttpEntity.create(bytes))
+    def entity(contentType: ContentType, string: String): T = entity(HttpEntity.create(contentType, string))
+    def entity(contentType: ContentType, bytes: Array[Byte]): T = entity(HttpEntity.create(contentType, bytes))
+    def entity(contentType: ContentType, bytes: ByteString): T = entity(HttpEntity.create(contentType, bytes))
+    def entity(contentType: ContentType, file: File): T = entity(HttpEntity.create(contentType, file))
   }
 
   def Uri(): Uri = Uri(model.Uri())
