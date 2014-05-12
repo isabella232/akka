@@ -6,6 +6,6 @@ import akka.http.model.japi.DateTime;
  *  Model for the `Last-Modified` header.
  *  Specification: http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-2.2
  */
-public interface Last_Modified {
-    DateTime date();
+public abstract class Last_Modified extends akka.http.model.HttpHeader {
+    public abstract DateTime date();
 }

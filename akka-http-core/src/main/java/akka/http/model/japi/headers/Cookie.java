@@ -6,6 +6,6 @@ package akka.http.model.japi.headers;
  *  Model for the `Cookie` header.
  *  Specification: https://tools.ietf.org/html/rfc6265#section-4.2
  */
-public interface Cookie {
-    Iterable<HttpCookie> getCookies();
+public abstract class Cookie extends akka.http.model.HttpHeader {
+    public abstract Iterable<HttpCookie> getCookies();
 }
