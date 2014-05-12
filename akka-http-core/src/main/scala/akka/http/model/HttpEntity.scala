@@ -120,24 +120,24 @@ object HttpEntity {
    * An element of the HttpEntity data stream.
    * Can be either a `Chunk` or a `LastChunk`.
    */
-  sealed trait ChunkStreamPart extends japi.ChunkStreamPart {
+  sealed abstract class ChunkStreamPart extends japi.ChunkStreamPart {
     def data: ByteString
     def extension: String
-
-    def isRegularChunk: Boolean = !isLastChunk
   }
 
   /**
    * An intermediate entity chunk guaranteed to carry non-empty data.
    */
-  case class Chunk(data: ByteString, extension: String = "") extends japi.Chunk with ChunkStreamPart {
+  case class Chunk(data: ByteString, extension: String = "") extends ChunkStreamPart {
     def isLastChunk = false
+
+    def getTrailerHeaders: Iterable[japi.HttpHeader] = java.util.Collections.emptyList[japi.HttpHeader]
   }
 
   /**
    * The last chunk carrying no data and possibly a sequence of trailer headers.
    */
-  case class LastChunk(extension: String = "", trailer: immutable.Seq[HttpHeader] = Nil) extends japi.LastChunk with ChunkStreamPart {
+  case class LastChunk(extension: String = "", trailer: immutable.Seq[HttpHeader] = Nil) extends ChunkStreamPart {
     def data = ByteString.empty
     def isLastChunk = true
 
