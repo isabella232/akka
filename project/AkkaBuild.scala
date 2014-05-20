@@ -309,7 +309,8 @@ object AkkaBuild extends Build {
       },
       watchSources <++= (sourceDirectory in Compile, excludeFilter in Global) map { (source, excl) =>
         (source / "header-templates") descendantsExcept ("*.header", excl) get
-      }
+      },
+      watchSources <++= (watchSources in akkaHttpCoreCodeGen)
     )
   )
 
