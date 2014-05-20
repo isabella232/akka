@@ -1,5 +1,6 @@
 package akka.http.model.japi;
 
+import akka.http.model.*;
 import akka.japi.Option;
 import org.reactivestreams.api.Producer;
 import scala.collection.immutable.Map$;
@@ -33,5 +34,8 @@ public abstract class Util {
     @SuppressWarnings("unchecked")
     public static <T, U extends T> Seq<U> convertArray(T[] els) {
         return convertIterable(Arrays.asList(els));
+    }
+    public static akka.http.model.Uri convertUri(Uri uri) {
+        return null;
     }
 }

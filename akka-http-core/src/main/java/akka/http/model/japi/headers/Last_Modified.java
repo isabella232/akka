@@ -8,4 +8,8 @@ import akka.http.model.japi.DateTime;
  */
 public abstract class Last_Modified extends akka.http.model.HttpHeader {
     public abstract DateTime date();
+
+    public static Last_Modified create(DateTime date) {
+        return new akka.http.model.headers.Last$minusModified(((akka.http.util.DateTime) date));
+    }
 }

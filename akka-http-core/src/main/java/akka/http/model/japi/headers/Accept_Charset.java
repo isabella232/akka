@@ -8,4 +8,8 @@ import akka.http.model.japi.HttpCharsetRange;
  */
 public abstract class Accept_Charset extends akka.http.model.HttpHeader {
     public abstract Iterable<HttpCharsetRange> getCharsetRanges();
+
+    public static Accept_Charset create(HttpCharsetRange... charsetRanges) {
+        return new akka.http.model.headers.Accept$minusCharset(akka.http.model.japi.Util.<HttpCharsetRange, akka.http.model.HttpCharsetRange>convertArray(charsetRanges));
+    }
 }

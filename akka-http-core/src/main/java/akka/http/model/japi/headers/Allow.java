@@ -8,4 +8,8 @@ import akka.http.model.japi.HttpMethod;
  */
 public abstract class Allow extends akka.http.model.HttpHeader {
     public abstract Iterable<HttpMethod> getMethods();
+
+    public static Allow create(HttpMethod... methods) {
+        return new akka.http.model.headers.Allow(akka.http.model.japi.Util.<HttpMethod, akka.http.model.HttpMethod>convertArray(methods));
+    }
 }

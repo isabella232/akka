@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Accept_Encoding extends akka.http.model.HttpHeader {
     public abstract Iterable<HttpEncodingRange> getEncodings();
+
+    public static Accept_Encoding create(HttpEncodingRange... encodings) {
+        return new akka.http.model.headers.Accept$minusEncoding(akka.http.model.japi.Util.<HttpEncodingRange, akka.http.model.headers.HttpEncodingRange>convertArray(encodings));
+    }
 }

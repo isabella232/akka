@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class ETag extends akka.http.model.HttpHeader {
     public abstract EntityTag etag();
+
+    public static ETag create(EntityTag etag) {
+        return new akka.http.model.headers.ETag(((akka.http.model.headers.EntityTag) etag));
+    }
 }

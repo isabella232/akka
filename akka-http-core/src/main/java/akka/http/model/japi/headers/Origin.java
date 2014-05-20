@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Origin extends akka.http.model.HttpHeader {
     public abstract Iterable<HttpOrigin> getOrigins();
+
+    public static Origin create(HttpOrigin... origins) {
+        return new akka.http.model.headers.Origin(akka.http.model.japi.Util.<HttpOrigin, akka.http.model.headers.HttpOrigin>convertArray(origins));
+    }
 }

@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class User_Agent extends akka.http.model.HttpHeader {
     public abstract Iterable<ProductVersion> getProducts();
+
+    public static User_Agent create(ProductVersion... products) {
+        return new akka.http.model.headers.User$minusAgent(akka.http.model.japi.Util.<ProductVersion, akka.http.model.headers.ProductVersion>convertArray(products));
+    }
 }

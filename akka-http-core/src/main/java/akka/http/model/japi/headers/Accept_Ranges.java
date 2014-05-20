@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Accept_Ranges extends akka.http.model.HttpHeader {
     public abstract Iterable<RangeUnit> getRangeUnits();
+
+    public static Accept_Ranges create(RangeUnit... rangeUnits) {
+        return new akka.http.model.headers.Accept$minusRanges(akka.http.model.japi.Util.<RangeUnit, akka.http.model.headers.RangeUnit>convertArray(rangeUnits));
+    }
 }

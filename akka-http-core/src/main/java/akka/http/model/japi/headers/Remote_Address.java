@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Remote_Address extends akka.http.model.HttpHeader {
     public abstract RemoteAddress address();
+
+    public static Remote_Address create(RemoteAddress address) {
+        return new akka.http.model.headers.Remote$minusAddress(((akka.http.model.headers.RemoteAddress) address));
+    }
 }

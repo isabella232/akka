@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Content_Encoding extends akka.http.model.HttpHeader {
     public abstract Iterable<HttpEncoding> getEncodings();
+
+    public static Content_Encoding create(HttpEncoding... encodings) {
+        return new akka.http.model.headers.Content$minusEncoding(akka.http.model.japi.Util.<HttpEncoding, akka.http.model.headers.HttpEncoding>convertArray(encodings));
+    }
 }

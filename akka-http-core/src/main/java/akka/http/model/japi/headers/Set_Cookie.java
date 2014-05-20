@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Set_Cookie extends akka.http.model.HttpHeader {
     public abstract HttpCookie cookie();
+
+    public static Set_Cookie create(HttpCookie cookie) {
+        return new akka.http.model.headers.Set$minusCookie(((akka.http.model.headers.HttpCookie) cookie));
+    }
 }

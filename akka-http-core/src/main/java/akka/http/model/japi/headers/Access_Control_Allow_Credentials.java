@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Access_Control_Allow_Credentials extends akka.http.model.HttpHeader {
     public abstract boolean allow();
+
+    public static Access_Control_Allow_Credentials create(boolean allow) {
+        return new akka.http.model.headers.Access$minusControl$minusAllow$minusCredentials(allow);
+    }
 }

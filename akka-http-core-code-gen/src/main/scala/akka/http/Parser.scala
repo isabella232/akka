@@ -54,6 +54,7 @@ class HeaderDefinitionParser(val input: ParserInput) extends Parser {
       predefinedType(LongType) |
       predefinedType(BooleanType) |
       predefinedType(UriType) |
+      predefinedType(DateTimeType) |
       (identifier ~ ws ~> BasePackageType)
   }
 

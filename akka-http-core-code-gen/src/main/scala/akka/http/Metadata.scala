@@ -7,6 +7,9 @@ sealed trait HeaderType {
 
   def scalaType: String
 
+  def javaParameterDefinition(identifier: String): String = s"$javaType $identifier"
+  def convertToScala(identifier: String): String = identifier
+
   def baseTypeNames: Set[String]
 }
 case class SeqType(of: SimpleType) extends HeaderType {
@@ -16,6 +19,9 @@ case class SeqType(of: SimpleType) extends HeaderType {
 
   def scalaType: String = s"immutable.Seq[${of.scalaType}]"
 
+  override def javaParameterDefinition(identifier: String): String = s"${of.javaType}... $identifier"
+  override def convertToScala(identifier: String): String = s"akka.http.model.japi.Util.<${of.javaType}, ${of.fullScalaType}>convertArray($identifier)"
+
   def baseTypeNames: Set[String] = of.baseTypeNames
 }
 case class MapType(keyType: SimpleType, valueType: SimpleType) extends HeaderType {
@@ -24,6 +30,8 @@ case class MapType(keyType: SimpleType, valueType: SimpleType) extends HeaderTyp
   def javaMethodName(name: String): String = s"get${name.upperCased}"
 
   def scalaType: String = s"Map[${keyType.scalaType}, ${valueType.scalaType}]"
+
+  override def convertToScala(identifier: String): String = s"akka.http.model.japi.Util.convertMapToScala($identifier)"
 
   def baseTypeNames: Set[String] = keyType.baseTypeNames ++ valueType.baseTypeNames
 }
@@ -45,6 +53,7 @@ sealed trait SimpleType extends HeaderType {
   def javaMethodName(name: String): String = name
 
   def scalaType: String = name
+  def fullScalaType: String = scalaType
 }
 case class BaseType(name: String) extends SimpleType {
   def baseTypeNames: Set[String] = Set.empty
@@ -56,14 +65,22 @@ case class PrimitiveType(name: String) extends SimpleType {
 }
 case class BasePackageType(name: String) extends SimpleType {
   def baseTypeNames: Set[String] = Set(name)
+
+  override def fullScalaType: String = s"akka.http.model.$name"
+  override def convertToScala(identifier: String): String = s"(($fullScalaType) $identifier)"
 }
 case class HeaderPackageType(name: String) extends SimpleType {
   override def javaTypeAsScala: String = s"headers.$name"
   def baseTypeNames: Set[String] = Set.empty
+
+  override def fullScalaType: String = s"akka.http.model.headers.$name"
+  override def convertToScala(identifier: String): String = s"(($fullScalaType) $identifier)"
 }
 case class HeaderParameter(name: String, tpe: HeaderType, defaultValue: Option[String]) {
   def javaGetterDefinition: String =
     s"public abstract ${tpe.javaType} $javaMethodName();"
+
+  def javaParameterDefinition: String = tpe.javaParameterDefinition(name)
 
   def javaDefinitionInScala: String =
     s"$name: ${tpe.javaTypeAsScala}"
@@ -72,6 +89,8 @@ case class HeaderParameter(name: String, tpe: HeaderType, defaultValue: Option[S
 
   def scalaDefinition: String =
     s"$name: ${tpe.scalaType}" + defaultValue.map(" = " + _).getOrElse("")
+
+  def javaParameterToScala: String = tpe.convertToScala(name)
 }
 
 object HeaderType {
@@ -89,6 +108,13 @@ case object UriType extends SimpleType {
   //override def javaType: String = super.javaType
 
   override def javaMethodName(name: String): String = s"get${name.upperCased}"
+
+  override def convertToScala(identifier: String): String = s"akka.http.model.japi.Util.convertUri($identifier)"
+}
+case object DateTimeType extends SimpleType {
+  def name: String = "DateTime"
+  def baseTypeNames: Set[String] = Set(name)
+  override def convertToScala(identifier: String): String = s"((akka.http.util.DateTime) $identifier)"
 }
 
 case class HttpHeaderDefinition(
@@ -109,6 +135,12 @@ case class HttpHeaderDefinition(
   def javaParameterInScalaDefinitions(sep: String): String =
     parameters.map(_.javaDefinitionInScala).mkString(sep)
 
+  def javaParameterDefinitions(sep: String): String =
+    parameters.map(_.javaParameterDefinition).mkString(sep)
+
+  def javaParameterToScala(sep: String): String =
+    parameters.map(_.javaParameterToScala).mkString(sep)
+
   def neededImportStatements(sep: String): String =
     parameters.flatMap(_.tpe.baseTypeNames).toSeq.sorted
       .map(name ⇒ s"import akka.http.model.japi.$name;")
@@ -117,6 +149,9 @@ case class HttpHeaderDefinition(
   def scalaIdentifier: String =
     if (name.contains("-")) s"`$name`"
     else name
+
+  def scalaIdentifierInJava: String =
+    name.replace("-", "$minus")
 
   def scalaParameterDefinitions: String =
     parameters.map(_.scalaDefinition).mkString(", ")

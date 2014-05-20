@@ -9,4 +9,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Raw_Request_URI extends akka.http.model.HttpHeader {
     public abstract String uri();
+
+    public static Raw_Request_URI create(String uri) {
+        return new akka.http.model.headers.Raw$minusRequest$minusURI(uri);
+    }
 }

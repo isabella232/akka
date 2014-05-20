@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Accept_Language extends akka.http.model.HttpHeader {
     public abstract Iterable<LanguageRange> getLanguages();
+
+    public static Accept_Language create(LanguageRange... languages) {
+        return new akka.http.model.headers.Accept$minusLanguage(akka.http.model.japi.Util.<LanguageRange, akka.http.model.headers.LanguageRange>convertArray(languages));
+    }
 }

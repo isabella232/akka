@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Proxy_Authorization extends akka.http.model.HttpHeader {
     public abstract HttpCredentials credentials();
+
+    public static Proxy_Authorization create(HttpCredentials credentials) {
+        return new akka.http.model.headers.Proxy$minusAuthorization(((akka.http.model.headers.HttpCredentials) credentials));
+    }
 }

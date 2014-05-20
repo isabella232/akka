@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class If_Match extends akka.http.model.HttpHeader {
     public abstract EntityTagRange m();
+
+    public static If_Match create(EntityTagRange m) {
+        return new akka.http.model.headers.If$minusMatch(((akka.http.model.headers.EntityTagRange) m));
+    }
 }

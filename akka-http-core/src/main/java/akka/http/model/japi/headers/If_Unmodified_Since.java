@@ -8,4 +8,8 @@ import akka.http.model.japi.DateTime;
  */
 public abstract class If_Unmodified_Since extends akka.http.model.HttpHeader {
     public abstract DateTime date();
+
+    public static If_Unmodified_Since create(DateTime date) {
+        return new akka.http.model.headers.If$minusUnmodified$minusSince(((akka.http.util.DateTime) date));
+    }
 }

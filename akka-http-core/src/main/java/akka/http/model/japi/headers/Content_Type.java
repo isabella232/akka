@@ -8,4 +8,8 @@ import akka.http.model.japi.ContentType;
  */
 public abstract class Content_Type extends akka.http.model.HttpHeader {
     public abstract ContentType contentType();
+
+    public static Content_Type create(ContentType contentType) {
+        return new akka.http.model.headers.Content$minusType(((akka.http.model.ContentType) contentType));
+    }
 }

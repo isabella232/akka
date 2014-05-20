@@ -8,4 +8,8 @@ import akka.http.model.japi.Uri;
  */
 public abstract class Location extends akka.http.model.HttpHeader {
     public abstract Uri getUri();
+
+    public static Location create(Uri uri) {
+        return new akka.http.model.headers.Location(akka.http.model.japi.Util.convertUri(uri));
+    }
 }

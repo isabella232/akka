@@ -8,4 +8,8 @@ import akka.http.model.japi.DateTime;
  */
 public abstract class Date extends akka.http.model.HttpHeader {
     public abstract DateTime date();
+
+    public static Date create(DateTime date) {
+        return new akka.http.model.headers.Date(((akka.http.util.DateTime) date));
+    }
 }

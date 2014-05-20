@@ -11,5 +11,4 @@ object GenerateHeadersApp extends App {
 
   definitions.foreach(HeaderCodeGeneration.generateJApi)
   HeaderCodeGeneration.generateHeadersScala(definitions)
-  HeaderCodeGeneration.generateJavaHeaderConstructors(definitions)
 }

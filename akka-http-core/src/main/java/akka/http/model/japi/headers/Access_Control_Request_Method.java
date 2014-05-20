@@ -8,4 +8,8 @@ import akka.http.model.japi.HttpMethod;
  */
 public abstract class Access_Control_Request_Method extends akka.http.model.HttpHeader {
     public abstract HttpMethod method();
+
+    public static Access_Control_Request_Method create(HttpMethod method) {
+        return new akka.http.model.headers.Access$minusControl$minusRequest$minusMethod(((akka.http.model.HttpMethod) method));
+    }
 }

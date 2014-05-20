@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Server extends akka.http.model.HttpHeader {
     public abstract Iterable<ProductVersion> getProducts();
+
+    public static Server create(ProductVersion... products) {
+        return new akka.http.model.headers.Server(akka.http.model.japi.Util.<ProductVersion, akka.http.model.headers.ProductVersion>convertArray(products));
+    }
 }

@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Cache_Control extends akka.http.model.HttpHeader {
     public abstract Iterable<CacheDirective> getDirectives();
+
+    public static Cache_Control create(CacheDirective... directives) {
+        return new akka.http.model.headers.Cache$minusControl(akka.http.model.japi.Util.<CacheDirective, akka.http.model.headers.CacheDirective>convertArray(directives));
+    }
 }

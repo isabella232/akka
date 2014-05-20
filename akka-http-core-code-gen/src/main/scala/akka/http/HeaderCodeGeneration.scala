@@ -22,6 +22,10 @@ object HeaderCodeGeneration {
        | */
        |public abstract class $javaIdentifier extends akka.http.model.HttpHeader {
        |    ${javaParameterGetterDefinitions("\n    ")}
+       |
+       |    public static $javaIdentifier create(${javaParameterDefinitions(", ")}) {
+       |        return new akka.http.model.headers.$scalaIdentifierInJava(${javaParameterToScala(", ")});
+       |    }
        |}
        |""".stripMargin
   }

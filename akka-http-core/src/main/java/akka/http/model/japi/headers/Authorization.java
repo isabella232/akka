@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Authorization extends akka.http.model.HttpHeader {
     public abstract HttpCredentials credentials();
+
+    public static Authorization create(HttpCredentials credentials) {
+        return new akka.http.model.headers.Authorization(((akka.http.model.headers.HttpCredentials) credentials));
+    }
 }

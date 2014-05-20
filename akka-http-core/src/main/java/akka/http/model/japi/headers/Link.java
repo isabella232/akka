@@ -8,4 +8,8 @@ package akka.http.model.japi.headers;
  */
 public abstract class Link extends akka.http.model.HttpHeader {
     public abstract Iterable<LinkValue> getValues();
+
+    public static Link create(LinkValue... values) {
+        return new akka.http.model.headers.Link(akka.http.model.japi.Util.<LinkValue, akka.http.model.headers.LinkValue>convertArray(values));
+    }
 }
