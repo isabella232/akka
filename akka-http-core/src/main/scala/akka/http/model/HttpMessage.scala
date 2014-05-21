@@ -312,7 +312,3 @@ case class HttpResponse(status: StatusCode = StatusCodes.OK,
   def withStatus(statusCode: Int): akka.http.model.japi.HttpResponse = copy(status = statusCode)
   def withStatus(statusCode: akka.http.model.japi.StatusCode): akka.http.model.japi.HttpResponse = copy(status = statusCode.asInstanceOf[StatusCode])
 }
-
-object HttpResponse {
-  def apply(status: StatusCode, entity: HttpEntity): HttpResponse = HttpResponse(status, Nil, entity)
-}
