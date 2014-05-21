@@ -11,12 +11,15 @@ import akka.parboiled2.UTF8
 import akka.http.model.parser.UriParser
 import akka.http.util._
 
-abstract class HttpOriginRange extends ValueRenderable {
+import akka.http.model.japi.JavaMapping.Implicits._
+
+abstract class HttpOriginRange extends japi.headers.HttpOriginRange with ValueRenderable {
   def matches(origin: HttpOrigin): Boolean
+
+  // Java API
+  def matches(origin: japi.headers.HttpOrigin): Boolean = matches(origin.asScala)
 }
 object HttpOriginRange {
-  implicit val originsRenderer: Renderer[immutable.Seq[HttpOrigin]] = Renderer.seqRenderer(" ", "null")
-
   case object `*` extends HttpOriginRange {
     def matches(origin: HttpOrigin) = true
     def render[R <: Rendering](r: R): r.type = r ~~ '*'
@@ -30,10 +33,12 @@ object HttpOriginRange {
   }
 }
 
-final case class HttpOrigin(scheme: String, host: Host) extends ValueRenderable {
+final case class HttpOrigin(scheme: String, host: Host) extends japi.headers.HttpOrigin with ValueRenderable {
   def render[R <: Rendering](r: R): r.type = host.renderValue(r ~~ scheme ~~ "://")
 }
 object HttpOrigin {
+  implicit val originsRenderer: Renderer[immutable.Seq[HttpOrigin]] = Renderer.seqRenderer(" ", "null")
+
   implicit def apply(str: String): HttpOrigin = {
     val parser = new UriParser(str, UTF8, Uri.ParsingMode.Relaxed)
     parser.parseOrigin()
