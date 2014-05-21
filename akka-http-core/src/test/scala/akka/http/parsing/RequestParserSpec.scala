@@ -156,7 +156,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
             |
             |"""
         val baseRequest = HttpRequest(PATCH, "/data", List(Host("ping"), `Content-Type`(`application/pdf`),
-          Connection("lalelu"), `Transfer-Encoding`(TransferEncoding.chunked)))
+          Connection("lalelu"), `Transfer-Encoding`(TransferEncodings.chunked)))
 
         "request start" in new Test {
           Seq(start, "rest") should generalMultiParseTo(
@@ -219,7 +219,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
             |
             |"""
         val baseRequest = HttpRequest(PATCH, "/data", List(Host("ping"), Connection("lalelu"),
-          `Transfer-Encoding`(TransferEncoding.chunked)), HttpEntity.Chunked(`application/octet-stream`, StreamProducer.empty))
+          `Transfer-Encoding`(TransferEncodings.chunked)), HttpEntity.Chunked(`application/octet-stream`, StreamProducer.empty))
 
         "an illegal char after chunk size" in new Test {
           Seq(start,

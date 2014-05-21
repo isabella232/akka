@@ -7,8 +7,9 @@ package akka.http.model
 import language.implicitConversions
 import scala.collection.immutable
 import akka.http.util._
+import java.util
 
-sealed abstract class MediaRange extends Renderable with WithQValue[MediaRange] {
+sealed abstract class MediaRange extends japi.MediaRange with Renderable with WithQValue[MediaRange] {
   def value: String
   def mainType: String
   def parameters: Map[String, String]
@@ -32,6 +33,16 @@ sealed abstract class MediaRange extends Renderable with WithQValue[MediaRange] 
    * Constructs a `ContentTypeRange` from this instance and the given charset.
    */
   def withCharset(charsetRange: HttpCharsetRange): ContentTypeRange = ContentTypeRange(this, charsetRange)
+
+  // Java API
+  def getParameters: util.Map[String, String] = {
+    import collection.JavaConverters._
+    parameters.asJava
+  }
+  def matches(mediaType: japi.MediaType): Boolean = {
+    import japi.JavaMapping.Implicits._
+    matches(mediaType.asScala)
+  }
 }
 
 object MediaRange {
@@ -137,7 +148,7 @@ sealed abstract case class MediaType private[http] (value: String)(val mainType:
                                                                    val binary: Boolean,
                                                                    val fileExtensions: immutable.Seq[String],
                                                                    val parameters: Map[String, String])
-  extends LazyValueBytesRenderable with WithQValue[MediaRange] {
+  extends japi.MediaType with LazyValueBytesRenderable with WithQValue[MediaRange] {
   def isApplication = false
   def isAudio = false
   def isImage = false

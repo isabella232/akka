@@ -2,21 +2,34 @@
  * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package akka.http.model.headers
+package akka.http.model
+package headers
 
 import akka.http.util.{ Rendering, SingletonValueRenderable, Renderable }
 
-sealed trait TransferEncoding extends Renderable
+import akka.http.model.japi.JavaMapping.Implicits._
 
-object TransferEncoding {
-  case object chunked extends TransferEncoding with SingletonValueRenderable
-  case object compress extends TransferEncoding with SingletonValueRenderable
-  case object deflate extends TransferEncoding with SingletonValueRenderable
-  case object gzip extends TransferEncoding with SingletonValueRenderable
-  case class Extension(name: String, params: Map[String, String] = Map.empty) extends TransferEncoding {
+sealed abstract class TransferEncoding extends japi.headers.TransferEncoding with Renderable {
+  def name: String
+  def parameters: Map[String, String]
+
+  def getParameters: java.util.Map[String, String] = parameters.asJava
+}
+
+object TransferEncodings {
+  protected abstract class Predefined extends TransferEncoding with SingletonValueRenderable {
+    def name: String = value
+    def parameters: Map[String, String] = Map.empty
+  }
+
+  case object chunked extends Predefined
+  case object compress extends Predefined
+  case object deflate extends Predefined
+  case object gzip extends Predefined
+  case class Extension(name: String, parameters: Map[String, String] = Map.empty) extends TransferEncoding {
     def render[R <: Rendering](r: R): r.type = {
       r ~~ name
-      params foreach { case (k, v) ⇒ r ~~ "; " ~~ k ~~ '=' ~~# v }
+      parameters foreach { case (k, v) ⇒ r ~~ "; " ~~ k ~~ '=' ~~# v }
       r
     }
   }

@@ -9,12 +9,15 @@ import java.io.File
 import org.reactivestreams.api.Producer
 import scala.collection.immutable
 import akka.util.ByteString
-import akka.stream.scaladsl.StreamProducer
+import akka.stream.FlowMaterializer
+import akka.stream.scaladsl.{ StreamProducer, Flow }
+import java.lang.Iterable
+import japi.JavaMapping.Implicits._
 
 /**
  * Models the entity (aka "body" or "content) of an HTTP message.
  */
-sealed trait HttpEntity {
+sealed trait HttpEntity extends japi.HttpEntity {
   /**
    * Determines whether this entity is known to be empty.
    */
@@ -24,20 +27,34 @@ sealed trait HttpEntity {
    * The `ContentType` associated with this entity.
    */
   def contentType: ContentType
+
+  /**
+   * A stream of the data of this entity.
+   */
+  def dataBytes(implicit materializer: FlowMaterializer): Producer[ByteString]
+
+  // Java API
+  def getDataBytes(materializer: FlowMaterializer): Producer[ByteString] = dataBytes(materializer)
+
+  // default implementations, should be overridden
+  def isCloseDelimited: Boolean = false
+  def isDefault: Boolean = false
+  def isChunked: Boolean = false
+  def isRegular: Boolean = false
 }
 
 object HttpEntity {
-  implicit def apply(string: String): Regular = apply(ContentTypes.`text/plain(UTF-8)`, string)
-  implicit def apply(bytes: Array[Byte]): Regular = apply(ContentTypes.`application/octet-stream`, bytes)
-  implicit def apply(data: ByteString): Regular = apply(ContentTypes.`application/octet-stream`, data)
-  def apply(contentType: ContentType, string: String): Regular =
+  implicit def apply(string: String): Default = apply(ContentTypes.`text/plain(UTF-8)`, string)
+  implicit def apply(bytes: Array[Byte]): Default = apply(ContentTypes.`application/octet-stream`, bytes)
+  implicit def apply(data: ByteString): Default = apply(ContentTypes.`application/octet-stream`, data)
+  def apply(contentType: ContentType, string: String): Default =
     if (string.isEmpty) empty(contentType) else apply(contentType, ByteString(string.getBytes(contentType.charset.nioCharset)))
-  def apply(contentType: ContentType, bytes: Array[Byte]): Regular =
+  def apply(contentType: ContentType, bytes: Array[Byte]): Default =
     if (bytes.length == 0) empty(contentType) else apply(contentType, ByteString(bytes))
-  def apply(contentType: ContentType, data: ByteString): Regular =
+  def apply(contentType: ContentType, data: ByteString): Default =
     if (data.isEmpty) empty(contentType) else Default(contentType, data.length, StreamProducer.of(data))
 
-  def apply(contentType: ContentType, file: File): Regular = {
+  def apply(contentType: ContentType, file: File): Default = {
     val fileLength = file.length
     if (fileLength > 0) Default(contentType, fileLength, StreamProducer.empty) // TODO: attach from-file-Producer
     else empty(contentType)
@@ -54,7 +71,9 @@ object HttpEntity {
    * it is either chunked or defines a content-length that is known a-priori.
    * Close-delimited entities are not `Regular` as they exists primarily for backwards compatibility with HTTP/1.0.
    */
-  sealed trait Regular extends HttpEntity
+  sealed trait Regular extends japi.HttpEntityRegular with HttpEntity {
+    override def isRegular: Boolean = true
+  }
 
   // TODO: re-establish serializability
   // TODO: equal/hashcode ?
@@ -64,9 +83,12 @@ object HttpEntity {
    */
   case class Default(contentType: ContentType,
                      contentLength: Long,
-                     data: Producer[ByteString]) extends Regular {
+                     data: Producer[ByteString]) extends japi.HttpEntityDefault with Regular {
     require(contentLength >= 0, "contentLength must be non-negative")
     def isKnownEmpty = contentLength == 0
+    override def isDefault: Boolean = true
+
+    def dataBytes(implicit materializer: FlowMaterializer): Producer[ByteString] = data
   }
 
   /**
@@ -74,25 +96,33 @@ object HttpEntity {
    * The content-length of such responses is unknown at the time the response headers have been received.
    * Note that this type of HttpEntity cannot be used for HttpRequests!
    */
-  case class CloseDelimited(contentType: ContentType, data: Producer[ByteString]) extends HttpEntity {
+  case class CloseDelimited(contentType: ContentType, data: Producer[ByteString]) extends japi.HttpEntityCloseDelimited with HttpEntity {
     def isKnownEmpty = data eq StreamProducer.EmptyProducer
+    override def isCloseDelimited: Boolean = true
+
+    def dataBytes(implicit materializer: FlowMaterializer): Producer[ByteString] = data
   }
 
   /**
    * The model for the entity of a chunked HTTP message (with `Transfer-Encoding: chunked`).
    */
-  case class Chunked(contentType: ContentType, chunks: Producer[ChunkStreamPart]) extends Regular {
+  case class Chunked(contentType: ContentType, chunks: Producer[ChunkStreamPart]) extends japi.HttpEntityChunked with Regular {
     def isKnownEmpty = chunks eq StreamProducer.EmptyProducer
+    override def isChunked: Boolean = true
+    def dataBytes(implicit materializer: FlowMaterializer): Producer[ByteString] =
+      Flow(chunks).map(_.data).toProducer(materializer)
+
+    // Java API
+    def getChunks: Producer[japi.ChunkStreamPart] = chunks.asInstanceOf[Producer[japi.ChunkStreamPart]]
   }
 
   /**
    * An element of the HttpEntity data stream.
    * Can be either a `Chunk` or a `LastChunk`.
    */
-  sealed trait ChunkStreamPart {
+  sealed abstract class ChunkStreamPart extends japi.ChunkStreamPart {
     def data: ByteString
     def extension: String
-    def isLastChunk: Boolean
   }
 
   /**
@@ -100,14 +130,19 @@ object HttpEntity {
    */
   case class Chunk(data: ByteString, extension: String = "") extends ChunkStreamPart {
     def isLastChunk = false
+
+    def getTrailerHeaders: Iterable[japi.HttpHeader] = java.util.Collections.emptyList[japi.HttpHeader]
   }
 
   /**
-   * An intermediate entity chunk guaranteed to carry non-empty data.
+   * The last chunk carrying no data and possibly a sequence of trailer headers.
    */
   case class LastChunk(extension: String = "", trailer: immutable.Seq[HttpHeader] = Nil) extends ChunkStreamPart {
     def data = ByteString.empty
     def isLastChunk = true
+
+    // Java API
+    def getTrailerHeaders: Iterable[japi.HttpHeader] = trailer.asJava
   }
   object LastChunk extends LastChunk("", Nil)
 }

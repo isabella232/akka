@@ -7,6 +7,9 @@ package headers
 
 import org.parboiled2.CharPredicate
 import akka.http.util._
+import akka.japi.{ Option ⇒ JOption }
+
+import akka.http.model.japi.JavaMapping.Implicits._
 
 // see http://tools.ietf.org/html/rfc6265
 case class HttpCookie(
@@ -18,7 +21,7 @@ case class HttpCookie(
   path: Option[String] = None,
   secure: Boolean = false,
   httpOnly: Boolean = false,
-  extension: Option[String] = None) extends ValueRenderable {
+  extension: Option[String] = None) extends japi.headers.HttpCookie with ValueRenderable {
 
   import HttpCookie._
 
@@ -40,6 +43,13 @@ case class HttpCookie(
     if (extension.isDefined) r ~~ ';' ~~ ' ' ~~ extension.get
     r
   }
+
+  // Java API
+  def getExtension: JOption[String] = extension.asJava
+  def getPath: JOption[String] = path.asJava
+  def getDomain: JOption[String] = domain.asJava
+  def getMaxAge: JOption[java.lang.Long] = maxAge.asJava
+  def getExpires: JOption[japi.DateTime] = expires.asJava
 }
 
 object HttpCookie {
