@@ -12,7 +12,7 @@ import org.reactivestreams.api.Producer
 import akka.stream.{ FlattenStrategy, FlowMaterializer, Transformer }
 import akka.stream.impl.Ast.{ ExistingProducer, IterableProducerNode, IteratorProducerNode, ThunkProducerNode }
 import akka.stream.impl.Ast.FutureProducerNode
-import akka.stream.impl.FlowImpl
+import akka.stream.impl.{ FileAndPos, FlowImpl }
 
 /**
  * Scala API
@@ -264,7 +264,7 @@ trait Flow[+T] {
    * The given FlowMaterializer decides how the flow’s logical structure is
    * broken down into individual processing steps.
    */
-  def toFuture(materializer: FlowMaterializer): Future[T]
+  def toFuture(materializer: FlowMaterializer)(implicit pos: FileAndPos): Future[T]
 
   /**
    * Attaches a consumer to this stream which will just discard all received

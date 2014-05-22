@@ -324,6 +324,7 @@ object AkkaBuild extends Build {
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ experimentalSettings ++ javadocSettings ++ OSGi.stream ++ Seq(
       version := "0.3-SNAPSHOT",
       libraryDependencies ++= Dependencies.stream,
+      libraryDependencies <+= scalaVersion("org.scala-lang" % "scala-reflect" % _ % "provided"),
       // FIXME include mima when akka-stream-experimental-2.3.x has been released
       //previousArtifact := akkaPreviousArtifact("akka-stream-experimental")
       previousArtifact := None,

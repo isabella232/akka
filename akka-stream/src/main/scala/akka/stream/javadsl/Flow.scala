@@ -17,7 +17,7 @@ import akka.japi.Util.immutableSeq
 import akka.stream.{ FlattenStrategy, FlowMaterializer, Transformer }
 import akka.stream.scaladsl.{ Flow ⇒ SFlow }
 import org.reactivestreams.api.Consumer
-import akka.stream.impl.DuctImpl
+import akka.stream.impl.{ FileAndPos, DuctImpl }
 
 /**
  * Java API
@@ -388,7 +388,7 @@ private[akka] class FlowAdapter[T](delegate: SFlow[T]) extends Flow[T] {
     new FlowAdapter(delegate.appendJava(duct))
 
   override def toFuture(materializer: FlowMaterializer): Future[T] =
-    delegate.toFuture(materializer)
+    delegate.toFuture(materializer)(FileAndPos("fromjava", 0))
 
   override def consume(materializer: FlowMaterializer): Unit =
     delegate.consume(materializer)

@@ -34,14 +34,14 @@ private[akka] case class FlowImpl[I, O](producerNode: Ast.ProducerNode[I], ops: 
   override def appendJava[U](duct: akka.stream.javadsl.Duct[_ >: O, U]): Flow[U] =
     copy(ops = duct.ops ++: ops)
 
-  override def toFuture(materializer: FlowMaterializer): Future[O] = {
+  override def toFuture(materializer: FlowMaterializer)(implicit pos: FileAndPos): Future[O] = {
     val p = Promise[O]()
     transform(new Transformer[O, Unit] {
       var done = false
       override def onNext(in: O) = { p success in; done = true; Nil }
       override def onError(e: Throwable) = { p failure e }
       override def isComplete = done
-      override def onTermination(e: Option[Throwable]) = { p.tryFailure(new NoSuchElementException("empty stream")); Nil }
+      override def onTermination(e: Option[Throwable]) = { p.tryFailure(new NoSuchElementException("empty stream created at " + pos)); Nil }
     }).consume(materializer)
     p.future
   }

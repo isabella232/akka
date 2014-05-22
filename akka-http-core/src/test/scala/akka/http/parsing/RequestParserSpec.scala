@@ -7,7 +7,7 @@ package akka.http.parsing
 import com.typesafe.config.{ ConfigFactory, Config }
 import scala.concurrent.{ Future, Await }
 import scala.concurrent.duration._
-import org.scalatest.{ BeforeAndAfterAll, FreeSpec, Matchers }
+import org.scalatest.{ Tag, BeforeAndAfterAll, FreeSpec, Matchers }
 import org.scalatest.matchers.Matcher
 import org.reactivestreams.api.Producer
 import akka.stream.scaladsl.{ Flow, StreamProducer }
@@ -24,6 +24,8 @@ import HttpProtocols._
 import StatusCodes._
 import HttpEntity._
 import ParserOutput.ParseError
+
+object Only extends Tag("only")
 
 class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
   val testConf: Config = ConfigFactory.parseString("""
@@ -158,7 +160,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
         val baseRequest = HttpRequest(PATCH, "/data", List(Host("ping"), `Content-Type`(`application/pdf`),
           Connection("lalelu"), `Transfer-Encoding`(TransferEncoding.chunked)))
 
-        "request start" in new Test {
+        "request start" taggedAs (Only) in new Test {
           Seq(start, "rest") should generalMultiParseTo(
             Right(baseRequest.withEntity(HttpEntity.Chunked(`application/pdf`, StreamProducer.empty))),
             Left(ParseError(400: StatusCode, ErrorInfo("Illegal character 'r' in chunk start"))))
@@ -331,6 +333,8 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
   override def afterAll() = system.shutdown()
 
   private[http] class Test {
+    import HttpServerPipeline._
+    implicit val mat = materializer
     var closeAfterResponseCompletion = Seq.empty[Boolean]
 
     def parseTo(expected: HttpRequest*): Matcher[String] =
@@ -359,7 +363,10 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
     def generalRawMultiParseTo(parser: HttpRequestParser,
                                expected: Either[ParseError, HttpRequest]*): Matcher[Seq[String]] =
       equal(expected).matcher[Seq[Either[ParseError, HttpRequest]]] compose { input: Seq[String] ⇒
-        import HttpServerPipeline._
+
+        import akka.stream.extra.Implicits._
+        import akka.stream.scaladsl.Duct
+
         val future =
           Flow(input.toList)
             .map(ByteString.apply)
@@ -371,19 +378,30 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
                 closeAfterResponseCompletion :+= x.closeAfterResponseCompletion
                 Right(HttpServerPipeline.constructRequest(x, entityParts))
               case (x: ParseError, _) ⇒ Left(x)
+              case x                  ⇒ println("Got something else: " + x); ???
             }
+            .onEvent(log("before map"))
             .map { x ⇒
               Flow {
                 x match {
-                  case Right(request) ⇒ compactEntity(request.entity).map(x ⇒ Right(request.withEntity(x)))
-                  case Left(error)    ⇒ Future.successful(Left(error))
+                  case Right(request) ⇒
+                    println(s"Got request $request")
+                    compactEntity(request.entity).map(x ⇒ Right(request.withEntity(x)))
+                  case Left(error) ⇒
+                    println(s"Got error $error")
+                    Future.successful(Left(error))
                 }
               }.toProducer(materializer)
             }
+            //.tee(Duct[Any].foreach(println).consume(materializer))
+            .onEvent(log("after map"))
             .flatten(FlattenStrategy.Concat())
+            .onEvent(log("after flatten"))
             .grouped(1000).toFuture(materializer)
         Await.result(future, 250.millis)
       }
+
+    def log(pref: String): Any ⇒ Unit = x ⇒ println(s"$pref: $x")
 
     private def newParser = new HttpRequestParser(ParserSettings(system), false, materializer)()
 
@@ -404,7 +422,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
         .recover { case _: NoSuchElementException ⇒ StreamProducer.empty[ByteString] }
 
     private def compactEntityChunks(data: Producer[ChunkStreamPart]): Future[Producer[ChunkStreamPart]] =
-      Flow(data).grouped(1000).toFuture(materializer).map(StreamProducer.apply(_))
+      Flow(data).onEvent(log("parts")).grouped(1000).toFuture(materializer).map(StreamProducer.apply(_))
 
     def prep(response: String) = response.stripMarginWithNewline("\r\n")
   }

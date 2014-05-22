@@ -14,8 +14,12 @@ import akka.pattern.ask
 import akka.http.model._
 import HttpMethods._
 import akka.stream.{ MaterializerSettings, FlowMaterializer }
+import akka.stream.impl.FileAndPos
 
 object ServerTest extends App {
+  //println(implicitly[FileAndPos])
+  println(FileAndPos.create)
+
   val testConf: Config = ConfigFactory.parseString("""
     akka.loglevel = INFO
     akka.log-dead-letters = off

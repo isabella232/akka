@@ -4,7 +4,7 @@
 
 package akka.http.server
 
-import org.reactivestreams.api.Producer
+import org.reactivestreams.api.{ Consumer, Producer }
 import scala.concurrent.ExecutionContext
 import akka.event.LoggingAdapter
 import akka.util.ByteString
@@ -16,6 +16,9 @@ import akka.http.rendering.{ ResponseRenderingContext, HttpResponseRendererFacto
 import akka.http.model.{ StatusCode, ErrorInfo, HttpRequest, HttpResponse }
 import akka.http.parsing.ParserOutput._
 import akka.http.Http
+import scala.collection.immutable.Seq
+import java.util.concurrent.atomic.{ AtomicInteger, AtomicReference }
+import org.reactivestreams.spi.{ Subscriber, Subscription }
 
 private[http] class HttpServerPipeline(settings: ServerSettings,
                                        materializer: FlowMaterializer,
@@ -37,9 +40,14 @@ private[http] class HttpServerPipeline(settings: ServerSettings,
         .collect[MessageStart with RequestOutput] { case (x: MessageStart, _) ⇒ x }
         .build(materializer)
 
+    import akka.stream.extra.Implicits._
+    implicit val x = materializer
+
     val requestProducer =
       Flow(tcpConn.inputStream)
+        .onEvent(println)
         .transform(rootParser.copyWith(warnOnIllegalHeader))
+        .onEvent(println)
         .splitWhen(_.isInstanceOf[MessageStart])
         .headAndTail(materializer)
         .tee(applicationBypassConsumer)
@@ -121,4 +129,26 @@ private[http] object HttpServerPipeline {
         .toProducer(materializer)).flatten(FlattenStrategy.Concat())
     }
   }
+
+  implicit class FlowWithOnEvent[T](val underlying: Flow[T])(implicit materializer: FlowMaterializer) {
+    import collection.immutable
+    def onEvent(f: StreamEvent[T] ⇒ Unit): Flow[T] = {
+
+      val trafo = new Transformer[T, Nothing] {
+        def onNext(element: T): immutable.Seq[Nothing] = { f(OnNext(element)); Nil }
+
+        override def onTermination(e: Option[Throwable]): immutable.Seq[Nothing] = { f(OnComplete); Nil }
+
+        override def onError(cause: scala.Throwable): Unit = f(OnError(cause))
+      }
+
+      underlying.tee(Duct[T].transform(trafo).consume(materializer))
+    }
+
+  }
 }
+
+sealed trait StreamEvent[+T]
+final case class OnNext[T](value: T) extends StreamEvent[T]
+case object OnComplete extends StreamEvent[Nothing]
+final case class OnError(cause: Throwable) extends StreamEvent[Nothing]
