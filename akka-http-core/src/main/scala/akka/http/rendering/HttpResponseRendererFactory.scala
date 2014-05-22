@@ -158,7 +158,7 @@ class HttpResponseRendererFactory(serverHeader: Option[headers.Server],
       renderChunk(chunk) :: Nil
     }
     override def isComplete = lastChunkSeen
-    override def onComplete = if (lastChunkSeen) Nil else defaultLastChunkBytes :: Nil
+    override def onTermination(e: Option[Throwable]) = if (lastChunkSeen) Nil else defaultLastChunkBytes :: Nil
   }
 
   class ChunklessChunkTransformer(clHeader: Option[`Content-Length`]) extends Transformer[HttpEntity.ChunkStreamPart, ByteString] {
@@ -168,7 +168,7 @@ class HttpResponseRendererFactory(serverHeader: Option[headers.Server],
       case None                      ⇒ -1
     }
     def onNext(chunk: HttpEntity.ChunkStreamPart): immutable.Seq[ByteString] =
-      if (chunk.isLastChunk) onComplete
+      if (chunk.isLastChunk) onTermination(None)
       else {
         if (remainingBytes >= 0) {
           remainingBytes -= chunk.data.length
@@ -178,7 +178,7 @@ class HttpResponseRendererFactory(serverHeader: Option[headers.Server],
         chunk.data :: Nil
       }
     override def isComplete = lastChunkSeen
-    override def onComplete: immutable.Seq[ByteString] =
+    override def onTermination(e: Option[Throwable]): immutable.Seq[ByteString] =
       if (remainingBytes <= 0) {
         lastChunkSeen = true
         Nil

@@ -8,10 +8,9 @@ import scala.collection.immutable
 import scala.util.Try
 import org.reactivestreams.api.Consumer
 import org.reactivestreams.api.Producer
-import akka.stream.FlowMaterializer
-import akka.stream.RecoveryTransformer
-import akka.stream.Transformer
+import akka.stream.{ FlattenStrategy, FlowMaterializer, Transformer }
 import akka.stream.impl.DuctImpl
+import akka.stream.impl.Ast
 
 object Duct {
 
@@ -117,15 +116,11 @@ trait Duct[In, +Out] {
   def transform[U](transformer: Transformer[Out, U]): Duct[In, U]
 
   /**
-   * This transformation stage works exactly like [[#transform]] with the
-   * change that failure signaled from upstream will invoke
-   * [[RecoveryTransformer#onError]], which can emit an additional sequence of
-   * elements before the stream ends.
-   *
-   * After normal completion or error the [[RecoveryTransformer#cleanup]] function
-   * is called.
+   * Takes up to n elements from the stream and returns a pair containing a strict sequence of the taken element
+   * and a stream representing the remaining elements. If ''n'' is zero or negative, then this will return a pair
+   * of an empty collection and a stream containing the whole upstream unchanged.
    */
-  def transformRecover[U](recoveryTransformer: RecoveryTransformer[Out, U]): Duct[In, U]
+  def prefixAndTail(n: Int): Duct[In, (immutable.Seq[Out], Producer[Out @uncheckedVariance])]
 
   /**
    * This operation demultiplexes the incoming stream into separate output
@@ -176,8 +171,6 @@ trait Duct[In, +Out] {
    */
   def concat[U >: Out](next: Producer[U]): Duct[In, U]
 
-  def concatAll[U](implicit ev: Out <:< Producer[U]): Duct[In, U]
-
   /**
    * Fan-out the stream to another consumer. Each element is produced to
    * the `other` consumer as well as to downstream consumers. It will
@@ -185,6 +178,22 @@ trait Duct[In, +Out] {
    * one downstream consumer have been established.
    */
   def tee(other: Consumer[_ >: Out]): Duct[In, Out]
+
+  /**
+   * Transforms a stream of streams into a contiguous stream of elements using the provided flattening strategy.
+   * This operation can be used on a stream of element type [[Producer]].
+   */
+  def flatten[U](strategy: FlattenStrategy[Out, U]): Duct[In, U]
+
+  /**
+   * Append the operations of a [[Duct]] to this `Duct`.
+   */
+  def append[U](duct: Duct[_ >: In, U]): Duct[In, U]
+
+  /**
+   * INTERNAL API
+   */
+  private[akka] def appendJava[U](duct: akka.stream.javadsl.Duct[_ >: In, U]): Duct[In, U]
 
   /**
    * Materialize this `Duct` by attaching it to the specified downstream `consumer`
@@ -233,6 +242,12 @@ trait Duct[In, +Out] {
    * broken down into individual processing steps.
    */
   def build(materializer: FlowMaterializer): (Consumer[In], Producer[Out] @uncheckedVariance)
+
+  /**
+   * INTERNAL API
+   * Used by `Flow.append(duct)`.
+   */
+  private[akka] def ops: immutable.Seq[Ast.AstNode]
 
 }
 

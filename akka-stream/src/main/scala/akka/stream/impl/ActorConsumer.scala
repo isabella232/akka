@@ -8,44 +8,20 @@ import scala.util.{ Failure, Success }
 import scala.util.control.NonFatal
 import org.reactivestreams.api.Consumer
 import org.reactivestreams.spi.{ Subscriber, Subscription }
-import Ast.{ AstNode, Recover, Transform }
+import Ast.{ AstNode, Transform }
 import akka.actor.{ Actor, ActorLogging, ActorRef, Props, actorRef2Scala }
 import akka.stream.MaterializerSettings
 import akka.stream.Transformer
-import akka.stream.RecoveryTransformer
+import akka.stream.actor.ActorConsumer.{ OnNext, OnError, OnComplete, OnSubscribe }
 
 /**
  * INTERNAL API
  */
-private[akka] class ActorSubscriber[T]( final val impl: ActorRef) extends Subscriber[T] {
-  override def onError(cause: Throwable): Unit = impl ! OnError(cause)
-  override def onComplete(): Unit = impl ! OnComplete
-  override def onNext(element: T): Unit = impl ! OnNext(element)
-  override def onSubscribe(subscription: Subscription): Unit = impl ! OnSubscribe(subscription)
-}
-
-/**
- * INTERNAL API
- */
-private[akka] trait ActorConsumerLike[T] extends Consumer[T] {
-  def impl: ActorRef
-  override val getSubscriber: Subscriber[T] = new ActorSubscriber[T](impl)
-}
-
-/**
- * INTERNAL API
- */
-private[akka] class ActorConsumer[T]( final val impl: ActorRef) extends ActorConsumerLike[T]
-
-/**
- * INTERNAL API
- */
-private[akka] object ActorConsumer {
+private[akka] object ActorConsumerProps {
   import Ast._
 
   def props(settings: MaterializerSettings, op: AstNode) = op match {
-    case t: Transform ⇒ Props(new TransformActorConsumer(settings, t.transformer))
-    case r: Recover   ⇒ Props(new RecoverActorConsumer(settings, r.recoveryTransformer))
+    case t: Transform ⇒ Props(new TransformActorConsumer(settings, t.transformer)) withDispatcher (settings.dispatcher)
   }
 }
 
@@ -123,13 +99,15 @@ private[akka] abstract class AbstractActorConsumer(val settings: MaterializerSet
  */
 private[akka] class TransformActorConsumer(_settings: MaterializerSettings, transformer: Transformer[Any, Any]) extends AbstractActorConsumer(_settings) with ActorLogging {
 
+  var error: Option[Throwable] = None // Null is the proper default here
+
   var hasCleanupRun = false
   private var onCompleteCalled = false
   private def callOnComplete(): Unit = {
     if (!onCompleteCalled) {
       onCompleteCalled = true
-      try transformer.onComplete()
-      catch { case NonFatal(e) ⇒ log.error(e, "failure during onComplete") }
+      try transformer.onTermination(error)
+      catch { case NonFatal(e) ⇒ log.error(e, "failure during onTermination") }
       shutdown()
     }
   }
@@ -141,9 +119,15 @@ private[akka] class TransformActorConsumer(_settings: MaterializerSettings, tran
   }
 
   override def onError(cause: Throwable): Unit = {
-    log.error(cause, "terminating due to onError")
-    transformer.onError(cause)
-    shutdown()
+    try {
+      transformer.onError(cause)
+      error = Some(cause)
+      onComplete()
+    } catch {
+      case NonFatal(e) ⇒
+        log.error(e, "terminating due to onError")
+        shutdown()
+    }
   }
 
   override def onComplete(): Unit = {
@@ -158,17 +142,5 @@ private[akka] class TransformActorConsumer(_settings: MaterializerSettings, tran
 
   override def postStop(): Unit = {
     try super.postStop() finally if (!hasCleanupRun) transformer.cleanup()
-  }
-}
-
-/**
- * INTERNAL API
- */
-private[akka] class RecoverActorConsumer(_settings: MaterializerSettings, recoveryTransformer: RecoveryTransformer[Any, Any])
-  extends TransformActorConsumer(_settings, recoveryTransformer) {
-
-  override def onError(cause: Throwable): Unit = {
-    recoveryTransformer.onErrorRecover(cause)
-    onComplete()
   }
 }

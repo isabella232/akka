@@ -11,7 +11,7 @@ import org.scalatest.{ BeforeAndAfterAll, FreeSpec, Matchers }
 import org.scalatest.matchers.Matcher
 import org.reactivestreams.api.Producer
 import akka.stream.scaladsl.{ Flow, StreamProducer }
-import akka.stream.{ MaterializerSettings, FlowMaterializer }
+import akka.stream.{ FlattenStrategy, MaterializerSettings, FlowMaterializer }
 import akka.util.ByteString
 import akka.actor.ActorSystem
 import akka.http.server.HttpServerPipeline
@@ -380,7 +380,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
                 }
               }.toProducer(materializer)
             }
-            .concatAll
+            .flatten(FlattenStrategy.Concat())
             .grouped(1000).toFuture(materializer)
         Await.result(future, 250.millis)
       }

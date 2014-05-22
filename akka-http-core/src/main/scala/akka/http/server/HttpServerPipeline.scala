@@ -9,7 +9,7 @@ import scala.concurrent.ExecutionContext
 import akka.event.LoggingAdapter
 import akka.util.ByteString
 import akka.stream.io.StreamTcp
-import akka.stream.{ Transformer, FlowMaterializer }
+import akka.stream.{ FlattenStrategy, Transformer, FlowMaterializer }
 import akka.stream.scaladsl.{ Flow, Duct }
 import akka.http.parsing.HttpRequestParser
 import akka.http.rendering.{ ResponseRenderingContext, HttpResponseRendererFactory }
@@ -51,7 +51,7 @@ private[http] class HttpServerPipeline(settings: ServerSettings,
         .merge(applicationBypassProducer)
         .transform(applyApplicationBypass)
         .transform(responseRendererFactory.newRenderer)
-        .concatAll
+        .flatten(FlattenStrategy.Concat())
         .transform {
           new Transformer[ByteString, ByteString] {
             def onNext(element: ByteString) = element :: Nil
@@ -117,14 +117,8 @@ private[http] object HttpServerPipeline {
 
   implicit class FlowWithHeadAndTail[T](val underlying: Flow[Producer[T]]) {
     def headAndTail(materializer: FlowMaterializer): Flow[(T, Producer[T])] = {
-      val duct: Duct[Producer[T], (T, Producer[T])] =
-        Duct[Producer[T]].map { p ⇒
-          val (ductIn, tailStream) = Duct[T].drop(1).build(materializer)
-          Flow(p).tee(ductIn).take(1).map(_ -> tailStream).toProducer(materializer)
-        }.concatAll
-      val (headAndTailC, headAndTailP) = duct.build(materializer)
-      underlying.produceTo(materializer, headAndTailC)
-      Flow(headAndTailP)
+      underlying.map(p ⇒ Flow(p).prefixAndTail(1).map(t ⇒ (t._1.head, t._2))
+        .toProducer(materializer)).flatten(FlattenStrategy.Concat())
     }
   }
 }

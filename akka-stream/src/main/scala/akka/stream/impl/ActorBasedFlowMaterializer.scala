@@ -10,7 +10,6 @@ import org.reactivestreams.spi.Subscriber
 import akka.actor.ActorRefFactory
 import akka.stream.{ MaterializerSettings, FlowMaterializer }
 import akka.stream.Transformer
-import akka.stream.RecoveryTransformer
 import scala.util.Try
 import scala.concurrent.Future
 import scala.util.Success
@@ -22,6 +21,7 @@ import akka.actor.ExtensionId
 import akka.actor.ExtendedActorSystem
 import akka.actor.ActorSystem
 import akka.actor.Extension
+import akka.stream.actor.ActorConsumer
 
 /**
  * INTERNAL API
@@ -33,9 +33,6 @@ private[akka] object Ast {
 
   case class Transform(transformer: Transformer[Any, Any]) extends AstNode {
     override def name = transformer.name
-  }
-  case class Recover(recoveryTransformer: RecoveryTransformer[Any, Any]) extends AstNode {
-    override def name = recoveryTransformer.name
   }
   case class GroupBy(f: Any ⇒ Any) extends AstNode {
     override def name = "groupBy"
@@ -54,6 +51,12 @@ private[akka] object Ast {
   }
   case class Tee(other: Consumer[Any]) extends AstNode {
     override def name = "tee"
+  }
+  case class PrefixAndTail(n: Int) extends AstNode {
+    override def name = "prefixAndTail"
+  }
+  case object ConcatAll extends AstNode {
+    override def name = "concatFlatten"
   }
 
   trait ProducerNode[I] {
@@ -199,11 +202,11 @@ private[akka] class ActorBasedFlowMaterializer(
   private def consume[In, Out](ops: List[Ast.AstNode], flowName: String): Consumer[In] = {
     val c = ops match {
       case Nil ⇒
-        new ActorConsumer[Any](context.actorOf(ActorConsumer.props(settings, blackholeTransform),
+        ActorConsumer[Any](context.actorOf(ActorConsumerProps.props(settings, blackholeTransform),
           name = s"$flowName-1-consume"))
       case head :: tail ⇒
         val opsSize = ops.size
-        val c = new ActorConsumer[Any](context.actorOf(ActorConsumer.props(settings, head),
+        val c = ActorConsumer[Any](context.actorOf(ActorConsumerProps.props(settings, head),
           name = s"$flowName-$opsSize-${head.name}"))
         processorChain(c, tail, flowName, ops.size - 1)
     }

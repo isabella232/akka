@@ -8,13 +8,11 @@ import scala.concurrent.{ Future, Promise }
 import scala.util.Try
 import org.reactivestreams.api.Consumer
 import org.reactivestreams.api.Producer
-import Ast.{ AstNode, Recover, Transform }
-import akka.stream.FlowMaterializer
+import Ast.{ AstNode, Transform }
+import akka.stream.{ FlattenStrategy, FlowMaterializer, Transformer }
 import akka.stream.scaladsl.Flow
 import scala.util.Success
 import scala.util.Failure
-import akka.stream.Transformer
-import akka.stream.RecoveryTransformer
 import org.reactivestreams.api.Consumer
 import akka.stream.scaladsl.Duct
 
@@ -30,14 +28,20 @@ private[akka] case class FlowImpl[I, O](producerNode: Ast.ProducerNode[I], ops: 
   // Storing ops in reverse order
   override protected def andThen[U](op: Ast.AstNode): Flow[U] = this.copy(ops = op :: ops)
 
+  override def append[U](duct: Duct[_ >: O, U]): Flow[U] =
+    copy(ops = duct.ops ++: ops)
+
+  override def appendJava[U](duct: akka.stream.javadsl.Duct[_ >: O, U]): Flow[U] =
+    copy(ops = duct.ops ++: ops)
+
   override def toFuture(materializer: FlowMaterializer): Future[O] = {
     val p = Promise[O]()
-    transformRecover(new RecoveryTransformer[O, Unit] {
+    transform(new Transformer[O, Unit] {
       var done = false
       override def onNext(in: O) = { p success in; done = true; Nil }
-      override def onErrorRecover(e: Throwable) = { p failure e; Nil }
+      override def onError(e: Throwable) = { p failure e }
       override def isComplete = done
-      override def onComplete() = { p.tryFailure(new NoSuchElementException("empty stream")); Nil }
+      override def onTermination(e: Option[Throwable]) = { p.tryFailure(new NoSuchElementException("empty stream")); Nil }
     }).consume(materializer)
     p.future
   }
@@ -45,23 +49,22 @@ private[akka] case class FlowImpl[I, O](producerNode: Ast.ProducerNode[I], ops: 
   override def consume(materializer: FlowMaterializer): Unit = materializer.consume(producerNode, ops)
 
   override def onComplete(materializer: FlowMaterializer)(callback: Try[Unit] ⇒ Unit): Unit =
-    transformRecover(new RecoveryTransformer[O, Unit] {
-      var ok = true
+    transform(new Transformer[O, Unit] {
       override def onNext(in: O) = Nil
-      override def onErrorRecover(e: Throwable) = {
+      override def onError(e: Throwable) = {
         callback(Failure(e))
-        ok = false
+        throw e
+      }
+      override def onTermination(e: Option[Throwable]) = {
+        callback(Builder.SuccessUnit)
         Nil
       }
-      override def onComplete() = { if (ok) callback(Builder.SuccessUnit); Nil }
     }).consume(materializer)
 
   override def toProducer(materializer: FlowMaterializer): Producer[O] = materializer.toProducer(producerNode, ops)
 
   override def produceTo(materializer: FlowMaterializer, consumer: Consumer[_ >: O]) =
     toProducer(materializer).produceTo(consumer.asInstanceOf[Consumer[O]])
-
-  def concatAll[U](implicit ev: <:<[O, Producer[U]]): Flow[U] = ???
 }
 
 /**
@@ -74,6 +77,12 @@ private[akka] case class DuctImpl[In, Out](ops: List[Ast.AstNode]) extends Duct[
   // Storing ops in reverse order
   override protected def andThen[U](op: Ast.AstNode): Duct[In, U] = this.copy(ops = op :: ops)
 
+  override def append[U](duct: Duct[_ >: In, U]): Duct[In, U] =
+    copy(ops = duct.ops ++: ops)
+
+  override def appendJava[U](duct: akka.stream.javadsl.Duct[_ >: In, U]): Duct[In, U] =
+    copy(ops = duct.ops ++: ops)
+
   override def produceTo(materializer: FlowMaterializer, consumer: Consumer[Out]): Consumer[In] =
     materializer.ductProduceTo(consumer, ops)
 
@@ -81,21 +90,20 @@ private[akka] case class DuctImpl[In, Out](ops: List[Ast.AstNode]) extends Duct[
     materializer.ductConsume(ops)
 
   override def onComplete(materializer: FlowMaterializer)(callback: Try[Unit] ⇒ Unit): Consumer[In] =
-    transformRecover(new RecoveryTransformer[Out, Unit] {
-      var ok = true
+    transform(new Transformer[Out, Unit] {
       override def onNext(in: Out) = Nil
-      override def onErrorRecover(e: Throwable) = {
+      override def onError(e: Throwable) = {
         callback(Failure(e))
-        ok = false
+        throw e
+      }
+      override def onTermination(e: Option[Throwable]) = {
+        callback(Builder.SuccessUnit)
         Nil
       }
-      override def onComplete() = { if (ok) callback(Builder.SuccessUnit); Nil }
     }).consume(materializer)
 
   override def build(materializer: FlowMaterializer): (Consumer[In], Producer[Out]) =
     materializer.ductBuild(ops)
-
-  def concatAll[U](implicit ev: <:<[Out, Producer[U]]): Duct[In, U] = ???
 }
 
 /**
@@ -148,18 +156,18 @@ private[akka] trait Builder[Out] {
   def foreach(c: Out ⇒ Unit): Thing[Unit] =
     transform(new Transformer[Out, Unit] {
       override def onNext(in: Out) = { c(in); Nil }
-      override def onComplete() = ListOfUnit
+      override def onTermination(e: Option[Throwable]) = ListOfUnit
       override def name = "foreach"
     })
 
   def fold[U](zero: U)(f: (U, Out) ⇒ U): Thing[U] =
     transform(new FoldTransformer[U](zero, f))
 
-  // Without this class compiler complains about 
+  // Without this class compiler complains about
   // "Parameter type in structural refinement may not refer to an abstract type defined outside that refinement"
   class FoldTransformer[S](var state: S, f: (S, Out) ⇒ S) extends Transformer[Out, S] {
     override def onNext(in: Out): immutable.Seq[S] = { state = f(state, in); Nil }
-    override def onComplete(): immutable.Seq[S] = List(state)
+    override def onTermination(e: Option[Throwable]): immutable.Seq[S] = List(state)
     override def name = "fold"
   }
 
@@ -200,6 +208,8 @@ private[akka] trait Builder[Out] {
       override def name = "take"
     })
 
+  def prefixAndTail(n: Int): Thing[(immutable.Seq[Out], Producer[Out])] = andThen(PrefixAndTail(n))
+
   def grouped(n: Int): Thing[immutable.Seq[Out]] =
     transform(new Transformer[Out, immutable.Seq[Out]] {
       var buf: Vector[Out] = Vector.empty
@@ -212,7 +222,7 @@ private[akka] trait Builder[Out] {
         } else
           Nil
       }
-      override def onComplete() = if (buf.isEmpty) Nil else List(buf)
+      override def onTermination(e: Option[Throwable]) = if (buf.isEmpty) Nil else List(buf)
       override def name = "grouped"
     })
 
@@ -225,9 +235,6 @@ private[akka] trait Builder[Out] {
   def transform[U](transformer: Transformer[Out, U]): Thing[U] =
     andThen(Transform(transformer.asInstanceOf[Transformer[Any, Any]]))
 
-  def transformRecover[U](recoveryTransformer: RecoveryTransformer[Out, U]): Thing[U] =
-    andThen(Recover(recoveryTransformer.asInstanceOf[RecoveryTransformer[Any, Any]]))
-
   def zip[O2](other: Producer[O2]): Thing[(Out, O2)] = andThen(Zip(other.asInstanceOf[Producer[Any]]))
 
   def concat[U >: Out](next: Producer[U]): Thing[U] = andThen(Concat(next.asInstanceOf[Producer[Any]]))
@@ -239,6 +246,11 @@ private[akka] trait Builder[Out] {
   def groupBy[K](f: (Out) ⇒ K): Thing[(K, Producer[Out])] = andThen(GroupBy(f.asInstanceOf[Any ⇒ Any]))
 
   def tee(other: Consumer[_ >: Out]): Thing[Out] = andThen(Tee(other.asInstanceOf[Consumer[Any]]))
+
+  def flatten[U](strategy: FlattenStrategy[Out, U]): Thing[U] = strategy match {
+    case _: FlattenStrategy.Concat[Out] ⇒ andThen(ConcatAll)
+    case _                              ⇒ throw new IllegalArgumentException(s"Unsupported flattening strategy [${strategy.getClass.getSimpleName}]")
+  }
 
 }
 

@@ -16,7 +16,7 @@ import scala.util.Failure
 @org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class DuctSpec extends AkkaSpec {
 
-  val materializer = FlowMaterializer(MaterializerSettings())
+  val materializer = FlowMaterializer(MaterializerSettings(dispatcher = "akka.test.stream-dispatcher"))
 
   "A Duct" must {
 
@@ -165,6 +165,34 @@ class DuctSpec extends AkkaSpec {
       expectMsg("2")
       expectMsg("3")
       expectMsg("DONE")
+    }
+
+    "be appendable to a Flow" in {
+      val c = StreamTestKit.consumerProbe[String]
+      val duct = Duct[Int].map(_ + 10).map(_.toString)
+      Flow(List(1, 2, 3)).map(_ * 2).append(duct).map((s: String) ⇒ "elem-" + s).produceTo(materializer, c)
+
+      val sub = c.expectSubscription
+      sub.requestMore(3)
+      c.expectNext("elem-12")
+      c.expectNext("elem-14")
+      c.expectNext("elem-16")
+      c.expectComplete
+    }
+
+    "be appendable to a Duct" in {
+      val c = StreamTestKit.consumerProbe[String]
+      val duct1 = Duct[Int].map(_ + 10).map(_.toString)
+      val ductInConsumer = Duct[Int].map(_ * 2).append(duct1).map((s: String) ⇒ "elem-" + s).produceTo(materializer, c)
+
+      Flow(List(1, 2, 3)).produceTo(materializer, ductInConsumer)
+
+      val sub = c.expectSubscription
+      sub.requestMore(3)
+      c.expectNext("elem-12")
+      c.expectNext("elem-14")
+      c.expectNext("elem-16")
+      c.expectComplete
     }
 
   }

@@ -14,11 +14,10 @@ import akka.japi.Function
 import akka.japi.Function2
 import akka.japi.Procedure
 import akka.japi.Util.immutableSeq
-import akka.stream.FlowMaterializer
+import akka.stream.{ FlattenStrategy, FlowMaterializer, Transformer }
 import akka.stream.scaladsl.{ Flow ⇒ SFlow }
-import akka.stream.Transformer
-import akka.stream.RecoveryTransformer
 import org.reactivestreams.api.Consumer
+import akka.stream.impl.DuctImpl
 
 /**
  * Java API
@@ -123,7 +122,7 @@ abstract class Flow[T] {
    * the flow needs to be materialized (e.g. using [[#consume]]) to initiate its
    * execution.
    */
-  def foreach(c: Procedure[T]): Flow[Unit]
+  def foreach(c: Procedure[T]): Flow[Void]
 
   /**
    * Invoke the given function for every received element, giving it its previous
@@ -173,20 +172,17 @@ abstract class Flow[T] {
    *
    * It is possible to keep state in the concrete [[akka.stream.Transformer]] instance with
    * ordinary instance variables. The [[akka.stream.Transformer]] is executed by an actor and
-   * therefore you don not have to add any additional thread safety or memory
+   * therefore you do not have to add any additional thread safety or memory
    * visibility constructs to access the state from the callback methods.
    */
   def transform[U](transformer: Transformer[T, U]): Flow[U]
 
   /**
-   * This transformation stage works exactly like [[#transform]] with the
-   * change that failure signaled from upstream will invoke
-   * [[akka.stream.RecoveryTransformer#onError]], which can emit an additional sequence of
-   * elements before the stream ends.
-   *
-   * After normal completion or error the [[akka.stream.RecoveryTransformer#cleanup]] function is called.
+   * Takes up to n elements from the stream and returns a pair containing a strict sequence of the taken element
+   * and a stream representing the remaining elements. If ''n'' is zero or negative, then this will return a pair
+   * of an empty collection and a stream containing the whole upstream unchanged.
    */
-  def transformRecover[U](transformer: RecoveryTransformer[T, U]): Flow[U]
+  def takeAndTail(n: Int): Flow[Pair[java.util.List[T], Producer[T]]]
 
   /**
    * This operation demultiplexes the incoming stream into separate output
@@ -246,6 +242,17 @@ abstract class Flow[T] {
   def tee(other: Consumer[_ >: T]): Flow[T]
 
   /**
+   * Append the operations of a [[Duct]] to this flow.
+   */
+  def append[U](duct: Duct[_ >: T, U]): Flow[U]
+
+  /**
+   * Transforms a stream of streams into a contiguous stream of elements using the provided flattening strategy.
+   * This operation can be used on a stream of element type [[Producer]].
+   */
+  def flatten[U](strategy: FlattenStrategy[T, U]): Flow[U]
+
+  /**
    * Returns a [[scala.concurrent.Future]] that will be fulfilled with the first
    * thing that is signaled to this stream, which can be either an element (after
    * which the upstream subscription is canceled), an error condition (putting
@@ -287,6 +294,16 @@ abstract class Flow[T] {
    */
   def toProducer(materializer: FlowMaterializer): Producer[T]
 
+  /**
+   * Attaches a consumer to this stream.
+   *
+   * *This will materialize the flow and initiate its execution.*
+   *
+   * The given FlowMaterializer decides how the flow’s logical structure is
+   * broken down into individual processing steps.
+   */
+  def produceTo(materializer: FlowMaterializer, consumer: Consumer[_ >: T]): Unit
+
 }
 
 /**
@@ -304,7 +321,7 @@ trait OnCompleteCallback {
 /**
  * Java API: Represents a tuple of two elements.
  */
-case class Pair[A, B](a: A, b: B) // FIXME move this to akka.japi.Pair in akka-actor
+case class Pair[A, B](first: A, second: B) // FIXME move this to akka.japi.Pair in akka-actor
 
 /**
  * Java API: Defines a criteria and determines whether the parameter meets this criteria.
@@ -324,7 +341,8 @@ private[akka] class FlowAdapter[T](delegate: SFlow[T]) extends Flow[T] {
 
   override def collect[U](pf: PartialFunction[T, U]): Flow[U] = new FlowAdapter(delegate.collect(pf))
 
-  override def foreach(c: Procedure[T]): Flow[Unit] = new FlowAdapter(delegate.foreach(c.apply))
+  override def foreach(c: Procedure[T]): Flow[Void] =
+    new FlowAdapter(delegate.foreach(c.apply).map(_ ⇒ null)) // FIXME optimize to one step
 
   override def fold[U](zero: U, f: Function2[U, T, U]): Flow[U] =
     new FlowAdapter(delegate.fold(zero) { case (a, b) ⇒ f.apply(a, b) })
@@ -340,23 +358,10 @@ private[akka] class FlowAdapter[T](delegate: SFlow[T]) extends Flow[T] {
     new FlowAdapter(delegate.mapConcat(elem ⇒ immutableSeq(f.apply(elem))))
 
   override def transform[U](transformer: Transformer[T, U]): Flow[U] =
-    new FlowAdapter(delegate.transform(new Transformer[T, U] {
-      override def onNext(in: T) = transformer.onNext(in)
-      override def isComplete = transformer.isComplete
-      override def onComplete() = transformer.onComplete()
-      override def onError(cause: Throwable) = transformer.onError(cause)
-      override def cleanup() = transformer.cleanup()
-    }))
+    new FlowAdapter(delegate.transform(transformer))
 
-  override def transformRecover[U](transformer: RecoveryTransformer[T, U]): Flow[U] =
-    new FlowAdapter(delegate.transform(new RecoveryTransformer[T, U] {
-      override def onNext(in: T) = transformer.onNext(in)
-      override def isComplete = transformer.isComplete
-      override def onComplete() = transformer.onComplete()
-      override def onError(cause: Throwable) = transformer.onError(cause)
-      override def onErrorRecover(cause: Throwable) = transformer.onErrorRecover(cause)
-      override def cleanup() = transformer.cleanup()
-    }))
+  override def takeAndTail(n: Int): Flow[Pair[java.util.List[T], Producer[T]]] =
+    new FlowAdapter(delegate.prefixAndTail(n).map { case (taken, tail) ⇒ Pair(taken.asJava, tail) })
 
   override def groupBy[K](f: Function[T, K]): Flow[Pair[K, Producer[T]]] =
     new FlowAdapter(delegate.groupBy(f.apply).map { case (k, p) ⇒ Pair(k, p) }) // FIXME optimize to one step
@@ -376,6 +381,12 @@ private[akka] class FlowAdapter[T](delegate: SFlow[T]) extends Flow[T] {
   override def tee(other: Consumer[_ >: T]): Flow[T] =
     new FlowAdapter(delegate.tee(other))
 
+  override def flatten[U](strategy: FlattenStrategy[T, U]): Flow[U] =
+    new FlowAdapter(delegate.flatten(strategy))
+
+  override def append[U](duct: Duct[_ >: T, U]): Flow[U] =
+    new FlowAdapter(delegate.appendJava(duct))
+
   override def toFuture(materializer: FlowMaterializer): Future[T] =
     delegate.toFuture(materializer)
 
@@ -390,5 +401,8 @@ private[akka] class FlowAdapter[T](delegate: SFlow[T]) extends Flow[T] {
 
   override def toProducer(materializer: FlowMaterializer): Producer[T] =
     delegate.toProducer(materializer)
+
+  override def produceTo(materializer: FlowMaterializer, consumer: Consumer[_ >: T]): Unit =
+    delegate.produceTo(materializer, consumer)
 
 }

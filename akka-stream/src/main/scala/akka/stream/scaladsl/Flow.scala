@@ -9,9 +9,7 @@ import scala.concurrent.Future
 import scala.util.Try
 import org.reactivestreams.api.Consumer
 import org.reactivestreams.api.Producer
-import akka.stream.FlowMaterializer
-import akka.stream.RecoveryTransformer
-import akka.stream.Transformer
+import akka.stream.{ FlattenStrategy, FlowMaterializer, Transformer }
 import akka.stream.impl.Ast.{ ExistingProducer, IterableProducerNode, IteratorProducerNode, ThunkProducerNode }
 import akka.stream.impl.Ast.FutureProducerNode
 import akka.stream.impl.FlowImpl
@@ -170,20 +168,17 @@ trait Flow[+T] {
    *
    * It is possible to keep state in the concrete [[akka.stream.Transformer]] instance with
    * ordinary instance variables. The [[akka.stream.Transformer]] is executed by an actor and
-   * therefore you don not have to add any additional thread safety or memory
+   * therefore you do not have to add any additional thread safety or memory
    * visibility constructs to access the state from the callback methods.
    */
   def transform[U](transformer: Transformer[T, U]): Flow[U]
 
   /**
-   * This transformation stage works exactly like [[#transform]] with the
-   * change that failure signaled from upstream will invoke
-   * [[akka.stream.RecoveryTransformer#onErrorRecover]], which can emit an additional sequence of
-   * elements before the stream ends.
-   *
-   * [[akka.stream.Transformer#onError]] is not called when failure is signaled from upstream.
+   * Takes up to n elements from the stream and returns a pair containing a strict sequence of the taken element
+   * and a stream representing the remaining elements. If ''n'' is zero or negative, then this will return a pair
+   * of an empty collection and a stream containing the whole upstream unchanged.
    */
-  def transformRecover[U](recoveryTransformer: RecoveryTransformer[T, U]): Flow[U]
+  def prefixAndTail(n: Int): Flow[(immutable.Seq[T], Producer[T @uncheckedVariance])]
 
   /**
    * This operation demultiplexes the incoming stream into separate output
@@ -234,8 +229,6 @@ trait Flow[+T] {
    */
   def concat[U >: T](next: Producer[U]): Flow[U]
 
-  def concatAll[U](implicit ev: T <:< Producer[U]): Flow[U]
-
   /**
    * Fan-out the stream to another consumer. Each element is produced to
    * the `other` consumer as well as to downstream consumers. It will
@@ -243,6 +236,22 @@ trait Flow[+T] {
    * one downstream consumer have been established.
    */
   def tee(other: Consumer[_ >: T]): Flow[T]
+
+  /**
+   * Transforms a stream of streams into a contiguous stream of elements using the provided flattening strategy.
+   * This operation can be used on a stream of element type [[Producer]].
+   */
+  def flatten[U](strategy: FlattenStrategy[T, U]): Flow[U]
+
+  /**
+   * Append the operations of a [[Duct]] to this flow.
+   */
+  def append[U](duct: Duct[_ >: T, U]): Flow[U]
+
+  /**
+   * INTERNAL API
+   */
+  private[akka] def appendJava[U](duct: akka.stream.javadsl.Duct[_ >: T, U]): Flow[U]
 
   /**
    * Returns a [[scala.concurrent.Future]] that will be fulfilled with the first
