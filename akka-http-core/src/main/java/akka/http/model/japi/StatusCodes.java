@@ -1,5 +1,12 @@
 package akka.http.model.japi;
 
+import akka.http.model.StatusCodes$;
+import akka.japi.Option;
+
+/**
+ * Contains the set of predefined status-codes along with static methods to access and create custom
+ * status-codes.
+ */
 public final class StatusCodes {
     private StatusCodes() {}
 
@@ -73,13 +80,28 @@ public final class StatusCodes {
     public static final StatusCode NetworkReadTimeout = akka.http.model.StatusCodes.NetworkReadTimeout();
     public static final StatusCode NetworkConnectTimeout = akka.http.model.StatusCodes.NetworkConnectTimeout();
 
+    /**
+     * Registers a custom status code.
+     */
     public static StatusCode registerCustom(int intValue, String reason, String defaultMessage, boolean isSuccess, boolean allowsEntity) {
         return akka.http.model.StatusCodes.registerCustom(intValue, reason, defaultMessage, isSuccess, allowsEntity);
     }
+    /**
+     * Registers a custom status code.
+     */
     public static StatusCode registerCustom(int intValue, String reason, String defaultMessage) {
         return akka.http.model.StatusCodes.registerCustom(intValue, reason, defaultMessage);
     }
+    /**
+     * Looks up a status-code by numeric code. Throws an exception if no such status-code is found.
+     */
     public static StatusCode get(int intValue) {
         return akka.http.model.StatusCode.int2StatusCode(intValue);
+    }
+    /**
+     * Looks up a status-code by numeric code and returns Some(code). Returns None otherwise.
+     */
+    public static Option<StatusCode> lookup(int intValue) {
+        return Util.lookupInRegistry(StatusCodes$.MODULE$, intValue);
     }
 }

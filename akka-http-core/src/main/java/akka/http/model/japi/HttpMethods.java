@@ -1,5 +1,11 @@
 package akka.http.model.japi;
 
+import akka.japi.Option;
+import akka.http.model.HttpMethods$;
+
+/**
+ * Contains static constants for predefined method types.
+ */
 public final class HttpMethods {
     private HttpMethods() {}
 
@@ -13,10 +19,14 @@ public final class HttpMethods {
     public static final HttpMethod PUT     = akka.http.model.HttpMethods.PUT();
     public static final HttpMethod TRACE   = akka.http.model.HttpMethods.TRACE();
 
-    public static HttpMethod custom(String value, boolean safe, boolean idempotent, boolean entityAccepted) {
-        return akka.http.model.HttpMethod.custom(value, safe, idempotent, entityAccepted);
+    /**
+     * Register a custom method type.
+     */
+    public static HttpMethod registerCustom(String value, boolean safe, boolean idempotent, boolean entityAccepted) {
+        return akka.http.model.HttpMethods.register(akka.http.model.HttpMethod.custom(value, safe, idempotent, entityAccepted));
     }
-    public static HttpMethod register(HttpMethod method) {
-        return akka.http.model.HttpMethods.register((akka.http.model.HttpMethod) method);
+
+    public static Option<HttpMethod> lookup(String name) {
+        return Util.lookupInRegistry(HttpMethods$.MODULE$, name);
     }
 }
