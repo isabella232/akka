@@ -1,7 +1,11 @@
 package akka.http.model.japi;
 
+import akka.http.model.HttpCharsets$;
 import akka.japi.Option;
 
+/**
+ * Contains a set of predefined charsets.
+ */
 public final class HttpCharsets {
     private HttpCharsets() {}
 
@@ -12,11 +16,20 @@ public final class HttpCharsets {
     public static final HttpCharset UTF_16BE = akka.http.model.HttpCharsets.UTF$minus16BE();
     public static final HttpCharset UTF_16LE = akka.http.model.HttpCharsets.UTF$minus16LE();
 
-    public static void register(HttpCharset charset) {
-        akka.http.model.HttpCharsets.register((akka.http.model.HttpCharset) charset);
+    /**
+     * Registers a custom charset. Returns Some(newCharset) if the charset is supported by this JVM.
+     * Returns None otherwise.
+     */
+    public static Option<HttpCharset> registerCustom(String value, String... aliases) {
+        scala.Option<akka.http.model.HttpCharset> custom = akka.http.model.HttpCharset.custom(value, Util.convertArray(aliases));
+        if (custom.isDefined()) return Option.<HttpCharset>some(akka.http.model.HttpCharsets.register(custom.get()));
+        else return Option.none();
     }
 
-    public static Option<HttpCharset> custom(String value, String... aliases) {
-        return Util.convertOption(akka.http.model.HttpCharset.custom(value, Util.convertArray(aliases)));
+    /**
+     * Returns Some(charset) if the charset with the given name was found and None otherwise.
+     */
+    public static Option<HttpCharset> lookup(String name) {
+        return Util.lookupInRegistry(HttpCharsets$.MODULE$, name);
     }
 }

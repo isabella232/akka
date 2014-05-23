@@ -2,11 +2,29 @@ package akka.http.model.japi;
 
 import akka.util.ByteString;
 
+/**
+ * Represents part of a stream of incoming data for `Transfer-Encoding: chunked` messages.
+ */
 public abstract class ChunkStreamPart {
+    /**
+     * Returns the byte data of this chunk. Will be non-empty for every regular
+     * chunk. Will be empty for the last chunk.
+     */
     public abstract ByteString data();
+
+    /**
+     * Returns extensions data for this chunk.
+     */
     public abstract String extension();
+
+    /**
+     * Returns if this is the last chunk
+     */
     public abstract boolean isLastChunk();
 
-    // FIXME: document: will always be empty for regular chunks
+    /**
+     * If this is the last chunk, this will return an Iterable of the trailer headers. Otherwise,
+     * it will be empty.
+     */
     public abstract Iterable<HttpHeader> getTrailerHeaders();
 }
