@@ -1,7 +1,13 @@
 package akka.http.model.japi;
 
+import akka.http.model.MediaTypes$;
+import akka.japi.Option;
+
 import java.util.Map;
 
+/**
+ * Contains the set of predefined media-types.
+ */
 public abstract class MediaTypes {
     public static final MediaType application_atom_xml = akka.http.model.MediaTypes.application$divatom$plusxml();
     public static final MediaType application_base64 = akka.http.model.MediaTypes.application$divbase64();
@@ -168,17 +174,23 @@ public abstract class MediaTypes {
     public static final MediaType video_x_sgi_movie = akka.http.model.MediaTypes.video$divx$minussgi$minusmovie();
     public static final MediaType video_webm = akka.http.model.MediaTypes.video$divwebm();
 
-    public static MediaType custom(
+    /**
+     * Register a custom media type.
+     */
+    public static MediaType registerCustom(
             String mainType,
             String subType,
             boolean compressible,
             boolean binary,
             Iterable<String> fileExtensions,
             Map<String, String> parameters) {
-        return akka.http.model.MediaType.custom(mainType, subType, compressible, binary, Util.convertIterable(fileExtensions), Util.convertMapToScala(parameters), false);
+        return akka.http.model.MediaTypes.register(akka.http.model.MediaType.custom(mainType, subType, compressible, binary, Util.convertIterable(fileExtensions), Util.convertMapToScala(parameters), false));
     }
 
-    public static MediaType register(MediaType type) {
-        return akka.http.model.MediaTypes.register((akka.http.model.MediaType) type);
+    /**
+     * Looks up a media-type with the given main-type and sub-type.
+     */
+    public static Option<MediaType> lookup(String mainType, String subType) {
+        return Util.lookupInRegistry(MediaTypes$.MODULE$, new scala.Tuple2<String, String>(mainType, subType));
     }
 }

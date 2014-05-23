@@ -25,7 +25,7 @@ case class DateTime private (year: Int, // the year
   def weekdayStr: String = DateTime.WEEKDAYS(weekday)
 
   /**
-   * The day of the month as a 3 letter abbreviation:
+   * The month as a 3 letter abbreviation:
    * `Jan`, `Feb`, `Mar`, `Apr`, `May`, `Jun`, `Jul`, `Aug`, `Sep`, `Oct`, `Nov` or `Dec`
    */
   def monthStr: String = DateTime.MONTHS(month - 1)

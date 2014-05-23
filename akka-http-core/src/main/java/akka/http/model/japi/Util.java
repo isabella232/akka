@@ -1,6 +1,7 @@
 package akka.http.model.japi;
 
 import akka.http.model.*;
+import akka.http.util.ObjectRegistry;
 import akka.japi.Option;
 import org.reactivestreams.api.Producer;
 import scala.None;
@@ -12,6 +13,9 @@ import scala.collection.immutable.Seq;
 import java.util.Arrays;
 import java.util.Map;
 
+/**
+ * Contains internal helper methods.
+ */
 public abstract class Util {
     @SuppressWarnings("unchecked") // no support for covariance of option in Java
     public static <U, T extends U> Option<U> convertOption(scala.Option<T> o) {
@@ -54,5 +58,12 @@ public abstract class Util {
 
     public static akka.http.model.Uri convertUriToScala(Uri uri) {
         return ((JavaUri) uri).uri();
+    }
+
+    public static <J, V extends J> akka.japi.Option<J> lookupInRegistry(ObjectRegistry<String, V> registry, String key) {
+        return Util.<String, J, V>lookupInRegistry(registry, key);
+    }
+    public static <K, J, V extends J> akka.japi.Option<J> lookupInRegistry(ObjectRegistry<K, V> registry, K key) {
+        return convertOption(registry.getForKey(key));
     }
 }
