@@ -10,10 +10,12 @@ public abstract class HttpHeader {
      * Returns the name of the header.
      */
     public abstract String name();
+
     /**
      * Returns the String representation of the value of the header.
      */
     public abstract String value();
+
     /**
      * Returns the lower-cased name of the header.
      */
@@ -23,6 +25,7 @@ public abstract class HttpHeader {
      * Returns true iff nameInLowerCase.equals(lowercaseName()).
      */
     public abstract boolean is(String nameInLowerCase);
+
     /**
      * Returns !is(nameInLowerCase).
      */

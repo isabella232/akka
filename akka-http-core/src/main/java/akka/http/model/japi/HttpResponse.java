@@ -13,6 +13,7 @@ public abstract class HttpResponse implements HttpMessage, HttpMessage.MessageTr
      * Returns a copy of this instance with a new status-code.
      */
     public abstract HttpResponse withStatus(StatusCode statusCode);
+
     /**
      * Returns a copy of this instance with a new status-code.
      */

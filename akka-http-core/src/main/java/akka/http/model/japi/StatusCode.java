@@ -25,10 +25,12 @@ public abstract class StatusCode {
      * Returns if the status-code represents success.
      */
     public abstract boolean isSuccess();
+
     /**
      * Returns if the status-code represents failure.
      */
     public abstract boolean isFailure();
+
     /**
      * Returns if a response with this status-code is allowed to be accompanied with
      * a non-empty entity.

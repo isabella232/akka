@@ -13,6 +13,7 @@ public interface HttpMessage {
      * Is this instance a request.
      */
     boolean isRequest();
+
     /**
      * Is this instance a response.
      */
@@ -22,15 +23,18 @@ public interface HttpMessage {
      * The protocol of this message.
      */
     HttpProtocol protocol();
+
     /**
      * An iterable containing the headers of this message.
      */
     Iterable<HttpHeader> getHeaders();
+
     /**
      * Try to find the first header with the given name (case-insensitive) and return
      * Some(header), otherwise this method returns None.
      */
     Option<HttpHeader> getHeader(String headerName);
+
     /**
      * Try to find the first header of the given class and return
      * Some(header), otherwise this method returns None.
@@ -52,10 +56,12 @@ public interface HttpMessage {
          * Returns a copy of this message with the given header added to the list of headers.
          */
         Self addHeader(HttpHeader header);
+
         /**
          * Returns a copy of this message with the given headers added to the list of headers.
          */
         Self addHeaders(Iterable<HttpHeader> headers);
+
         /**
          * Returns a copy of this message with all headers of the given name (case-insensitively) removed.
          */
@@ -70,10 +76,12 @@ public interface HttpMessage {
          * Returns a copy of this message with a new entity.
          */
         Self withEntity(String string);
+
         /**
          * Returns a copy of Self message with a new entity.
          */
         Self withEntity(byte[] bytes);
+
         /**
          * Returns a copy of Self message with a new entity.
          */
@@ -83,14 +91,17 @@ public interface HttpMessage {
          * Returns a copy of Self message with a new entity.
          */
         Self withEntity(ContentType type, String string);
+
         /**
          * Returns a copy of Self message with a new entity.
          */
         Self withEntity(ContentType type, byte[] bytes);
+
         /**
          * Returns a copy of Self message with a new entity.
          */
         Self withEntity(ContentType type, ByteString bytes);
+
         /**
          * Returns a copy of Self message with a new entity.
          */

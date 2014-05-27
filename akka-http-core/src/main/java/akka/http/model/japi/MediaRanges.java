@@ -23,6 +23,7 @@ public final class MediaRanges {
     public static MediaRange create(MediaType mediaType) {
         return akka.http.model.MediaRange.apply((akka.http.model.MediaType) mediaType);
     }
+
     /**
      * Creates a custom universal media-range for a given main-type and a Map of parameters.
      */

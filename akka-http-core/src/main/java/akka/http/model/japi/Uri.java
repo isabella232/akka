@@ -14,10 +14,12 @@ public abstract class Uri {
      * Returns if this is an absolute Uri.
      */
     public abstract boolean isAbsolute();
+
     /**
      * Returns if this is a relative Uri.
      */
     public abstract boolean isRelative();
+
     /**
      * Returns if this is an empty Uri.
      */
@@ -32,10 +34,12 @@ public abstract class Uri {
      * Returns the Host of this Uri.
      */
     public abstract Host host();
+
     /**
      * Returns the port of this Uri.
      */
     public abstract int port();
+
     /**
      * Returns the user-info of this Uri.
      */
@@ -45,6 +49,7 @@ public abstract class Uri {
      * Returns a String representation of the path of this Uri.
      */
     public abstract String path();
+
     /**
      * Returns the the path segments of this Uri as an Iterable.
      */
@@ -59,14 +64,17 @@ public abstract class Uri {
      * Looks up a query parameter of this Uri.
      */
     public abstract Option<String> parameter(String key);
+
     /**
      * Returns if the query of this Uri contains a parameter with the given key.
      */
     public abstract boolean containsParameter(String key);
+
     /**
      * Returns an Iterable of all query parameters of this Uri.
      */
     public abstract Iterable<Parameter> parameters();
+
     /**
      * Returns a key/value map of the query parameters of this Uri. Use
      * the `parameters()` method to returns all parameters if keys may occur
@@ -95,14 +103,17 @@ public abstract class Uri {
      * Returns a copy of this instance with a new Host.
      */
     public abstract Uri host(Host host);
+
     /**
      * Returns a copy of this instance with a new host.
      */
     public abstract Uri host(String host);
+
     /**
      * Returns a copy of this instance with a new port.
      */
     public abstract Uri port(int port);
+
     /**
      * Returns a copy of this instance with new user-info.
      */
@@ -112,10 +123,12 @@ public abstract class Uri {
      * Returns a copy of this instance with a new path.
      */
     public abstract Uri path(String path);
+
     /**
      * Returns a copy of this instance with a path segment added at the end.
      */
     public abstract Uri addPathSegment(String segment);
+
     /**
      * Returns a copy of this instance with a new query.
      */
@@ -135,6 +148,7 @@ public abstract class Uri {
      * Returns a copy of this instance with a new fragment.
      */
     public abstract Uri fragment(String fragment);
+
     /**
      * Returns a copy of this instance with a new optional fragment.
      */
@@ -157,12 +171,14 @@ public abstract class Uri {
     public static Uri create(String uri) {
         return Http.Uri(akka.http.model.Uri.apply(uri));
     }
+
     /**
      * Returns a Uri created by parsing the given string representation and parsing-mode.
      */
     public static Uri create(String uri, akka.http.model.Uri.ParsingMode parsingMode) {
         return Http.Uri(akka.http.model.Uri.apply(ParserInput$.MODULE$.apply(uri), parsingMode));
     }
+
     /**
      * Returns a Uri created by parsing the given string representation, charset, and parsing-mode.
      */

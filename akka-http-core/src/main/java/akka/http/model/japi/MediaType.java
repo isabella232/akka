@@ -8,6 +8,7 @@ public abstract class MediaType {
      * Returns the main-type of this media-type.
      */
     public abstract String mainType();
+
     /**
      * Returns the sub-type of this media-type.
      */
@@ -19,6 +20,7 @@ public abstract class MediaType {
     public MediaRange toRange() {
         return MediaRanges.create(this);
     }
+
     /**
      * Creates a media-range from this media-type with a given qValue.
      */

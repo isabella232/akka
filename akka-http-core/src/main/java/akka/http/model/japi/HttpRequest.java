@@ -23,10 +23,12 @@ public abstract class HttpRequest implements HttpMessage, HttpMessage.MessageTra
      * Returns a copy of this instance with a new method.
      */
     public abstract HttpRequest withMethod(HttpMethod method);
+
     /**
      * Returns a copy of this instance with a new Uri.
      */
     public abstract HttpRequest withUri(Uri relativeUri);
+
     /**
      * Returns a copy of this instance with a new Uri.
      */

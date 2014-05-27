@@ -38,12 +38,14 @@ public abstract class Host {
     public static Host create(String string) {
         return create(string, Uri.Host$.MODULE$.apply$default$2());
     }
+
     /**
      * Parse the given Host string using the given charset and the default parsing-mode.
      */
     public static Host create(String string, Charset charset) {
         return Uri.Host$.MODULE$.apply(string, charset, Uri.Host$.MODULE$.apply$default$3());
     }
+
     /**
      * Parse the given Host string using the given charset and parsing-mode.
      */

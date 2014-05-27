@@ -16,12 +16,14 @@ public abstract class HttpCharset {
     public HttpCharsetRange toRange() {
         return withQValue(1f);
     }
+
     /**
      * Creates a range from this charset with the given qValue.
      */
     public HttpCharsetRange toRange(float qValue) {
         return withQValue(qValue);
     }
+
     /**
      * An alias for toRange(float).
      */

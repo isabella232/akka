@@ -86,18 +86,21 @@ public final class StatusCodes {
     public static StatusCode registerCustom(int intValue, String reason, String defaultMessage, boolean isSuccess, boolean allowsEntity) {
         return akka.http.model.StatusCodes.registerCustom(intValue, reason, defaultMessage, isSuccess, allowsEntity);
     }
+
     /**
      * Registers a custom status code.
      */
     public static StatusCode registerCustom(int intValue, String reason, String defaultMessage) {
         return akka.http.model.StatusCodes.registerCustom(intValue, reason, defaultMessage);
     }
+
     /**
      * Looks up a status-code by numeric code. Throws an exception if no such status-code is found.
      */
     public static StatusCode get(int intValue) {
         return akka.http.model.StatusCode.int2StatusCode(intValue);
     }
+
     /**
      * Looks up a status-code by numeric code and returns Some(code). Returns None otherwise.
      */

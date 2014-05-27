@@ -45,10 +45,12 @@ public abstract class HttpEntity {
      * Returns if this entity is a subtype of HttpEntityRegular.
      */
     public abstract boolean isRegular();
+
     /**
      * Returns if this entity is a subtype of HttpEntityChunked.
      */
     public abstract boolean isChunked();
+
     /**
      * Returns if this entity is a subtype of HttpEntityDefault.
      */
