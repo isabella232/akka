@@ -11,6 +11,7 @@ public class JavaApiTestCases {
                 .withMethod(HttpMethods.POST)
                 .withUri("/send");
     }
+
     /** A simple handler for an Http server */
     public static HttpResponse handleRequest(HttpRequest request) {
         if (request.method() == HttpMethods.GET) {
@@ -32,6 +33,7 @@ public class JavaApiTestCases {
                     .withStatus(StatusCodes.MethodNotAllowed)
                     .withEntity("Unsupported method");
     }
+
     /** Adds authentication to an existing request */
     public static HttpRequest addAuthentication(HttpRequest request) {
         return request
