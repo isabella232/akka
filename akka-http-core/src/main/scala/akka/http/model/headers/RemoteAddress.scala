@@ -14,7 +14,7 @@ sealed abstract class RemoteAddress extends japi.headers.RemoteAddress with Valu
   def toOption: Option[InetAddress]
   def isUnknown: Boolean
 
-  // Java API
+  /** Java API */
   def getAddress: akka.japi.Option[InetAddress] = toOption.asJava
 }
 

@@ -92,8 +92,6 @@ public abstract class Uri {
      */
     public abstract Option<String> fragment();
 
-    // Modification methods
-
     /**
      * Returns a copy of this instance with a new scheme.
      */

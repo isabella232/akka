@@ -79,16 +79,6 @@ sealed trait HttpMessage extends japi.HttpMessage {
     mapHeaders(_.filterNot(_.is(lowerHeaderName)))
   }
 
-  // Java API
-  import collection.JavaConverters._
-  def getHeaders: java.lang.Iterable[japi.HttpHeader] = (headers: immutable.Seq[japi.HttpHeader]).asJava
-  def getHeader[T <: japi.HttpHeader](headerClass: Class[T]): akka.japi.Option[T] = header(ClassTag(headerClass))
-  def getHeader(headerName: String): akka.japi.Option[japi.HttpHeader] = {
-    val lowerCased = headerName.toLowerCase
-    headers.find(_.is(lowerCased))
-  }
-  def addHeaders(headers: java.lang.Iterable[japi.HttpHeader]): Self = mapHeaders(_ ++ headers.asScala.asInstanceOf[Iterable[HttpHeader]])
-
   def withEntity(string: String): Self = withEntity(HttpEntity(string))
   def withEntity(bytes: Array[Byte]): Self = withEntity(HttpEntity(bytes))
   def withEntity(bytes: ByteString): Self = withEntity(HttpEntity(bytes))
@@ -96,6 +86,19 @@ sealed trait HttpMessage extends japi.HttpMessage {
   def withEntity(contentType: japi.ContentType, bytes: Array[Byte]): Self = withEntity(HttpEntity(contentType.asInstanceOf[ContentType], bytes))
   def withEntity(contentType: japi.ContentType, bytes: ByteString): Self = withEntity(HttpEntity(contentType.asInstanceOf[ContentType], bytes))
   def withEntity(contentType: japi.ContentType, file: java.io.File): Self = withEntity(HttpEntity(contentType.asInstanceOf[ContentType], file))
+
+  import collection.JavaConverters._
+  /** Java API */
+  def getHeaders: java.lang.Iterable[japi.HttpHeader] = (headers: immutable.Seq[japi.HttpHeader]).asJava
+  /** Java API */
+  def getHeader[T <: japi.HttpHeader](headerClass: Class[T]): akka.japi.Option[T] = header(ClassTag(headerClass))
+  /** Java API */
+  def getHeader(headerName: String): akka.japi.Option[japi.HttpHeader] = {
+    val lowerCased = headerName.toLowerCase
+    headers.find(_.is(lowerCased))
+  }
+  /** Java API */
+  def addHeaders(headers: java.lang.Iterable[japi.HttpHeader]): Self = mapHeaders(_ ++ headers.asScala.asInstanceOf[Iterable[HttpHeader]])
 }
 
 object HttpMessage {
@@ -283,8 +286,9 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
   def withProtocol(protocol: akka.http.model.japi.HttpProtocol): HttpRequest = copy(protocol = protocol.asInstanceOf[HttpProtocol])
   def withUri(path: String): HttpRequest = copy(uri = Uri(path))
 
-  // Java API
+  /** Java API */
   def getUri: japi.Uri = japi.Http.Uri(uri)
+  /** Java API */
   def withUri(relativeUri: akka.http.model.japi.Uri): HttpRequest = copy(uri = relativeUri.asInstanceOf[japi.JavaUri].uri)
 }
 

@@ -22,7 +22,7 @@ sealed trait LanguageRange extends japi.headers.LanguageRange with ValueRenderab
     r
   }
 
-  // Java API
+  /** Java API */
   def matches(language: japi.headers.Language): Boolean = matches(language.asScala)
   def getSubTags: java.lang.Iterable[String] = subTags.asJava
 }
