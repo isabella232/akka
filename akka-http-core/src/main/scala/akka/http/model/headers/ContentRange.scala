@@ -5,6 +5,8 @@
 package akka.http.model
 package headers
 
+import java.{ lang ⇒ jl }
+
 import akka.http.util.{ Rendering, ValueRenderable }
 
 import akka.http.model.japi.JavaMapping.Implicits._
@@ -13,8 +15,8 @@ sealed trait ContentRange extends japi.headers.ContentRange with ValueRenderable
   // default implementations to override
   def isSatisfiable: Boolean = false
   def isOther: Boolean = false
-  def getSatisfiableFirst: akka.japi.Option[java.lang.Long] = akka.japi.Option.none
-  def getSatisfiableLast: akka.japi.Option[java.lang.Long] = akka.japi.Option.none
+  def getSatisfiableFirst: akka.japi.Option[jl.Long] = akka.japi.Option.none
+  def getSatisfiableLast: akka.japi.Option[jl.Long] = akka.japi.Option.none
   def getOtherValue: akka.japi.Option[String] = akka.japi.Option.none
 }
 
@@ -24,7 +26,7 @@ sealed trait ByteContentRange extends ContentRange {
   /** Java API */
   def isByteContentRange: Boolean = true
   /** Java API */
-  def getInstanceLength: akka.japi.Option[java.lang.Long] = instanceLength.asJava
+  def getInstanceLength: akka.japi.Option[jl.Long] = instanceLength.asJava
 }
 
 // http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-26#section-4.2
@@ -48,9 +50,9 @@ object ContentRange {
     /** Java API */
     override def isSatisfiable: Boolean = true
     /** Java API */
-    override def getSatisfiableFirst: akka.japi.Option[java.lang.Long] = akka.japi.Option.some(first)
+    override def getSatisfiableFirst: akka.japi.Option[jl.Long] = akka.japi.Option.some(first)
     /** Java API */
-    override def getSatisfiableLast: akka.japi.Option[java.lang.Long] = akka.japi.Option.some(last)
+    override def getSatisfiableLast: akka.japi.Option[jl.Long] = akka.japi.Option.some(last)
   }
 
   /**
@@ -70,7 +72,7 @@ object ContentRange {
     /** Java API */
     def isByteContentRange = false
     /** Java API */
-    def getInstanceLength: akka.japi.Option[java.lang.Long] = akka.japi.Option.none
+    def getInstanceLength: akka.japi.Option[jl.Long] = akka.japi.Option.none
     /** Java API */
     override def getOtherValue: akka.japi.Option[String] = akka.japi.Option.some(value)
   }
