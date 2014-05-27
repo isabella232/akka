@@ -61,7 +61,7 @@ sealed trait HttpEntity extends japi.HttpEntity {
       })
       .toFuture(materializer)
 
-  // Java API
+  /** Java API */
   def getDataBytes(materializer: FlowMaterializer): Producer[ByteString] = dataBytes(materializer)
 
   // default implementations, should be overridden
@@ -157,7 +157,7 @@ object HttpEntity {
     def dataBytes(materializer: FlowMaterializer): Producer[ByteString] =
       Flow(chunks).map(_.data).filter(_.nonEmpty).toProducer(materializer)
 
-    // Java API
+    /** Java API */
     def getChunks: Producer[japi.ChunkStreamPart] = chunks.asInstanceOf[Producer[japi.ChunkStreamPart]]
   }
   object Chunked {
@@ -198,7 +198,7 @@ object HttpEntity {
     def data = ByteString.empty
     def isLastChunk = true
 
-    // Java API
+    /** Java API */
     def getTrailerHeaders: Iterable[japi.HttpHeader] = trailer.asJava
   }
   object LastChunk extends LastChunk("", Nil)

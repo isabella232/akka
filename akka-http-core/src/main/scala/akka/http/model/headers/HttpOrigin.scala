@@ -16,7 +16,7 @@ import akka.http.model.japi.JavaMapping.Implicits._
 abstract class HttpOriginRange extends japi.headers.HttpOriginRange with ValueRenderable {
   def matches(origin: HttpOrigin): Boolean
 
-  // Java API
+  /** Java API */
   def matches(origin: japi.headers.HttpOrigin): Boolean = matches(origin.asScala)
 }
 object HttpOriginRange {

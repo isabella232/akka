@@ -18,7 +18,7 @@ sealed abstract class HttpCharsetRange extends japi.HttpCharsetRange with ValueR
   def qValue: Float
   def matches(charset: HttpCharset): Boolean
 
-  // Java API
+  /** Java API */
   def matches(charset: japi.HttpCharset): Boolean = {
     import japi.JavaMapping.Implicits._
     matches(charset.asScala)
@@ -62,7 +62,7 @@ final case class HttpCharset private[http] (override val value: String)(val alia
 
   def withQValue(qValue: Float): HttpCharsetRange = HttpCharsetRange(this, qValue.toFloat)
 
-  // Java API
+  /** Java API */
   def getAliases: Iterable[String] = {
     import collection.JavaConverters._
     aliases.asJava
