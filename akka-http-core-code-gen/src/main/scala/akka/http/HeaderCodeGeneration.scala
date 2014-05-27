@@ -77,8 +77,7 @@ object HeaderCodeGeneration {
       if (extraJavaMethods.isEmpty) ""
       else
         s"""
-           |  // Java API
-           |${extraJavaMethods.map("  " + _).mkString("\n")}
+           |${extraJavaMethods.map("  /** Java API */\n  " + _).mkString("\n")}
            |""".stripMargin
 
     s"""${specSource.map("// " + _ + "\n").getOrElse("")}object $scalaIdentifier extends ModeledCompanion$companionBody

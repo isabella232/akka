@@ -74,7 +74,7 @@ class HeaderDefinitionParser(val input: ParserInput) extends Parser {
     linePrefix("class") ~ '\n' ~ fullIndentedLines ~> (InfoLine[String] _)
   }
   def fullIndentedLines: Rule1[String] = rule {
-    zeroOrMore(fullIndentedLine) ~> ((_: Seq[String]).mkString("\n"))
+    zeroOrMore(fullIndentedLine) ~> ((_: Seq[String]).mkString)
   }
 
   def rendering: Rule1[InfoLine[String]] = rule {

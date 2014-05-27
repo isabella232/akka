@@ -121,7 +121,7 @@ final case class Accept(mediaRanges: immutable.Seq[MediaRange]) extends japi.hea
   def renderValue[R <: Rendering](r: R): r.type = r ~~ mediaRanges
   protected def companion = Accept
 
-  // Java API
+  /** Java API */
   def getMediaRanges = mediaRanges.asJava
 }
 
@@ -135,7 +135,7 @@ final case class `Accept-Charset`(charsetRanges: immutable.Seq[HttpCharsetRange]
   def renderValue[R <: Rendering](r: R): r.type = r ~~ charsetRanges
   protected def companion = `Accept-Charset`
 
-  // Java API
+  /** Java API */
   def getCharsetRanges = charsetRanges.asJava
 }
 
@@ -149,7 +149,7 @@ final case class `Accept-Encoding`(encodings: immutable.Seq[HttpEncodingRange]) 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ encodings
   protected def companion = `Accept-Encoding`
 
-  // Java API
+  /** Java API */
   def getEncodings = encodings.asJava
 }
 
@@ -163,7 +163,7 @@ final case class `Accept-Language`(languages: immutable.Seq[LanguageRange]) exte
   def renderValue[R <: Rendering](r: R): r.type = r ~~ languages
   protected def companion = `Accept-Language`
 
-  // Java API
+  /** Java API */
   def getLanguages = languages.asJava
 }
 
@@ -177,7 +177,7 @@ final case class `Accept-Ranges`(rangeUnits: immutable.Seq[RangeUnit]) extends j
   def renderValue[R <: Rendering](r: R): r.type = if (rangeUnits.isEmpty) r ~~ "none" else r ~~ rangeUnits
   protected def companion = `Accept-Ranges`
 
-  // Java API
+  /** Java API */
   def getRangeUnits = rangeUnits.asJava
 }
 
@@ -199,7 +199,7 @@ final case class `Access-Control-Allow-Headers`(headers: immutable.Seq[String]) 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ headers
   protected def companion = `Access-Control-Allow-Headers`
 
-  // Java API
+  /** Java API */
   def getHeaders = headers.asJava
 }
 
@@ -213,7 +213,7 @@ final case class `Access-Control-Allow-Methods`(methods: immutable.Seq[HttpMetho
   def renderValue[R <: Rendering](r: R): r.type = r ~~ methods
   protected def companion = `Access-Control-Allow-Methods`
 
-  // Java API
+  /** Java API */
   def getMethods = methods.asJava
 }
 
@@ -235,7 +235,7 @@ final case class `Access-Control-Expose-Headers`(headers: immutable.Seq[String])
   def renderValue[R <: Rendering](r: R): r.type = r ~~ headers
   protected def companion = `Access-Control-Expose-Headers`
 
-  // Java API
+  /** Java API */
   def getHeaders = headers.asJava
 }
 
@@ -257,7 +257,7 @@ final case class `Access-Control-Request-Headers`(headers: immutable.Seq[String]
   def renderValue[R <: Rendering](r: R): r.type = r ~~ headers
   protected def companion = `Access-Control-Request-Headers`
 
-  // Java API
+  /** Java API */
   def getHeaders = headers.asJava
 }
 
@@ -279,7 +279,7 @@ final case class Allow(methods: immutable.Seq[HttpMethod]) extends japi.headers.
   def renderValue[R <: Rendering](r: R): r.type = r ~~ methods
   protected def companion = Allow
 
-  // Java API
+  /** Java API */
   def getMethods = methods.asJava
 }
 
@@ -301,7 +301,7 @@ final case class `Cache-Control`(directives: immutable.Seq[CacheDirective]) exte
   def renderValue[R <: Rendering](r: R): r.type = r ~~ directives
   protected def companion = `Cache-Control`
 
-  // Java API
+  /** Java API */
   def getDirectives = directives.asJava
 }
 
@@ -312,7 +312,7 @@ final case class `Content-Disposition`(dispositionType: ContentDispositionType, 
   def renderValue[R <: Rendering](r: R): r.type = { r ~~ dispositionType; parameters foreach { case (k, v) ⇒ r ~~ "; " ~~ k ~~ '=' ~~# v }; r }
   protected def companion = `Content-Disposition`
 
-  // Java API
+  /** Java API */
   def getParameters = parameters.asJava
 }
 
@@ -326,7 +326,7 @@ final case class `Content-Encoding`(encodings: immutable.Seq[HttpEncoding]) exte
   def renderValue[R <: Rendering](r: R): r.type = r ~~ encodings
   protected def companion = `Content-Encoding`
 
-  // Java API
+  /** Java API */
   def getEncodings = encodings.asJava
 }
 
@@ -352,9 +352,7 @@ final case class `Content-Type`(contentType: ContentType) extends japi.headers.C
 // https://tools.ietf.org/html/rfc6265#section-4.2
 object Cookie extends ModeledCompanion {
   implicit val cookieNameValueOnlyRenderer: Renderer[HttpCookie] = new Renderer[HttpCookie] {
-
     def render[R <: Rendering](r: R, c: HttpCookie): r.type = r ~~ c.name ~~ '=' ~~ c.content
-
   }
 
   def apply(cookies: HttpCookie*): Cookie = apply(immutable.Seq(cookies: _*))
@@ -365,7 +363,7 @@ final case class Cookie(cookies: immutable.Seq[HttpCookie]) extends japi.headers
   def renderValue[R <: Rendering](r: R): r.type = r ~~ cookies
   protected def companion = Cookie
 
-  // Java API
+  /** Java API */
   def getCookies = cookies.asJava
 }
 
@@ -391,9 +389,7 @@ final case class ETag(etag: EntityTag) extends japi.headers.ETag with ModeledHea
 // http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-3.1
 object `If-Match` extends ModeledCompanion {
   val `*` = `If-Match`(EntityTagRange.`*`)
-
   def apply(first: EntityTag, more: EntityTag*): `If-Match` =
-
     `If-Match`(EntityTagRange(first +: more: _*))
 
 }
@@ -414,9 +410,7 @@ final case class `If-Modified-Since`(date: DateTime) extends japi.headers.If_Mod
 // http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-3.2
 object `If-None-Match` extends ModeledCompanion {
   val `*` = `If-None-Match`(EntityTagRange.`*`)
-
   def apply(first: EntityTag, more: EntityTag*): `If-None-Match` =
-
     `If-None-Match`(EntityTagRange(first +: more: _*))
 
 }
@@ -454,7 +448,7 @@ final case class Link(values: immutable.Seq[LinkValue]) extends japi.headers.Lin
   def renderValue[R <: Rendering](r: R): r.type = r ~~ values
   protected def companion = Link
 
-  // Java API
+  /** Java API */
   def getValues = values.asJava
 }
 
@@ -465,7 +459,7 @@ final case class Location(uri: Uri) extends japi.headers.Location with ModeledHe
   def renderValue[R <: Rendering](r: R): r.type = { import UriRendering.UriRenderer; r ~~ uri }
   protected def companion = Location
 
-  // Java API
+  /** Java API */
   def getUri = uri.asJava
 }
 
@@ -478,7 +472,7 @@ final case class Origin(origins: immutable.Seq[HttpOrigin]) extends japi.headers
   def renderValue[R <: Rendering](r: R): r.type = r ~~ origins
   protected def companion = Origin
 
-  // Java API
+  /** Java API */
   def getOrigins = origins.asJava
 }
 
@@ -492,7 +486,7 @@ final case class `Proxy-Authenticate`(challenges: immutable.Seq[HttpChallenge]) 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ challenges
   protected def companion = `Proxy-Authenticate`
 
-  // Java API
+  /** Java API */
   def getChallenges = challenges.asJava
 }
 
@@ -507,7 +501,6 @@ final case class `Proxy-Authorization`(credentials: HttpCredentials) extends jap
 // http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-26#section-3.1
 object Range extends ModeledCompanion {
   def apply(first: ByteRange, more: ByteRange*): Range = apply(immutable.Seq(first +: more: _*))
-
   def apply(ranges: immutable.Seq[ByteRange]): Range = Range(RangeUnits.Bytes, ranges)
 
   implicit val rangesRenderer = Renderer.defaultSeqRenderer[ByteRange] // cache
@@ -517,7 +510,7 @@ final case class Range(rangeUnit: RangeUnit, ranges: immutable.Seq[ByteRange]) e
   def renderValue[R <: Rendering](r: R): r.type = r ~~ rangeUnit ~~ '=' ~~ ranges
   protected def companion = Range
 
-  // Java API
+  /** Java API */
   def getRanges = ranges.asJava
 }
 
@@ -547,7 +540,7 @@ final case class Server(products: immutable.Seq[ProductVersion]) extends japi.he
   def renderValue[R <: Rendering](r: R): r.type = r ~~ products
   protected def companion = Server
 
-  // Java API
+  /** Java API */
   def getProducts = products.asJava
 }
 
@@ -570,7 +563,7 @@ final case class `Transfer-Encoding`(encodings: immutable.Seq[TransferEncoding])
   def renderValue[R <: Rendering](r: R): r.type = r ~~ encodings
   protected def companion = `Transfer-Encoding`
 
-  // Java API
+  /** Java API */
   def getEncodings = encodings.asJava
 }
 
@@ -586,7 +579,7 @@ final case class `User-Agent`(products: immutable.Seq[ProductVersion]) extends j
   def renderValue[R <: Rendering](r: R): r.type = r ~~ products
   protected def companion = `User-Agent`
 
-  // Java API
+  /** Java API */
   def getProducts = products.asJava
 }
 
@@ -600,14 +593,13 @@ final case class `WWW-Authenticate`(challenges: immutable.Seq[HttpChallenge]) ex
   def renderValue[R <: Rendering](r: R): r.type = r ~~ challenges
   protected def companion = `WWW-Authenticate`
 
-  // Java API
+  /** Java API */
   def getChallenges = challenges.asJava
 }
 
 // http://en.wikipedia.org/wiki/X-Forwarded-For
 object `X-Forwarded-For` extends ModeledCompanion {
   def apply(first: String, more: String*): `X-Forwarded-For` =
-
     apply(immutable.Seq((first +: more).map(RemoteAddress.apply): _*))
 
   def apply(addresses: RemoteAddress*): `X-Forwarded-For` = apply(immutable.Seq(addresses: _*))
@@ -618,7 +610,7 @@ final case class `X-Forwarded-For`(addresses: immutable.Seq[RemoteAddress]) exte
   def renderValue[R <: Rendering](r: R): r.type = r ~~ addresses
   protected def companion = `X-Forwarded-For`
 
-  // Java API
+  /** Java API */
   def getAddresses = addresses.asJava
 }
 
