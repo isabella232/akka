@@ -13,7 +13,7 @@ sealed abstract class HttpEncodingRange extends japi.headers.HttpEncodingRange w
   def qValue: Float
   def matches(encoding: HttpEncoding): Boolean
 
-  // Java API
+  /** Java API */
   def matches(encoding: japi.headers.HttpEncoding): Boolean = matches(encoding.asScala)
 }
 

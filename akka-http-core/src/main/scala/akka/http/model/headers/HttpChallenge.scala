@@ -19,6 +19,6 @@ final case class HttpChallenge(scheme: String, realm: String,
     r
   }
 
-  // Java API
+  /** Java API */
   def getParameters: util.Map[String, String] = parameters.asJava
 }

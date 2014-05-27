@@ -41,7 +41,7 @@ final case class ContentType(mediaType: MediaType, definedCharset: Option[HttpCh
   def withoutDefinedCharset =
     if (isCharsetDefined) copy(definedCharset = None) else this
 
-  // Java API
+  /** Java API */
   def getDefinedCharset: japi.HttpCharset = definedCharset.getOrElse(null)
 }
 

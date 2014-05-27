@@ -16,7 +16,7 @@ sealed abstract class HttpCredentials extends japi.headers.HttpCredentials with 
   def token: String
   def parameters: Map[String, String]
 
-  // Java API
+  /** Java API */
   def getParameters: java.util.Map[String, String] = parameters.asJava
 }
 
