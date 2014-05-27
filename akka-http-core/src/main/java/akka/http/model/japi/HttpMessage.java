@@ -42,11 +42,7 @@ public interface HttpMessage {
      */
     HttpEntity entity();
 
-    public static interface MessageTransformations<Self> extends HttpEntityRegularBuilder<Self> {
-        /**
-         * Returns a copy of this message with a new entity.
-         */
-        Self withEntity(HttpEntity entity);
+    public static interface MessageTransformations<Self> {
         /**
          * Returns a copy of this message with a new protocol.
          */
@@ -64,36 +60,40 @@ public interface HttpMessage {
          * Returns a copy of this message with all headers of the given name (case-insensitively) removed.
          */
         Self removeHeader(String headerName);
-    }
-    public static interface HttpEntityRegularBuilder<This> {
-        /**
-         * Returns a copy of this message with a new entity.
-         */
-        This withEntity(String string);
-        /**
-         * Returns a copy of this message with a new entity.
-         */
-        This withEntity(byte[] bytes);
-        /**
-         * Returns a copy of this message with a new entity.
-         */
-        This withEntity(ByteString bytes);
 
         /**
          * Returns a copy of this message with a new entity.
          */
-        This withEntity(ContentType type, String string);
+        Self withEntity(HttpEntity entity);
+
         /**
          * Returns a copy of this message with a new entity.
          */
-        This withEntity(ContentType type, byte[] bytes);
+        Self withEntity(String string);
         /**
-         * Returns a copy of this message with a new entity.
+         * Returns a copy of Self message with a new entity.
          */
-        This withEntity(ContentType type, ByteString bytes);
+        Self withEntity(byte[] bytes);
         /**
-         * Returns a copy of this message with a new entity.
+         * Returns a copy of Self message with a new entity.
          */
-        This withEntity(ContentType type, File file);
+        Self withEntity(ByteString bytes);
+
+        /**
+         * Returns a copy of Self message with a new entity.
+         */
+        Self withEntity(ContentType type, String string);
+        /**
+         * Returns a copy of Self message with a new entity.
+         */
+        Self withEntity(ContentType type, byte[] bytes);
+        /**
+         * Returns a copy of Self message with a new entity.
+         */
+        Self withEntity(ContentType type, ByteString bytes);
+        /**
+         * Returns a copy of Self message with a new entity.
+         */
+        Self withEntity(ContentType type, File file);
     }
 }
