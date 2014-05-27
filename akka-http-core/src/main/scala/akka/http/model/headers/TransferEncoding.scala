@@ -9,7 +9,7 @@ import akka.http.util.{ Rendering, SingletonValueRenderable, Renderable }
 
 import akka.http.model.japi.JavaMapping.Implicits._
 
-sealed trait TransferEncoding extends Renderable with japi.headers.TransferEncoding {
+sealed abstract class TransferEncoding extends japi.headers.TransferEncoding with Renderable {
   def name: String
   def parameters: Map[String, String]
 

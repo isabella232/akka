@@ -25,6 +25,7 @@ import java.nio.charset.Charset
 import java.util.Properties
 import annotation.tailrec
 import Unidoc.{ JavaDoc, javadocSettings, junidocSources, sunidoc, unidocExclude }
+import TestExtras. { JUnitFileReporting, StatsDMetrics }
 import com.typesafe.sbt.S3Plugin.{ S3, s3Settings }
 
 object AkkaBuild extends Build {
@@ -35,7 +36,7 @@ object AkkaBuild extends Build {
 
   val enableMiMa = true
 
-  val requestedScalaVersion = System.getProperty("akka.scalaVersion", "2.10.3")
+  val requestedScalaVersion = System.getProperty("akka.scalaVersion", "2.10.4")
   val Seq(scalaEpoch, scalaMajor) = """(\d+)\.(\d+)\..*""".r.unapplySeq(requestedScalaVersion).get.map(_.toInt)
 
   lazy val buildSettings = Seq(
@@ -50,6 +51,7 @@ object AkkaBuild extends Build {
     base = file("."),
     settings = parentSettings ++ Release.settings ++ Unidoc.settings ++ Publish.versionSettings ++
       SphinxSupport.settings ++ Dist.settings ++ s3Settings ++ mimaSettings ++ unidocScaladocSettings ++
+      StatsDMetrics.settings ++ 
       Protobuf.settings ++ inConfig(JavaDoc)(Defaults.configSettings) ++ Seq(
       testMailbox in GlobalScope := System.getProperty("akka.testMailbox", "false").toBoolean,
       parallelExecution in GlobalScope := System.getProperty("akka.parallelExecution", "false").toBoolean,
@@ -159,7 +161,7 @@ object AkkaBuild extends Build {
     libraryDependencies <++= scalaVersion { v =>
       if (v.startsWith("2.10.")) Seq(compilerPlugin("org.scala-lang.plugins" % "continuations" % v))
       else Seq(
-        compilerPlugin("org.scala-lang.plugins" %% "scala-continuations-plugin" % Dependencies.Versions.scalaContinuationsVersion),
+        compilerPlugin("org.scala-lang.plugins" %% "scala-continuations-plugin" % Dependencies.Versions.scalaContinuationsVersion cross CrossVersion.full),
         "org.scala-lang.plugins" %% "scala-continuations-library" % Dependencies.Versions.scalaContinuationsVersion)
     },
     scalacOptions += "-P:continuations:enable"
@@ -189,11 +191,9 @@ object AkkaBuild extends Build {
     id = "akka-actor-tests",
     base = file("akka-actor-tests"),
     dependencies = Seq(testkit % "compile;test->test"),
-    settings = defaultSettings ++ formatSettings ++ scaladocSettings  ++ Seq(
+    settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ Seq(
       publishArtifact in Compile := false,
-      libraryDependencies ++= Dependencies.actorTests,
-      testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
-      reportBinaryIssues := () // disable bin comp check
+      libraryDependencies ++= Dependencies.actorTests
     )
   )
 
@@ -265,7 +265,7 @@ object AkkaBuild extends Build {
     id = "akka-agent",
     base = file("akka-agent"),
     dependencies = Seq(actor, testkit % "test->test"),
-    settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.agent ++ Seq(
+    settings = defaultSettings ++ formatSettings ++ scaladocSettingsNoVerificationOfDiagrams ++ javadocSettings ++ OSGi.agent ++ Seq(
       libraryDependencies ++= Dependencies.agent,
       previousArtifact := akkaPreviousArtifact("akka-agent")
     )
@@ -296,7 +296,7 @@ object AkkaBuild extends Build {
   lazy val httpCore = Project(
     id = "akka-http-core",
     base = file("akka-http-core"),
-    dependencies = Seq(actor, stream),
+    dependencies = Seq(stream),
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.httpCore ++ Seq(
       // FIXME remove this publishArtifact when akka-http-core-2.3.x is released
       publishArtifact := java.lang.Boolean.getBoolean("akka.publish.akka-http-core"),
@@ -331,11 +331,12 @@ object AkkaBuild extends Build {
     id = "akka-stream-experimental",
     base = file("akka-stream"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ experimentalSettings ++ javadocSettings ++ OSGi.stream ++ Seq(
-      version := "0.2-SNAPSHOT",
+      version := "0.3-SNAPSHOT",
       libraryDependencies ++= Dependencies.stream,
       // FIXME include mima when akka-stream-experimental-2.3.x has been released
       //previousArtifact := akkaPreviousArtifact("akka-stream-experimental")
-      previousArtifact := None
+      previousArtifact := None,
+      fork in Test := true
     )
   )
 
@@ -487,7 +488,7 @@ object AkkaBuild extends Build {
   lazy val persistenceSampleScala = Project(
     id = "akka-sample-persistence-scala",
     base = file("akka-samples/akka-sample-persistence-scala"),
-    dependencies = Seq(actor, persistence),
+    dependencies = Seq(actor, persistence, stream),
     settings = sampleSettings
   )
 
@@ -578,6 +579,8 @@ object AkkaBuild extends Build {
     base = file("akka-samples/akka-sample-osgi-dining-hakkers/uncommons"),
     settings = sampleSettings ++ osgiSampleSettings ++ OSGi.osgiDiningHakkersSampleUncommons ++ Seq(
       libraryDependencies ++= Dependencies.uncommons,
+      // allow publishLocal/publishM2 to overwrite
+      isSnapshot := true,
       version := "1.2.0"
     )
   )
@@ -609,8 +612,7 @@ object AkkaBuild extends Build {
     id = "akka-docs",
     base = file("akka-docs"),
     dependencies = Seq(actor, testkit % "test->test",
-      remote % "compile;test->test", cluster, slf4j, agent, zeroMQ, camel, osgi,
-      persistence % "compile;test->test"),
+      remote % "compile;test->test", cluster, slf4j, agent, zeroMQ, camel, osgi, persistence),
     settings = defaultSettings ++ docFormatSettings ++ site.settings ++ site.sphinxSupport() ++ site.publishSite ++ sphinxPreprocessing ++ cpsPlugin ++ Seq(
       sourceDirectory in Sphinx <<= baseDirectory / "rst",
       sphinxPackages in Sphinx <+= baseDirectory { _ / "_sphinx" / "pygments" },
@@ -847,7 +849,8 @@ object AkkaBuild extends Build {
     // add reportBinaryIssues to validatePullRequest on minor version maintenance branch
     validatePullRequest <<= validatePullRequest.dependsOn(reportBinaryIssues)
     
-  ) ++ mavenLocalResolverSettings
+  ) ++ mavenLocalResolverSettings ++ JUnitFileReporting.settings ++ StatsDMetrics.settings
+
 
   val validatePullRequest = TaskKey[Unit]("validate-pull-request", "Additional tasks for pull request validation")
   // the tasks that to run for validation is defined in defaultSettings
@@ -1033,7 +1036,17 @@ object AkkaBuild extends Build {
       ProblemFilters.exclude[MissingMethodProblem]("akka.remote.testconductor.Conductor.shutdown"),
       ProblemFilters.exclude[MissingMethodProblem]("akka.remote.testkit.MultiNodeSpec.akka$remote$testkit$MultiNodeSpec$$deployer"),
       FilterAnyProblem("akka.remote.EndpointManager$Pass"),
-      FilterAnyProblem("akka.remote.EndpointManager$EndpointRegistry")
+      FilterAnyProblem("akka.remote.EndpointManager$EndpointRegistry"),
+      FilterAnyProblem("akka.remote.EndpointWriter"),
+      FilterAnyProblem("akka.remote.EndpointWriter$StopReading"),
+      FilterAnyProblem("akka.remote.EndpointWriter$State"),
+      FilterAnyProblem("akka.remote.EndpointWriter$TakeOver"),
+
+      // Change of internal message by #15109
+      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor#GotUid.copy"),
+      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor#GotUid.this"),
+      ProblemFilters.exclude[MissingTypesProblem]("akka.remote.ReliableDeliverySupervisor$GotUid$"),
+      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor#GotUid.apply")
     )
   }
 
@@ -1150,10 +1163,10 @@ object Dependencies {
   object Versions {
     val scalaStmVersion  = System.getProperty("akka.build.scalaStmVersion", "0.7")
     val scalaZeroMQVersion = System.getProperty("akka.build.scalaZeroMQVersion", "0.0.7")
-    val genJavaDocVersion = System.getProperty("akka.build.genJavaDocVersion", "0.5")
-    val scalaTestVersion = System.getProperty("akka.build.scalaTestVersion", "2.0")
-    val scalaCheckVersion = System.getProperty("akka.build.scalaCheckVersion", "1.10.1")
-    val scalaContinuationsVersion = System.getProperty("akka.build.scalaContinuationsVersion", "1.0.0-RC3")
+    val genJavaDocVersion = System.getProperty("akka.build.genJavaDocVersion", "0.7")
+    val scalaTestVersion = System.getProperty("akka.build.scalaTestVersion", "2.1.3")
+    val scalaCheckVersion = System.getProperty("akka.build.scalaCheckVersion", "1.11.3")
+    val scalaContinuationsVersion = System.getProperty("akka.build.scalaContinuationsVersion", "1.0.1")
   }
 
   object Compile {
@@ -1198,7 +1211,6 @@ object Dependencies {
 
     // http-core (temporary, will be removed by internalizing)
     val parboiled2    = "org.parboiled"               %% "parboiled"                    % "2.0.0-SNAPSHOT" changing() // ApacheV2
-    val waves         = "io.waves"                    %% "waves"                        % "0.2-SNAPSHOT" changing() // ApacheV2
     val shapeless     = "com.chuusai"                 % "shapeless_2.10.4"              % "2.0.0"           // ApacheV2
 
     // Test
@@ -1225,10 +1237,13 @@ object Dependencies {
       val paxExam      = "org.ops4j.pax.exam"          % "pax-exam-junit4"              % "2.6.0"            % "test" // ApacheV2
 
       val reactiveStreams = "org.reactivestreams"      % "reactive-streams-tck"         % "0.3"              % "test" // CC0
+      val scalaXml     = "org.scala-lang.modules"      %% "scala-xml"                   % "1.0.1" % "test"
     }
   }
 
   import Compile._
+  
+  val scalaXmlDepencency = (if (AkkaBuild.requestedScalaVersion.startsWith("2.10")) Nil else Seq(Test.scalaXml))
 
   val actor = Seq(config)
 
@@ -1238,7 +1253,7 @@ object Dependencies {
 
   val remote = Seq(netty, protobuf, uncommonsMath, Test.junit, Test.scalatest)
 
-  val remoteTests = Seq(Test.junit, Test.scalatest)
+  val remoteTests = Seq(Test.junit, Test.scalatest) ++ scalaXmlDepencency
 
   val cluster = Seq(Test.junit, Test.scalatest)
 
@@ -1248,15 +1263,19 @@ object Dependencies {
 
   val transactor = Seq(scalaStm, Test.scalatest, Test.junit)
 
-  val persistence = Seq(levelDB, levelDBNative, protobuf, Test.scalatest, Test.junit, Test.commonsIo)
+  val persistence = Seq(levelDB, levelDBNative, protobuf, Test.scalatest, Test.junit, Test.commonsIo) ++
+    scalaXmlDepencency
 
-  val httpCore = Seq(parboiled2, shapeless, waves, Test.junit, Test.scalatest)
+  val httpCore = Seq(
+    "com.typesafe.akka" %% "akka-actor" % "2.3.3",
+    parboiled2, shapeless, Test.junit, Test.scalatest)
 
   val stream = Seq(
     // FIXME use project dependency when akka-stream-experimental-2.3.x is released
     "com.typesafe.akka" %% "akka-actor" % "2.3.2",
+    "com.typesafe.akka" %% "akka-persistence-experimental" % "2.3.2",
     "com.typesafe.akka" %% "akka-testkit" % "2.3.2" % "test",
-    Test.scalatest, Test.scalacheck, Test.junit, reactiveStreams, Test.reactiveStreams)
+    Test.scalatest, Test.scalacheck, Test.junit, reactiveStreams, Test.reactiveStreams, Test.commonsIo)
 
   val mailboxes = Seq(Test.scalatest, Test.junit)
 

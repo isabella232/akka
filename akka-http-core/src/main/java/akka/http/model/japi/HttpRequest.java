@@ -1,29 +1,43 @@
 package akka.http.model.japi;
 
-public abstract class HttpRequest implements HttpMessage {
+/**
+ * Represents an Http request.
+ */
+public abstract class HttpRequest implements HttpMessage, HttpMessage.MessageTransformations<HttpRequest> {
+    /**
+     * Returns the Http method of this request.
+     */
     public abstract HttpMethod method();
+
+    /**
+     * Returns the Uri of this request.
+     */
     public abstract Uri getUri();
 
+    /**
+     * Returns the entity of this request.
+     */
     public abstract HttpEntityRegular entity();
 
-    public static abstract class Builder implements HttpEntityRegular.Builder<Builder> {
-        public static Builder create() {
-            return Http.HttpRequest();
-        }
-        public static Builder create(HttpRequest initialize) {
-            return Http.HttpRequest(initialize);
-        }
+    /**
+     * Returns a copy of this instance with a new method.
+     */
+    public abstract HttpRequest withMethod(HttpMethod method);
 
-        public abstract HttpRequest build();
+    /**
+     * Returns a copy of this instance with a new Uri.
+     */
+    public abstract HttpRequest withUri(Uri relativeUri);
 
-        public abstract Builder protocol(HttpProtocol protocol);
-        public abstract Builder method(HttpMethod method);
-        public abstract Builder uri(Uri relativeUri);
-        public abstract Builder uri(String path);
-        public abstract Builder entity(HttpEntityRegular entity);
+    /**
+     * Returns a copy of this instance with a new Uri.
+     */
+    public abstract HttpRequest withUri(String path);
 
-        public abstract Builder addHeader(HttpHeader header);
-        public abstract Builder addHeaders(Iterable<HttpHeader> headers);
-        public abstract Builder removeHeader(String headerName);
+    /**
+     * Returns a default request to be changed using the `withX` methods.
+     */
+    public static HttpRequest create() {
+        return Http.HttpRequest();
     }
 }

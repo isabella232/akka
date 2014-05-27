@@ -11,7 +11,7 @@ import java.util
 import akka.http.model.japi.JavaMapping.Implicits._
 
 case class HttpChallenge(scheme: String, realm: String,
-                         parameters: Map[String, String] = Map.empty) extends ValueRenderable with japi.headers.HttpChallenge {
+                         parameters: Map[String, String] = Map.empty) extends japi.headers.HttpChallenge with ValueRenderable {
 
   def render[R <: Rendering](r: R): r.type = {
     r ~~ scheme ~~ " realm=" ~~# realm
@@ -19,6 +19,6 @@ case class HttpChallenge(scheme: String, realm: String,
     r
   }
 
-  // Java API
+  /** Java API */
   def getParameters: util.Map[String, String] = parameters.asJava
 }

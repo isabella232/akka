@@ -11,16 +11,16 @@ import akka.http.util.{ Rendering, ValueRenderable }
 
 import akka.http.model.japi.JavaMapping.Implicits._
 
-sealed trait HttpCredentials extends ValueRenderable with japi.headers.HttpCredentials {
+sealed abstract class HttpCredentials extends japi.headers.HttpCredentials with ValueRenderable {
   def scheme: String
   def token: String
   def parameters: Map[String, String]
 
-  // Java API
+  /** Java API */
   def getParameters: java.util.Map[String, String] = parameters.asJava
 }
 
-case class BasicHttpCredentials(username: String, password: String) extends HttpCredentials {
+case class BasicHttpCredentials(username: String, password: String) extends japi.headers.BasicHttpCredentials {
   val cookie = {
     val userPass = username + ':' + password
     val bytes = userPass.getBytes(`ISO-8859-1`.nioCharset)
@@ -45,7 +45,7 @@ object BasicHttpCredentials {
   }
 }
 
-case class OAuth2BearerToken(token: String) extends HttpCredentials {
+case class OAuth2BearerToken(token: String) extends japi.headers.OAuth2BearerToken {
   def render[R <: Rendering](r: R): r.type = r ~~ "Bearer " ~~ token
 
   def scheme: String = "Bearer"

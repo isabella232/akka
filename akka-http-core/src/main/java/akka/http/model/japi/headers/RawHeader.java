@@ -1,6 +1,6 @@
 package akka.http.model.japi.headers;
 
-public interface RawHeader {
-    String name();
-    String value();
+public abstract class RawHeader extends akka.http.model.HttpHeader {
+    public abstract String name();
+    public abstract String value();
 }

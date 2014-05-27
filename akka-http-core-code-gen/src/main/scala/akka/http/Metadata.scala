@@ -109,7 +109,7 @@ case object UriType extends SimpleType {
 
   override def javaMethodName(name: String): String = s"get${name.upperCased}"
 
-  override def convertToScala(identifier: String): String = s"akka.http.model.japi.Util.convertUri($identifier)"
+  override def convertToScala(identifier: String): String = s"akka.http.model.japi.Util.convertUriToScala($identifier)"
 }
 case object DateTimeType extends SimpleType {
   def name: String = "DateTime"

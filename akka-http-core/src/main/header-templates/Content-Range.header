@@ -5,4 +5,4 @@ parameters:
   rangeUnit: headers.RangeUnit
   contentRange: headers.ContentRange
 object:
-  def apply(byteContentRange: ByteContentRange): `Content-Range` = apply(RangeUnit.Bytes, byteContentRange)
+  def apply(byteContentRange: ByteContentRange): `Content-Range` = apply(RangeUnits.Bytes, byteContentRange)

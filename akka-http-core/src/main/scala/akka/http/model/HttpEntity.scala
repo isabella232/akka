@@ -9,10 +9,10 @@ import java.io.File
 import org.reactivestreams.api.Producer
 import scala.collection.immutable
 import akka.util.ByteString
-import waves.{ Flow, StreamProducer }
+import akka.stream.FlowMaterializer
+import akka.stream.scaladsl.{ StreamProducer, Flow }
 import java.lang.Iterable
 import japi.JavaMapping.Implicits._
-import scala.concurrent.ExecutionContext
 
 /**
  * Models the entity (aka "body" or "content) of an HTTP message.
@@ -31,10 +31,10 @@ sealed trait HttpEntity extends japi.HttpEntity {
   /**
    * A stream of the data of this entity.
    */
-  def dataBytes(implicit ec: ExecutionContext): Producer[ByteString]
+  def dataBytes(implicit materializer: FlowMaterializer): Producer[ByteString]
 
-  // Java API
-  def getDataBytes(executionContext: ExecutionContext): Producer[ByteString] = dataBytes(executionContext)
+  /** Java API */
+  def getDataBytes(materializer: FlowMaterializer): Producer[ByteString] = dataBytes(materializer)
 
   // default implementations, should be overridden
   def isCloseDelimited: Boolean = false
@@ -88,7 +88,7 @@ object HttpEntity {
     def isKnownEmpty = contentLength == 0
     override def isDefault: Boolean = true
 
-    def dataBytes(implicit ec: ExecutionContext): Producer[ByteString] = data
+    def dataBytes(implicit materializer: FlowMaterializer): Producer[ByteString] = data
   }
 
   /**
@@ -100,7 +100,7 @@ object HttpEntity {
     def isKnownEmpty = data eq StreamProducer.EmptyProducer
     override def isCloseDelimited: Boolean = true
 
-    def dataBytes(implicit ec: ExecutionContext): Producer[ByteString] = data
+    def dataBytes(implicit materializer: FlowMaterializer): Producer[ByteString] = data
   }
 
   /**
@@ -109,10 +109,10 @@ object HttpEntity {
   case class Chunked(contentType: ContentType, chunks: Producer[ChunkStreamPart]) extends japi.HttpEntityChunked with Regular {
     def isKnownEmpty = chunks eq StreamProducer.EmptyProducer
     override def isChunked: Boolean = true
-    def dataBytes(implicit ec: ExecutionContext): Producer[ByteString] =
-      Flow(chunks).map(_.data).toProducer
+    def dataBytes(implicit materializer: FlowMaterializer): Producer[ByteString] =
+      Flow(chunks).map(_.data).toProducer(materializer)
 
-    // Java API
+    /** Java API */
     def getChunks: Producer[japi.ChunkStreamPart] = chunks.asInstanceOf[Producer[japi.ChunkStreamPart]]
   }
 
@@ -141,7 +141,7 @@ object HttpEntity {
     def data = ByteString.empty
     def isLastChunk = true
 
-    // Java API
+    /** Java API */
     def getTrailerHeaders: Iterable[japi.HttpHeader] = trailer.asJava
   }
   object LastChunk extends LastChunk("", Nil)

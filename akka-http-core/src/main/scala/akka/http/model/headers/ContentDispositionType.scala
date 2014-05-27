@@ -9,7 +9,7 @@ import akka.http.util.{ Rendering, SingletonValueRenderable, Renderable }
 
 sealed trait ContentDispositionType extends Renderable with japi.headers.ContentDispositionType
 
-object ContentDispositionType {
+object ContentDispositionTypes {
   protected abstract class Predefined extends ContentDispositionType with SingletonValueRenderable {
     def name: String = value
   }

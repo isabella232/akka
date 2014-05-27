@@ -8,7 +8,7 @@ import akka.io.{ Tcp, IO }
 import java.nio.channels.ServerSocketChannel
 import java.net.InetSocketAddress
 import akka.stream.MaterializerSettings
-import akka.stream.impl.{ ActorProcessor, ActorBasedFlowMaterializer }
+import akka.stream.impl.ActorProcessor
 import akka.stream.scaladsl.Flow
 import akka.util.ByteString
 import akka.stream.testkit.{ StreamTestKit, AkkaSpec }
@@ -17,6 +17,7 @@ import akka.actor.{ Props, ActorRef, Actor }
 import scala.collection.immutable.Queue
 import scala.concurrent.{ Future, Await }
 import scala.concurrent.duration._
+import akka.stream.FlowMaterializer
 
 object TcpFlowSpec {
 
@@ -112,7 +113,7 @@ class TcpFlowSpec extends AkkaSpec {
     initialFanOutBufferSize = 2,
     maxFanOutBufferSize = 2)
 
-  val materializer = new ActorBasedFlowMaterializer(settings, system)
+  val materializer = FlowMaterializer(settings)
 
   // FIXME: get it from TestUtil
   def temporaryServerAddress: InetSocketAddress = {
@@ -178,7 +179,7 @@ class TcpFlowSpec extends AkkaSpec {
 
   def connect(server: Server): (Processor[ByteString, ByteString], ServerConnection) = {
     val tcpProbe = TestProbe()
-    tcpProbe.send(IO(StreamTcp), StreamTcp.Connect(server.address, settings = settings))
+    tcpProbe.send(IO(StreamTcp), StreamTcp.Connect(settings, server.address))
     val client = server.waitAccept()
     val outgoingConnection = tcpProbe.expectMsgType[StreamTcp.OutgoingTcpConnection]
 
@@ -187,13 +188,13 @@ class TcpFlowSpec extends AkkaSpec {
 
   def connect(serverAddress: InetSocketAddress): StreamTcp.OutgoingTcpConnection = {
     val connectProbe = TestProbe()
-    connectProbe.send(IO(StreamTcp), StreamTcp.Connect(serverAddress, settings = settings))
+    connectProbe.send(IO(StreamTcp), StreamTcp.Connect(settings, serverAddress))
     connectProbe.expectMsgType[StreamTcp.OutgoingTcpConnection]
   }
 
   def bind(serverAddress: InetSocketAddress = temporaryServerAddress): StreamTcp.TcpServerBinding = {
     val bindProbe = TestProbe()
-    bindProbe.send(IO(StreamTcp), StreamTcp.Bind(serverAddress, settings = settings))
+    bindProbe.send(IO(StreamTcp), StreamTcp.Bind(settings, serverAddress))
     bindProbe.expectMsgType[StreamTcp.TcpServerBinding]
   }
 

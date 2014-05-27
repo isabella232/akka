@@ -8,7 +8,7 @@ package headers
 import scala.collection.immutable
 import akka.http.util.{ Renderer, Rendering, ValueRenderable }
 
-case class EntityTag(tag: String, weak: Boolean = false) extends ValueRenderable with japi.headers.EntityTag {
+case class EntityTag(tag: String, weak: Boolean = false) extends japi.headers.EntityTag with ValueRenderable {
   def render[R <: Rendering](r: R): r.type = if (weak) r ~~ "W/" ~~#! tag else r ~~#! tag
 }
 
@@ -21,7 +21,7 @@ object EntityTag {
     other.tag == eTag.tag && (weak || !other.weak && !eTag.weak)
 }
 
-sealed abstract class EntityTagRange extends ValueRenderable with japi.headers.EntityTagRange
+sealed abstract class EntityTagRange extends japi.headers.EntityTagRange with ValueRenderable
 
 object EntityTagRange {
   def apply(tags: EntityTag*) = Default(immutable.Seq(tags: _*))

@@ -1,6 +1,6 @@
 package akka.http.model.japi.headers;
 
-public interface Host {
-    akka.http.model.japi.Host host();
-    int port();
+public abstract class Host extends akka.http.model.HttpHeader {
+    public abstract akka.http.model.japi.Host host();
+    public abstract int port();
 }

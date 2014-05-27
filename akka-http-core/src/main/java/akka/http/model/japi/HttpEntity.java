@@ -1,24 +1,70 @@
 package akka.http.model.japi;
 
 import akka.http.model.HttpEntity$;
+import akka.stream.FlowMaterializer;
 import akka.util.ByteString;
 import org.reactivestreams.api.Producer;
-import scala.concurrent.ExecutionContext;
 
 import java.io.File;
 
+/**
+ * Represents the entity of an Http message. An entity consists of the content-type of the data
+ * and the actual data itself. Some subtypes of HttpEntity also define the content-length of the
+ * data.
+ *
+ * An HttpEntity can be of several kinds:
+ *
+ *  - HttpEntity.Empty: the statically known empty entity
+ *  - HttpEntityDefault: the default entity which has a known length and which contains
+ *                       a stream of ByteStrings.
+ *  - HttpEntityChunked: represents an entity that is delivered using `Transfer-Encoding: chunked`
+ *  - HttpEntityCloseDelimited: the entity which doesn't have a fixed length but which is delimited by
+ *                              closing the connection.
+ *
+ *  All entity subtypes but HttpEntityCloseDelimited are subtypes of {@link HttpEntityRegular} which
+ *  means they can be used in Http request that disallow close-delimited transfer of the entity.
+ */
 public abstract class HttpEntity {
-    public static final HttpEntityRegular Empty = HttpEntity$.MODULE$.Empty();
-
-    public abstract boolean isKnownEmpty();
-    public abstract boolean isRegular();
-    public abstract boolean isChunked();
-    public abstract boolean isDefault();
-    public abstract boolean isCloseDelimited();
-
+    /**
+     * Returns the content-type of this entity
+     */
     public abstract ContentType contentType();
 
-    public abstract Producer<ByteString> getDataBytes(ExecutionContext executionContext);
+    /**
+     * The empty entity.
+     */
+    public static final HttpEntityRegular Empty = HttpEntity$.MODULE$.Empty();
+
+    /**
+     * Returns if this entity is known to be empty. Open-ended entity types like
+     * HttpEntityChunked and HttpCloseDelimited will always return false here.
+     */
+    public abstract boolean isKnownEmpty();
+
+    /**
+     * Returns if this entity is a subtype of HttpEntityRegular.
+     */
+    public abstract boolean isRegular();
+
+    /**
+     * Returns if this entity is a subtype of HttpEntityChunked.
+     */
+    public abstract boolean isChunked();
+
+    /**
+     * Returns if this entity is a subtype of HttpEntityDefault.
+     */
+    public abstract boolean isDefault();
+
+    /**
+     * Returns if this entity is a subtype of HttpEntityCloseDelimited.
+     */
+    public abstract boolean isCloseDelimited();
+
+    /**
+     * Returns a stream of data bytes this entity consists of.
+     */
+    public abstract Producer<ByteString> getDataBytes(FlowMaterializer materializer);
 
     public static HttpEntityDefault create(String string) {
         return HttpEntity$.MODULE$.apply(string);

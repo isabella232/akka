@@ -77,7 +77,7 @@ object Host extends ModeledCompanion {
   def apply(host: String, port: Int): Host = apply(Uri.Host(host), port)
   val empty = Host("")
 }
-final case class Host(host: Uri.Host, port: Int = 0) extends ModeledHeader with japi.headers.Host {
+final case class Host(host: Uri.Host, port: Int = 0) extends japi.headers.Host with ModeledHeader {
   import UriRendering.HostRenderer
   require((port >> 16) == 0, "Illegal port: " + port)
   def isEmpty = host.isEmpty
@@ -102,7 +102,7 @@ final case class `If-Range`(entityTagOrDateTime: Either[EntityTag, DateTime]) ex
 }
 
 // FIXME: resurrect SSL-Session-Info header once akka.io.SslTlsSupport supports it
-final case class RawHeader(name: String, value: String) extends HttpHeader with japi.headers.RawHeader {
+final case class RawHeader(name: String, value: String) extends japi.headers.RawHeader {
   val lowercaseName = name.toLowerCase
   def render[R <: Rendering](r: R): r.type = r ~~ name ~~ ':' ~~ ' ' ~~ value
 }

@@ -9,7 +9,7 @@ import akka.http.util.{ Rendering, ValueRenderable }
 
 import akka.http.model.japi.JavaMapping.Implicits._
 
-sealed trait ContentRange extends ValueRenderable with japi.headers.ContentRange {
+sealed trait ContentRange extends japi.headers.ContentRange with ValueRenderable {
   // default implementations to override
   def isSatisfiable: Boolean = false
   def isOther: Boolean = false
@@ -21,8 +21,9 @@ sealed trait ContentRange extends ValueRenderable with japi.headers.ContentRange
 sealed trait ByteContentRange extends ContentRange {
   def instanceLength: Option[Long]
 
-  // Java API
+  /** Java API */
   def isByteContentRange: Boolean = true
+  /** Java API */
   def getInstanceLength: akka.japi.Option[java.lang.Long] = instanceLength.asJava
 }
 
@@ -44,9 +45,11 @@ object ContentRange {
       if (instanceLength.isDefined) r ~~ instanceLength.get else r ~~ '*'
     }
 
-    // Java API
+    /** Java API */
     override def isSatisfiable: Boolean = true
+    /** Java API */
     override def getSatisfiableFirst: akka.japi.Option[java.lang.Long] = akka.japi.Option.some(first)
+    /** Java API */
     override def getSatisfiableLast: akka.japi.Option[java.lang.Long] = akka.japi.Option.some(last)
   }
 
@@ -64,8 +67,11 @@ object ContentRange {
   case class Other(override val value: String) extends ContentRange {
     def render[R <: Rendering](r: R): r.type = r ~~ value
 
+    /** Java API */
     def isByteContentRange = false
+    /** Java API */
     def getInstanceLength: akka.japi.Option[java.lang.Long] = akka.japi.Option.none
+    /** Java API */
     override def getOtherValue: akka.japi.Option[String] = akka.japi.Option.some(value)
   }
 }

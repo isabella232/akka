@@ -13,10 +13,10 @@ import akka.http.util._
 
 import akka.http.model.japi.JavaMapping.Implicits._
 
-abstract class HttpOriginRange extends ValueRenderable with japi.headers.HttpOriginRange {
+abstract class HttpOriginRange extends japi.headers.HttpOriginRange with ValueRenderable {
   def matches(origin: HttpOrigin): Boolean
 
-  // Java API
+  /** Java API */
   def matches(origin: japi.headers.HttpOrigin): Boolean = matches(origin.asScala)
 }
 object HttpOriginRange {
@@ -33,7 +33,7 @@ object HttpOriginRange {
   }
 }
 
-case class HttpOrigin(scheme: String, host: Host) extends ValueRenderable with japi.headers.HttpOrigin {
+case class HttpOrigin(scheme: String, host: Host) extends japi.headers.HttpOrigin with ValueRenderable {
   def render[R <: Rendering](r: R): r.type = host.renderValue(r ~~ scheme ~~ "://")
 }
 object HttpOrigin {

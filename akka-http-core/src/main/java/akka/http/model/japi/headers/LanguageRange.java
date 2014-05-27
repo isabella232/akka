@@ -1,9 +1,13 @@
 package akka.http.model.japi.headers;
 
 public interface LanguageRange {
-    String primaryTag();
-    float qValue();
+    public abstract String primaryTag();
+    public abstract float qValue();
 
-    Iterable<String> getSubTags();
-    boolean matches(Language language);
+    public abstract Iterable<String> getSubTags();
+    public abstract boolean matches(Language language);
+
+    public abstract LanguageRange withQValue(float qValue);
+
+    public static final LanguageRange ALL = akka.http.model.headers.LanguageRange.$times$.MODULE$;
 }

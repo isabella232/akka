@@ -1,5 +1,8 @@
 package akka.http.model.japi;
 
+/**
+ * Contains constants of the supported Http protocols.
+ */
 public final class HttpProtocols {
     private HttpProtocols() {}
 

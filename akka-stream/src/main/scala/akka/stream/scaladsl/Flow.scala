@@ -7,14 +7,18 @@ import scala.annotation.unchecked.uncheckedVariance
 import scala.collection.immutable
 import scala.concurrent.Future
 import scala.util.Try
-import scala.util.control.NoStackTrace
-
+import org.reactivestreams.api.Consumer
 import org.reactivestreams.api.Producer
-
 import akka.stream.FlowMaterializer
+import akka.stream.RecoveryTransformer
+import akka.stream.Transformer
 import akka.stream.impl.Ast.{ ExistingProducer, IterableProducerNode, IteratorProducerNode, ThunkProducerNode }
+import akka.stream.impl.Ast.FutureProducerNode
 import akka.stream.impl.FlowImpl
 
+/**
+ * Scala API
+ */
 object Flow {
   /**
    * Construct a transformation of the given producer. The transformation steps
@@ -49,10 +53,18 @@ object Flow {
    */
   def apply[T](f: () ⇒ T): Flow[T] = FlowImpl(ThunkProducerNode(f), Nil)
 
+  /**
+   * Start a new flow from the given `Future`. The stream will consist of
+   * one element when the `Future` is completed with a successful value, which
+   * may happen before or after materializing the `Flow`.
+   * The stream terminates with an error if the `Future` is completed with a failure.
+   */
+  def apply[T](future: Future[T]): Flow[T] = FlowImpl(FutureProducerNode(future), Nil)
+
 }
 
 /**
- * The Flow DSL allows the formulation of stream transformations based on some
+ * Scala API: The Flow DSL allows the formulation of stream transformations based on some
  * input. The starting point can be a collection, an iterator, a block of code
  * which is evaluated repeatedly or a [[org.reactivestreams.api.Producer]].
  *
@@ -60,8 +72,8 @@ object Flow {
  *
  * Each DSL element produces a new Flow that can be further transformed, building
  * up a description of the complete transformation pipeline. In order to execute
- * this pipeline the Flow must be materialized by calling the [[#toFuture]], [[#consume]]
- * or [[#toProducer]] methods on it.
+ * this pipeline the Flow must be materialized by calling the [[#toFuture]], [[#consume]],
+ * [[#onComplete]], or [[#toProducer]] methods on it.
  *
  * It should be noted that the streams modeled by this library are “hot”,
  * meaning that they asynchronously flow through a series of processors without
@@ -94,9 +106,16 @@ trait Flow[+T] {
   def filter(p: T ⇒ Boolean): Flow[T]
 
   /**
+   * Transform this stream by applying the given partial function to each of the elements
+   * on which the function is defined as they pass through this processing step.
+   * Non-matching elements are filtered out.
+   */
+  def collect[U](pf: PartialFunction[T, U]): Flow[U]
+
+  /**
    * Invoke the given procedure for each received element and produce a Unit value
    * upon reaching the normal end of the stream. Please note that also in this case
-   * the flow needs to be materialized (e.g. using [[#consume]]) to initiate its
+   * the `Flow` needs to be materialized (e.g. using [[#consume]]) to initiate its
    * execution.
    */
   def foreach(c: T ⇒ Unit): Flow[Unit]
@@ -135,40 +154,36 @@ trait Flow[+T] {
   def mapConcat[U](f: T ⇒ immutable.Seq[U]): Flow[U]
 
   /**
-   * Generic transformation of a stream: for each element the given function is
-   * invoked, passing also the current state (or the given “zero” in the beginning)
-   * and expecting a (possibly empty) sequence of output elements to be produced.
+   * Generic transformation of a stream: for each element the [[akka.stream.Transformer#onNext]]
+   * function is invoked, expecting a (possibly empty) sequence of output elements
+   * to be produced.
    * After handing off the elements produced from one input element to the downstream
-   * consumers, the <code>isComplete</code> predicate determines whether to end
+   * consumers, the [[akka.stream.Transformer#isComplete]] predicate determines whether to end
    * stream processing at this point; in that case the upstream subscription is
    * canceled. Before signaling normal completion to the downstream consumers,
-   * the <code>onComplete</code> function is invoked to produce a (possibly empty)
+   * the [[akka.stream.Transformer#onComplete]] function is invoked to produce a (possibly empty)
    * sequence of elements in response to the end-of-stream event.
    *
-   * After normal completion or error the cleanup function is called with
-   * the current state as parameter.
+   * [[akka.stream.Transformer#onError]] is called when failure is signaled from upstream.
+   *
+   * After normal completion or error the [[akka.stream.Transformer#cleanup]] function is called.
+   *
+   * It is possible to keep state in the concrete [[akka.stream.Transformer]] instance with
+   * ordinary instance variables. The [[akka.stream.Transformer]] is executed by an actor and
+   * therefore you don not have to add any additional thread safety or memory
+   * visibility constructs to access the state from the callback methods.
    */
-  def transform[S, U](zero: S)(
-    f: (S, T) ⇒ (S, immutable.Seq[U]),
-    onComplete: S ⇒ immutable.Seq[U] = (_: S) ⇒ Nil,
-    isComplete: S ⇒ Boolean = (_: S) ⇒ false,
-    cleanup: S ⇒ Unit = (_: S) ⇒ ()): Flow[U]
+  def transform[U](transformer: Transformer[T, U]): Flow[U]
 
   /**
    * This transformation stage works exactly like [[#transform]] with the
-   * change that normal input elements are wrapped in [[scala.util.Success]]
-   * and failure signaled from upstream (i.e. <code>onError()</code> calls)
-   * is also handled as normal input element wrapped in [[scala.util.Failure]].
-   * In the latter case the stream ends after processing the failure.
+   * change that failure signaled from upstream will invoke
+   * [[akka.stream.RecoveryTransformer#onErrorRecover]], which can emit an additional sequence of
+   * elements before the stream ends.
    *
-   * After normal completion or error the cleanup function is called with
-   * the current state as parameter.
+   * [[akka.stream.Transformer#onError]] is not called when failure is signaled from upstream.
    */
-  def transformRecover[S, U](zero: S)(
-    f: (S, Try[T]) ⇒ (S, immutable.Seq[U]),
-    onComplete: S ⇒ immutable.Seq[U] = (_: S) ⇒ Nil,
-    isComplete: S ⇒ Boolean = (_: S) ⇒ false,
-    cleanup: S ⇒ Unit = (_: S) ⇒ ()): Flow[U]
+  def transformRecover[U](recoveryTransformer: RecoveryTransformer[T, U]): Flow[U]
 
   /**
    * This operation demultiplexes the incoming stream into separate output
@@ -203,7 +218,7 @@ trait Flow[+T] {
    * elements as they arrive from either side (picking randomly when both
    * have elements ready).
    */
-  def merge[U >: T](other: Producer[U]): Flow[U]
+  def merge[U >: T](other: Producer[_ <: U]): Flow[U]
 
   /**
    * Zip this stream together with the one emitted by the given producer.
@@ -218,6 +233,16 @@ trait Flow[+T] {
    * stream.
    */
   def concat[U >: T](next: Producer[U]): Flow[U]
+
+  def concatAll[U](implicit ev: T <:< Producer[U]): Flow[U]
+
+  /**
+   * Fan-out the stream to another consumer. Each element is produced to
+   * the `other` consumer as well as to downstream consumers. It will
+   * not shutdown until the subscriptions for `other` and at least
+   * one downstream consumer have been established.
+   */
+  def tee(other: Consumer[_ >: T]): Flow[T]
 
   /**
    * Returns a [[scala.concurrent.Future]] that will be fulfilled with the first
@@ -261,6 +286,16 @@ trait Flow[+T] {
    * broken down into individual processing steps.
    */
   def toProducer(materializer: FlowMaterializer): Producer[T @uncheckedVariance]
+
+  /**
+   * Attaches a consumer to this stream.
+   *
+   * *This will materialize the flow and initiate its execution.*
+   *
+   * The given FlowMaterializer decides how the flow’s logical structure is
+   * broken down into individual processing steps.
+   */
+  def produceTo(materializer: FlowMaterializer, consumer: Consumer[_ >: T]): Unit
 
 }
 

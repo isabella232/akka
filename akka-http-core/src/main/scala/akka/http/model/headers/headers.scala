@@ -77,7 +77,7 @@ object Host extends ModeledCompanion {
   def apply(host: String, port: Int): Host = apply(Uri.Host(host), port)
   val empty = Host("")
 }
-final case class Host(host: Uri.Host, port: Int = 0) extends ModeledHeader with japi.headers.Host {
+final case class Host(host: Uri.Host, port: Int = 0) extends japi.headers.Host with ModeledHeader {
   import UriRendering.HostRenderer
   require((port >> 16) == 0, "Illegal port: " + port)
   def isEmpty = host.isEmpty
@@ -102,7 +102,7 @@ final case class `If-Range`(entityTagOrDateTime: Either[EntityTag, DateTime]) ex
 }
 
 // FIXME: resurrect SSL-Session-Info header once akka.io.SslTlsSupport supports it
-final case class RawHeader(name: String, value: String) extends HttpHeader with japi.headers.RawHeader {
+final case class RawHeader(name: String, value: String) extends japi.headers.RawHeader {
   val lowercaseName = name.toLowerCase
   def render[R <: Rendering](r: R): r.type = r ~~ name ~~ ':' ~~ ' ' ~~ value
 }
@@ -332,7 +332,7 @@ final case class `Content-Encoding`(encodings: immutable.Seq[HttpEncoding]) exte
 
 // http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-26#section-4.2
 object `Content-Range` extends ModeledCompanion {
-  def apply(byteContentRange: ByteContentRange): `Content-Range` = apply(RangeUnit.Bytes, byteContentRange)
+  def apply(byteContentRange: ByteContentRange): `Content-Range` = apply(RangeUnits.Bytes, byteContentRange)
 
 }
 final case class `Content-Range`(rangeUnit: RangeUnit, contentRange: ContentRange) extends japi.headers.Content_Range with ModeledHeader {
@@ -508,7 +508,7 @@ final case class `Proxy-Authorization`(credentials: HttpCredentials) extends jap
 object Range extends ModeledCompanion {
   def apply(first: ByteRange, more: ByteRange*): Range = apply(immutable.Seq(first +: more: _*))
 
-  def apply(ranges: immutable.Seq[ByteRange]): Range = Range(RangeUnit.Bytes, ranges)
+  def apply(ranges: immutable.Seq[ByteRange]): Range = Range(RangeUnits.Bytes, ranges)
 
   implicit val rangesRenderer = Renderer.defaultSeqRenderer[ByteRange] // cache
 }

@@ -10,11 +10,11 @@ import akka.http.util._
 
 import japi.JavaMapping.Implicits._
 
-sealed abstract class RemoteAddress extends ValueRenderable with japi.headers.RemoteAddress {
+sealed abstract class RemoteAddress extends japi.headers.RemoteAddress with ValueRenderable {
   def toOption: Option[InetAddress]
   def isUnknown: Boolean
 
-  // Java API
+  /** Java API */
   def getAddress: akka.japi.Option[InetAddress] = toOption.asJava
 }
 

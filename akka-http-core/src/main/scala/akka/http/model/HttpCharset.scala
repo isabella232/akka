@@ -18,7 +18,7 @@ sealed abstract class HttpCharsetRange extends japi.HttpCharsetRange with ValueR
   def qValue: Float
   def matches(charset: HttpCharset): Boolean
 
-  // Java API
+  /** Java API */
   def matches(charset: japi.HttpCharset): Boolean = {
     import japi.JavaMapping.Implicits._
     matches(charset.asScala)
@@ -29,6 +29,8 @@ object HttpCharsetRange {
   case class `*`(qValue: Float) extends HttpCharsetRange {
     def render[R <: Rendering](r: R): r.type = if (qValue < 1.0f) r ~~ "*;q=" ~~ qValue else r ~~ '*'
     def matches(charset: HttpCharset) = true
+    def matchesAll: Boolean = true
+
     def withQValue(qValue: Float) =
       if (qValue == 1.0f) `*` else if (qValue != this.qValue) `*`(qValue.toFloat) else this
   }
@@ -36,6 +38,8 @@ object HttpCharsetRange {
 
   case class One(charset: HttpCharset, qValue: Float) extends HttpCharsetRange {
     def matches(charset: HttpCharset) = this.charset.value.equalsIgnoreCase(charset.value)
+    def matchesAll: Boolean = false
+
     def withQValue(qValue: Float) = One(charset, qValue)
     def render[R <: Rendering](r: R): r.type = if (qValue < 1.0f) r ~~ charset ~~ ";q=" ~~ qValue else r ~~ charset
   }
@@ -56,7 +60,7 @@ case class HttpCharset private[http] (override val value: String)(val aliases: i
 
   def withQValue(qValue: Float): HttpCharsetRange = HttpCharsetRange(this, qValue.toFloat)
 
-  // Java API
+  /** Java API */
   def getAliases: Iterable[String] = {
     import collection.JavaConverters._
     aliases.asJava

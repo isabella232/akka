@@ -21,7 +21,7 @@ trait PersistenceDocSpec {
       //#auto-update
     """
 
-  val system: ActorSystem
+  implicit val system: ActorSystem
 
   import system._
 
@@ -84,16 +84,16 @@ trait PersistenceDocSpec {
       }
       //#deletion
     }
-    
+
     class MyProcessor4 extends Processor {
       //#recovery-completed
       override def preStart(): Unit = {
         super.preStart()
         self ! "FIRST"
       }
-      
+
       def receive = initializing.orElse(active)
-      
+
       def initializing: Receive = {
         case "FIRST" =>
           recoveryCompleted()
@@ -102,7 +102,7 @@ trait PersistenceDocSpec {
         case other if recoveryFinished =>
           stash()
       }
-      
+
       def recoveryCompleted(): Unit = {
         // perform init after recovery, before any other messages
         // ...
@@ -355,4 +355,47 @@ trait PersistenceDocSpec {
     view ! Update(await = true)
     //#view-update
   }
+
+  new AnyRef {
+    // ------------------------------------------------------------------------------------------------
+    // FIXME: uncomment once going back to project dependencies (in akka-stream-experimental)
+    // ------------------------------------------------------------------------------------------------
+    /*
+    //#producer-creation
+    import org.reactivestreams.api.Producer
+
+    import akka.persistence.Persistent
+    import akka.persistence.stream.{ PersistentFlow, PersistentPublisherSettings }
+    import akka.stream.{ FlowMaterializer, MaterializerSettings }
+    import akka.stream.scaladsl.Flow
+
+    val materializer = FlowMaterializer(MaterializerSettings())
+
+    val flow: Flow[Persistent] = PersistentFlow.fromProcessor("some-processor-id")
+    val producer: Producer[Persistent] = flow.toProducer(materializer)
+    //#producer-creation
+
+    //#producer-buffer-size
+    PersistentFlow.fromProcessor("some-processor-id", PersistentPublisherSettings(maxBufferSize = 200))
+    //#producer-buffer-size
+
+    //#producer-examples
+    // 1 producer and 2 consumers:
+    val producer1: Producer[Persistent] =
+      PersistentFlow.fromProcessor("processor-1").toProducer(materializer)
+    Flow(producer1).foreach(p => println(s"consumer-1: ${p.payload}")).consume(materializer)
+    Flow(producer1).foreach(p => println(s"consumer-2: ${p.payload}")).consume(materializer)
+
+    // 2 producers (merged) and 1 consumer:
+    val producer2: Producer[Persistent] =
+      PersistentFlow.fromProcessor("processor-2").toProducer(materializer)
+    val producer3: Producer[Persistent] =
+      PersistentFlow.fromProcessor("processor-3").toProducer(materializer)
+    Flow(producer2).merge(producer3).foreach { p =>
+      println(s"consumer-3: ${p.payload}")
+    }.consume(materializer)
+    //#producer-examples
+    */
+  }
+
 }

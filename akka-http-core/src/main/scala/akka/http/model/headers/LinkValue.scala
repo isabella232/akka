@@ -12,8 +12,8 @@ import UriRendering.UriRenderer
 
 import akka.http.model.japi.JavaMapping.Implicits._
 
-case class LinkValue(uri: Uri, parameters: immutable.Seq[LinkParam]) extends ValueRenderable with japi.headers.LinkValue {
-  import LinkParam.paramsRenderer
+case class LinkValue(uri: Uri, parameters: immutable.Seq[LinkParam]) extends japi.headers.LinkValue with ValueRenderable {
+  import LinkParams.paramsRenderer
   def render[R <: Rendering](r: R): r.type = {
     r ~~ '<' ~~ uri ~~ '>'
     if (parameters.nonEmpty) r ~~ "; " ~~ parameters
@@ -28,12 +28,12 @@ object LinkValue {
   def apply(uri: Uri, params: LinkParam*): LinkValue = apply(uri, immutable.Seq(params: _*))
 }
 
-sealed abstract class LinkParam extends ToStringRenderable with japi.headers.LinkParam {
+sealed abstract class LinkParam extends japi.headers.LinkParam with ToStringRenderable {
   val key: String = getClass.getSimpleName
   def value: AnyRef
 }
 
-object LinkParam {
+object LinkParams {
   implicit val paramsRenderer: Renderer[Seq[LinkParam]] = Renderer.seqRenderer(separator = "; ")
 
   private val reserved = CharPredicate(" ,;")

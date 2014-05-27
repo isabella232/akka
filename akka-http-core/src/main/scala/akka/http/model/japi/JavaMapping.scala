@@ -4,7 +4,7 @@ import scala.collection.immutable
 import scala.reflect.ClassTag
 
 import akka.http.model
-import java.{ util ⇒ ju, lang }
+import java.{ util ⇒ ju, lang ⇒ jl }
 import akka.japi
 import java.net.InetAddress
 
@@ -56,12 +56,12 @@ object JavaMapping {
     }
   }
 
-  implicit def iterableMapping[_J, _S](implicit mapping: JavaMapping[_J, _S]): JavaMapping[java.lang.Iterable[_J], immutable.Seq[_S]] =
-    new JavaMapping[java.lang.Iterable[_J], immutable.Seq[_S]] {
+  implicit def iterableMapping[_J, _S](implicit mapping: JavaMapping[_J, _S]): JavaMapping[jl.Iterable[_J], immutable.Seq[_S]] =
+    new JavaMapping[jl.Iterable[_J], immutable.Seq[_S]] {
       import collection.JavaConverters._
 
-      def toJava(scalaObject: immutable.Seq[_S]): java.lang.Iterable[_J] = scalaObject.map(mapping.toJava(_)).asJavaCollection
-      def toScala(javaObject: java.lang.Iterable[_J]): immutable.Seq[_S] =
+      def toJava(scalaObject: immutable.Seq[_S]): jl.Iterable[_J] = scalaObject.map(mapping.toJava(_)).asJavaCollection
+      def toScala(javaObject: jl.Iterable[_J]): immutable.Seq[_S] =
         Implicits.convertSeqToScala(iterableAsScalaIterableConverter(javaObject).asScala.toSeq)
     }
   implicit def map[K, V]: JavaMapping[ju.Map[K, V], immutable.Map[K, V]] =
@@ -78,9 +78,9 @@ object JavaMapping {
 
   implicit object StringIdentity extends Identity[String]
 
-  implicit object LongMapping extends JavaMapping[java.lang.Long, Long] {
-    def toScala(javaObject: lang.Long): Long = javaObject
-    def toJava(scalaObject: Long): lang.Long = scalaObject
+  implicit object LongMapping extends JavaMapping[jl.Long, Long] {
+    def toScala(javaObject: jl.Long): Long = javaObject
+    def toJava(scalaObject: Long): jl.Long = scalaObject
   }
   implicit object InetAddressIdentity extends Identity[InetAddress]
 
@@ -133,7 +133,7 @@ object JavaMapping {
   implicit object TransferEncoding extends Inherited[headers.TransferEncoding, model.headers.TransferEncoding]
 
   implicit object Uri extends JavaMapping[Uri, model.Uri] {
-    def toScala(javaObject: Uri): Uri.S = cast[Http.JavaUri](javaObject).uri
+    def toScala(javaObject: Uri): Uri.S = cast[JavaUri](javaObject).uri
     def toJava(scalaObject: model.Uri): Uri.J = Http.Uri(scalaObject)
   }
 

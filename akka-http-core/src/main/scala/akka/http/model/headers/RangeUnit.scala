@@ -7,11 +7,11 @@ package headers
 
 import akka.http.util.{ Rendering, ValueRenderable }
 
-sealed trait RangeUnit extends ValueRenderable with japi.headers.RangeUnit {
+sealed abstract class RangeUnit extends japi.headers.RangeUnit with ValueRenderable {
   def name: String
 }
 
-object RangeUnit {
+object RangeUnits {
   object Bytes extends RangeUnit {
     def name = "Bytes"
 

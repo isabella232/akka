@@ -305,7 +305,7 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
 
   def `byte-ranges-specifier` = rule { `bytes-unit` ~ ws('=') ~ `byte-range-set` }
 
-  def `bytes-unit` = rule { "bytes" ~ OWS ~ push(RangeUnit.Bytes) }
+  def `bytes-unit` = rule { "bytes" ~ OWS ~ push(RangeUnits.Bytes) }
 
   def `complete-length` = rule { longNumberCapped }
 
@@ -319,7 +319,7 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
 
   def `other-range-set` = rule { oneOrMore(VCHAR) ~ OWS }
 
-  def `other-range-unit` = rule { token ~> RangeUnit.Other }
+  def `other-range-unit` = rule { token ~> RangeUnits.Other }
 
   def `other-ranges-specifier` = rule { `other-range-unit` ~ ws('=') ~ `other-range-set` }
 

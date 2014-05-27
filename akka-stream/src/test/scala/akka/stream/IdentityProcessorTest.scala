@@ -15,6 +15,7 @@ import akka.testkit.{ TestEvent, EventFilter }
 import akka.stream.impl.ActorBasedFlowMaterializer
 import akka.stream.scaladsl.Flow
 import akka.stream.testkit.AkkaSpec
+import java.util.concurrent.atomic.AtomicInteger
 
 class IdentityProcessorTest(_system: ActorSystem, env: TestEnvironment, publisherShutdownTimeout: Long)
   extends IdentityProcessorVerification[Int](env, publisherShutdownTimeout)
@@ -32,6 +33,7 @@ class IdentityProcessorTest(_system: ActorSystem, env: TestEnvironment, publishe
   }
 
   system.eventStream.publish(TestEvent.Mute(EventFilter[RuntimeException]("Test exception")))
+  val processorCounter = new AtomicInteger
 
   def createIdentityProcessor(maxBufferSize: Int): Processor[Int, Int] = {
     val fanoutSize = maxBufferSize / 2
@@ -43,9 +45,12 @@ class IdentityProcessorTest(_system: ActorSystem, env: TestEnvironment, publishe
         maximumInputBufferSize = inputSize,
         initialFanOutBufferSize = fanoutSize,
         maxFanOutBufferSize = fanoutSize),
-      system)
+      system, system.name)
 
-    val processor = materializer.processorForNode(Ast.Transform(Unit, (_, in: Any) ⇒ (Unit, List(in)), _ ⇒ Nil, _ ⇒ false, _ ⇒ ()))
+    val processor = materializer.processorForNode(Ast.Transform(
+      new Transformer[Any, Any] {
+        override def onNext(in: Any) = List(in)
+      }), "IdentityProcessorTest-" + processorCounter.incrementAndGet(), 1)
 
     processor.asInstanceOf[Processor[Int, Int]]
   }

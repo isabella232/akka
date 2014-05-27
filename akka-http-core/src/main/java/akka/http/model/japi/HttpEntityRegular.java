@@ -4,16 +4,7 @@ import akka.util.ByteString;
 
 import java.io.File;
 
-public abstract class HttpEntityRegular extends HttpEntity {
-    public static interface Builder<This> {
-        This entity(String string);
-        This entity(byte[] bytes);
-        This entity(ByteString bytes);
-
-        This entity(ContentType type, String string);
-        This entity(ContentType type, byte[] bytes);
-        This entity(ContentType type, ByteString bytes);
-
-        This entity(ContentType type, File file);
-    }
-}
+/**
+ * A marker type that denotes HttpEntity subtypes that can be used in Http requests.
+ */
+public abstract class HttpEntityRegular extends HttpEntity {}

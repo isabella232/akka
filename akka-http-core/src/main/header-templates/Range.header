@@ -6,4 +6,4 @@ parameters:
   ranges: Seq[headers.ByteRange]
 object:
   def apply(first: ByteRange, more: ByteRange*): Range = apply(immutable.Seq(first +: more: _*))
-  def apply(ranges: immutable.Seq[ByteRange]): Range = Range(RangeUnit.Bytes, ranges)
+  def apply(ranges: immutable.Seq[ByteRange]): Range = Range(RangeUnits.Bytes, ranges)

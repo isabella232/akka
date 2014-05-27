@@ -321,7 +321,7 @@ object Uri {
     def isIPv6: Boolean = false
     def isIPv4: Boolean = false
 
-    // Java API
+    /** Java API */
     def getInetAddresses: Iterable[InetAddress] = {
       import akka.http.model.japi.JavaMapping.Implicits._
       inetAddresses.asJava

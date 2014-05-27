@@ -11,11 +11,25 @@ import org.reactivestreams.spi.Subscriber
 /**
  * INTERNAL API
  */
-private[akka] object EmptyProducer extends Producer[Nothing] with Publisher[Nothing] {
+private[akka] case object EmptyProducer extends Producer[Nothing] with Publisher[Nothing] {
   def getPublisher: Publisher[Nothing] = this
 
   def subscribe(subscriber: Subscriber[Nothing]): Unit =
     subscriber.onComplete()
+
+  def produceTo(consumer: Consumer[Nothing]): Unit =
+    getPublisher.subscribe(consumer.getSubscriber)
+
+}
+
+/**
+ * INTERNAL API
+ */
+private[akka] case class ErrorProducer(t: Throwable) extends Producer[Nothing] with Publisher[Nothing] {
+  def getPublisher: Publisher[Nothing] = this
+
+  def subscribe(subscriber: Subscriber[Nothing]): Unit =
+    subscriber.onError(t)
 
   def produceTo(consumer: Consumer[Nothing]): Unit =
     getPublisher.subscribe(consumer.getSubscriber)

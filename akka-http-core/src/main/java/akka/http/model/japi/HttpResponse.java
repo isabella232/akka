@@ -1,24 +1,28 @@
 package akka.http.model.japi;
 
-public abstract class HttpResponse implements HttpMessage {
+/**
+ * Represents an Http response.
+ */
+public abstract class HttpResponse implements HttpMessage, HttpMessage.MessageTransformations<HttpResponse> {
+    /**
+     * Returns the status-code of this response.
+     */
     public abstract StatusCode status();
 
-    public static abstract class Builder implements HttpEntityRegular.Builder<Builder> {
-        public static Builder create() {
-            return Http.HttpResponse();
-        }
-        public static Builder create(HttpResponse initialize) {
-            return Http.HttpResponse(initialize);
-        }
+    /**
+     * Returns a copy of this instance with a new status-code.
+     */
+    public abstract HttpResponse withStatus(StatusCode statusCode);
 
-        public abstract HttpResponse build();
+    /**
+     * Returns a copy of this instance with a new status-code.
+     */
+    public abstract HttpResponse withStatus(int statusCode);
 
-        public abstract Builder protocol(HttpProtocol protocol);
-        public abstract Builder status(StatusCode statusCode);
-        public abstract Builder status(int statusCode);
-        public abstract Builder entity(HttpEntity entity);
-        public abstract Builder addHeader(HttpHeader header);
-        public abstract Builder addHeaders(Iterable<HttpHeader> headers);
-        public abstract Builder removeHeader(String headerName);
+    /**
+     * Returns a default response to be changed using the `withX` methods.
+     */
+    public static HttpResponse create() {
+        return Http.HttpResponse();
     }
 }

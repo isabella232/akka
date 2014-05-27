@@ -1,5 +1,5 @@
 package akka.http.model.japi.headers;
 
-public interface HttpEncoding {
-    String value();
+public abstract class HttpEncoding {
+    public abstract String value();
 }

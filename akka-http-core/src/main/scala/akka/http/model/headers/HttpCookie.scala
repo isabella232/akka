@@ -21,7 +21,7 @@ case class HttpCookie(
   path: Option[String] = None,
   secure: Boolean = false,
   httpOnly: Boolean = false,
-  extension: Option[String] = None) extends ValueRenderable with japi.headers.HttpCookie {
+  extension: Option[String] = None) extends japi.headers.HttpCookie with ValueRenderable {
 
   import HttpCookie._
 
@@ -44,11 +44,15 @@ case class HttpCookie(
     r
   }
 
-  // Java API
+  /** Java API */
   def getExtension: JOption[String] = extension.asJava
+  /** Java API */
   def getPath: JOption[String] = path.asJava
+  /** Java API */
   def getDomain: JOption[String] = domain.asJava
+  /** Java API */
   def getMaxAge: JOption[java.lang.Long] = maxAge.asJava
+  /** Java API */
   def getExpires: JOption[japi.DateTime] = expires.asJava
 }
 
