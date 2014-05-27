@@ -66,4 +66,14 @@ public abstract class Util {
     public static <K, J, V extends J> akka.japi.Option<J> lookupInRegistry(ObjectRegistry<K, V> registry, K key) {
         return convertOption(registry.getForKey(key));
     }
+
+    /**
+     * Temporary replacement for akka.japi.Option.getOrElse until it gets released there.
+     *
+     * FIXME: remove in favor of a proper japi.Option.getOrElse
+     */
+    public static <B, A extends B> B getOrElse(Option<A> option, B defaultValue) {
+        if (option.isDefined()) return option.get();
+        else return defaultValue;
+    }
 }
