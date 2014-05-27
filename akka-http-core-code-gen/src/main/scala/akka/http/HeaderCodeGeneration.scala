@@ -13,10 +13,14 @@ object HeaderCodeGeneration {
   def headerJapiTemplate(header: HttpHeaderDefinition): String = {
     import header._
 
+    val imports = {
+      val importStats = neededImportStatements("\n")
+      if (importStats.isEmpty) ""
+      else s"\n$importStats\n"
+    }
+
     s"""package akka.http.model.japi.headers;
-       |
-       |${neededImportStatements("\n")}
-       |
+       |$imports
        |/**
        | *  Model for the `$name` header.${documentation.map(_.split("\n").map("\n *  " + _).mkString).getOrElse("")}${specSource.map("\n *  Specification: " + _).getOrElse("")}
        | */

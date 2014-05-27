@@ -1,7 +1,5 @@
 package akka.http.model.japi.headers;
 
-
-
 /**
  *  Model for the `Access-Control-Expose-Headers` header.
  *  Specification: http://www.w3.org/TR/cors/#access-control-expose-headers-response-header
