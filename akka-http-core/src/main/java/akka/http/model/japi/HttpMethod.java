@@ -15,11 +15,13 @@ public abstract class HttpMethod {
      * http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-4.2.1
      */
     public abstract boolean isSafe();
+
     /**
      * Returns if this method is "idempotent" as defined in
      * http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-4.2.2
      */
     public abstract boolean isIdempotent();
+
     /**
      * Returns if requests with this method may contain an entity.
      */
