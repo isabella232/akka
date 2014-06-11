@@ -330,9 +330,9 @@ object Uri {
       def address: String = ""
       def isEmpty = true
       def toOption = None
-      def equalsIgnoreCase(other: Host): Boolean = other eq this
+      def inetAddresses: immutable.Seq[InetAddress] = Nil
 
-      def inetAddresses = Nil
+      def equalsIgnoreCase(other: Host): Boolean = other eq this
     }
     def apply(string: String, charset: Charset = UTF8, mode: Uri.ParsingMode = Uri.ParsingMode.Relaxed): Host =
       if (!string.isEmpty) new UriParser(string, UTF8, mode).parseHost() else Empty

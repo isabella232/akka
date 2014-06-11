@@ -90,7 +90,7 @@ object HttpEntity {
     else empty(contentType)
   }
 
-  val Empty = Strict(ContentTypes.NoContentType, data = ByteString.empty)
+  val Empty: Strict = Strict(ContentTypes.NoContentType, data = ByteString.empty)
 
   def empty(contentType: ContentType): Strict =
     if (contentType == Empty.contentType) Empty

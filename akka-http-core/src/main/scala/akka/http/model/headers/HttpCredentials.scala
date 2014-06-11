@@ -26,7 +26,6 @@ final case class BasicHttpCredentials(username: String, password: String) extend
     val bytes = userPass.getBytes(`ISO-8859-1`.nioCharset)
     Base64.rfc2045.encodeToChar(bytes, false)
   }
-
   def render[R <: Rendering](r: R): r.type = r ~~ "Basic " ~~ cookie
 
   def scheme: String = "Basic"
