@@ -3,13 +3,12 @@
  */
 
 package akka.http.model
-package headers
 
 import akka.http.util.{ Rendering, SingletonValueRenderable, Renderable }
 
 import akka.http.model.japi.JavaMapping.Implicits._
 
-sealed abstract class TransferEncoding extends japi.headers.TransferEncoding with Renderable {
+sealed abstract class TransferEncoding extends japi.TransferEncoding with Renderable {
   def name: String
   def parameters: Map[String, String]
 

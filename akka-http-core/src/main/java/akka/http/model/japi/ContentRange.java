@@ -2,9 +2,9 @@
  * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package akka.http.model.japi.headers;
+package akka.http.model.japi;
 
-import akka.http.model.headers.ContentRange$;
+import akka.http.model.ContentRange$;
 import akka.japi.Option;
 
 public abstract class ContentRange {
@@ -30,9 +30,9 @@ public abstract class ContentRange {
         return ContentRange$.MODULE$.apply(first, last, ((Option<Object>) (Option) instanceLength).asScala());
     }
     public static ContentRange createUnsatisfiable(long length) {
-        return new akka.http.model.headers.ContentRange.Unsatisfiable(length);
+        return new akka.http.model.ContentRange.Unsatisfiable(length);
     }
     public static ContentRange createOther(String value) {
-        return new akka.http.model.headers.ContentRange.Other(value);
+        return new akka.http.model.ContentRange.Other(value);
     }
 }

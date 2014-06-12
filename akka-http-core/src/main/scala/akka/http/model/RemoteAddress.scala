@@ -3,14 +3,13 @@
  */
 
 package akka.http.model
-package headers
 
 import java.net.{ UnknownHostException, InetAddress }
 import akka.http.util._
 
 import japi.JavaMapping.Implicits._
 
-sealed abstract class RemoteAddress extends japi.headers.RemoteAddress with ValueRenderable {
+sealed abstract class RemoteAddress extends japi.RemoteAddress with ValueRenderable {
   def toOption: Option[InetAddress]
   def isUnknown: Boolean
 

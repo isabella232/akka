@@ -3,7 +3,6 @@
  */
 
 package akka.http.model
-package headers
 
 import java.{ lang ⇒ jl }
 
@@ -11,7 +10,7 @@ import akka.http.util.{ Rendering, ValueRenderable }
 
 import akka.http.model.japi.JavaMapping.Implicits._
 
-sealed trait ContentRange extends japi.headers.ContentRange with ValueRenderable {
+sealed trait ContentRange extends japi.ContentRange with ValueRenderable {
   // default implementations to override
   def isSatisfiable: Boolean = false
   def isOther: Boolean = false

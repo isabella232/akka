@@ -1,6 +1,6 @@
 name: Transfer-Encoding
 spec: http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-3.3.1
 parameters:
-  encodings: Seq[headers.TransferEncoding]
+  encodings: Seq[TransferEncoding]
 class:
   def hasChunked: Boolean = encodings contains TransferEncodings.chunked

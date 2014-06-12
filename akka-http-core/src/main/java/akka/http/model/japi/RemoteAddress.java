@@ -2,7 +2,7 @@
  * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package akka.http.model.japi.headers;
+package akka.http.model.japi;
 
 import akka.japi.Option;
 
@@ -13,14 +13,14 @@ public abstract class RemoteAddress {
 
     public abstract Option<InetAddress> getAddress();
 
-    public static final RemoteAddress Unknown = akka.http.model.headers.RemoteAddress.Unknown$.MODULE$;
+    public static final RemoteAddress Unknown = akka.http.model.RemoteAddress.Unknown$.MODULE$;
     public static RemoteAddress create(InetAddress address) {
-        return akka.http.model.headers.RemoteAddress.apply(address);
+        return akka.http.model.RemoteAddress.apply(address);
     }
     public static RemoteAddress create(String address) {
-        return akka.http.model.headers.RemoteAddress.apply(address);
+        return akka.http.model.RemoteAddress.apply(address);
     }
     public static RemoteAddress create(byte[] address) {
-        return akka.http.model.headers.RemoteAddress.apply(address);
+        return akka.http.model.RemoteAddress.apply(address);
     }
 }

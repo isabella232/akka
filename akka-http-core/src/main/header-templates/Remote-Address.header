@@ -2,4 +2,4 @@ name: Remote-Address
 docs:
   Custom header we use for optionally transporting the peer's IP in an HTTP header.
 parameters:
-  address: headers.RemoteAddress
+  address: RemoteAddress

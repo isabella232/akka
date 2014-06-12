@@ -3,6 +3,6 @@ spec: http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-26#section-4.2
 rendering: r ~~ rangeUnit ~~ ' ' ~~ contentRange
 parameters:
   rangeUnit: headers.RangeUnit
-  contentRange: headers.ContentRange
+  contentRange: ContentRange
 object:
   def apply(byteContentRange: ByteContentRange): `Content-Range` = apply(RangeUnits.Bytes, byteContentRange)

@@ -1,7 +1,7 @@
 name: X-Forwarded-For
 spec: http://en.wikipedia.org/wiki/X-Forwarded-For
 parameters:
-  addresses: Seq[headers.RemoteAddress]
+  addresses: Seq[RemoteAddress]
 object:
   def apply(first: String, more: String*): `X-Forwarded-For` =
     apply(immutable.Seq((first +: more).map(RemoteAddress.apply): _*))

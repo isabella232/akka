@@ -114,10 +114,13 @@ object JavaMapping {
   implicit object MediaType extends Inherited[MediaType, model.MediaType]
   implicit object StatusCode extends Inherited[StatusCode, model.StatusCode]
 
+  implicit object ContentRange extends Inherited[ContentRange, model.ContentRange]
+  implicit object RemoteAddress extends Inherited[RemoteAddress, model.RemoteAddress]
+  implicit object TransferEncoding extends Inherited[TransferEncoding, model.TransferEncoding]
+
   implicit object ByteRange extends Inherited[headers.ByteRange, model.headers.ByteRange]
   implicit object CacheDirective extends Inherited[headers.CacheDirective, model.headers.CacheDirective]
   implicit object ContentDispositionType extends Inherited[headers.ContentDispositionType, model.headers.ContentDispositionType]
-  implicit object ContentRange extends Inherited[headers.ContentRange, model.headers.ContentRange]
   implicit object EntityTag extends Inherited[headers.EntityTag, model.headers.EntityTag]
   implicit object EntityTagRange extends Inherited[headers.EntityTagRange, model.headers.EntityTagRange]
   implicit object HttpChallenge extends Inherited[headers.HttpChallenge, model.headers.HttpChallenge]
@@ -133,8 +136,6 @@ object JavaMapping {
   implicit object LinkValue extends Inherited[headers.LinkValue, model.headers.LinkValue]
   implicit object ProductVersion extends Inherited[headers.ProductVersion, model.headers.ProductVersion]
   implicit object RangeUnit extends Inherited[headers.RangeUnit, model.headers.RangeUnit]
-  implicit object RemoteAddress extends Inherited[headers.RemoteAddress, model.headers.RemoteAddress]
-  implicit object TransferEncoding extends Inherited[headers.TransferEncoding, model.headers.TransferEncoding]
 
   implicit object Uri extends JavaMapping[Uri, model.Uri] {
     def toScala(javaObject: Uri): Uri.S = cast[JavaUri](javaObject).uri
