@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.client
@@ -9,6 +9,8 @@ import akka.http.model
 import model.{ HttpRequest, Uri }
 
 /**
+ * INTERNAL API
+ *
  * A wrapper around a [[HttpHostConnector]] that is connected to a proxy. Fixes missing Host headers and
  * relative URIs or otherwise warns if these differ from the target host/port.
  */
@@ -50,3 +52,7 @@ private[http] class ProxiedHostConnector(host: String, port: Int, proxyConnector
   }
 }
 
+private[http] object ProxiedHostConnector {
+  def props(host: String, port: Int, proxyConnector: ActorRef) =
+    Props(classOf[ProxiedHostConnector], host, port, proxyConnector)
+}

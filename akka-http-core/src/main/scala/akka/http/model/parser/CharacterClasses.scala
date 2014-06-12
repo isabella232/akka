@@ -1,15 +1,15 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model.parser
 
-import org.parboiled2.CharPredicate
+import akka.parboiled2.CharPredicate
 
 // efficient encoding of *7-bit* ASCII characters
 private[http] object CharacterClasses {
 
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-25#section-1.2 referencing
+  // http://tools.ietf.org/html/rfc7230#section-1.2 referencing
   // http://tools.ietf.org/html/rfc5234#appendix-B.1
   def ALPHA = CharPredicate.Alpha
   def LOWER_ALPHA = CharPredicate.LowerAlpha
@@ -27,7 +27,7 @@ private[http] object CharacterClasses {
   val WSP = CharPredicate(SP, HTAB)
   val WSPCRLF = WSP ++ CR ++ LF
 
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-25#section-3.2.6
+  // http://tools.ietf.org/html/rfc7230#section-3.2.6
   val special = CharPredicate("""()<>@,;:\"/[]?={}""")
   val tchar = VCHAR -- special // token-char
 
@@ -56,7 +56,7 @@ private[http] object CharacterClasses {
   val `reg-name-char` = unreserved ++ `sub-delims`
   val `lower-reg-name-char` = `reg-name-char` -- UPPER_ALPHA
 
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p7-auth-26#section-2.1
+  // http://tools.ietf.org/html/rfc7235#section-2.1
   val `token68-start` = ALPHA ++ DIGIT ++ "-._~+/"
 
   // https://tools.ietf.org/html/rfc6265#section-4.1.1
@@ -74,10 +74,10 @@ private[http] object CharacterClasses {
   val DIGIT04 = CharPredicate('0' to '4')
   val DIGIT05 = CharPredicate('0' to '5')
   def DIGIT19 = CharPredicate.Digit19
-  val colonSlashEOI = CharPredicate(':', '/', org.parboiled2.EOI)
+  val colonSlashEOI = CharPredicate(':', '/', akka.parboiled2.EOI)
 
-  require(`qdtext-base`.isCharMask) // make sure we didn't introduce any non-7bit-chars by accident which
-  require(`ctext-base`.isCharMask) // would make the CharPredicate fall back to the much slower
-  require(`quotable-base`.isCharMask) // ArrayBasedPredicate or GeneralCharPredicate implementations
-  require(CTL.isCharMask)
+  require(`qdtext-base`.isMaskBased) // make sure we didn't introduce any non-7bit-chars by accident which
+  require(`ctext-base`.isMaskBased) // would make the CharPredicate fall back to the much slower
+  require(`quotable-base`.isMaskBased) // ArrayBasedPredicate or GeneralCharPredicate implementations
+  require(CTL.isMaskBased)
 }

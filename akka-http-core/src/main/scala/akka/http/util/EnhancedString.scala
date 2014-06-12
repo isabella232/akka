@@ -1,12 +1,16 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.util
 
 import scala.annotation.tailrec
+import scala.collection.immutable
 
-class EnhancedString(val underlying: String) extends AnyVal {
+/**
+ * INTERNAL API
+ */
+private[http] class EnhancedString(val underlying: String) extends AnyVal {
 
   /**
    * Splits the underlying string into the segments that are delimited by the given character.
@@ -16,7 +20,7 @@ class EnhancedString(val underlying: String) extends AnyVal {
    * leading and trailing delimiters are NOT ignored, i.e. they trigger the inclusion of an
    * empty leading or trailing empty string (respectively).
    */
-  def fastSplit(delimiter: Char): List[String] = {
+  def fastSplit(delimiter: Char): immutable.LinearSeq[String] = {
     @tailrec def split(end: Int = underlying.length, elements: List[String] = Nil): List[String] = {
       val ix = underlying.lastIndexOf(delimiter, end - 1)
       if (ix < 0)
@@ -37,7 +41,6 @@ class EnhancedString(val underlying: String) extends AnyVal {
    * empty leading or trailing empty string (respectively).
    */
   def lazySplit(delimiter: Char): Stream[String] = {
-    // based on an implemented by Jed Wesley-Smith
     def split(start: Int = 0): Stream[String] = {
       val ix = underlying.indexOf(delimiter, start)
       if (ix < 0)
@@ -63,7 +66,7 @@ class EnhancedString(val underlying: String) extends AnyVal {
   /**
    * Returns the ASCII encoded bytes of this string. Truncates characters to 8-bit byte value.
    */
-  def getAsciiBytes = {
+  def getAsciiBytes: Array[Byte] = {
     @tailrec def bytes(array: Array[Byte] = new Array[Byte](underlying.length), ix: Int = 0): Array[Byte] =
       if (ix < array.length) {
         array(ix) = underlying.charAt(ix).asInstanceOf[Byte]
@@ -73,21 +76,27 @@ class EnhancedString(val underlying: String) extends AnyVal {
   }
 
   /**
-   * Tests two strings for value equality avoiding timing attacks.
-   * Note that this function still leaks information about the length of each string as well as
-   * whether the two strings have the same length.
+   * Tests two string for value equality in a way that defends against timing attacks.
+   * Simple equality testing will stop at the end of a matching prefix thereby leaking information
+   * about the length of the matching prefix which can be exploited for per-byte progressive brute-forcing.
+   *
+   * @note This function leaks information about the length of each string as well as
+   *       whether the two string have the same length.
+   * @see [[http://codahale.com/a-lesson-in-timing-attacks/]]
+   * @see [[http://rdist.root.org/2009/05/28/timing-attack-in-google-keyczar-library/]]
+   * @see [[http://emerose.com/timing-attacks-explained]]
    */
   def secure_==(other: String): Boolean = getAsciiBytes secure_== other.getAsciiBytes
 
   /**
    * Determines whether the underlying String starts with the given character.
    */
-  def startsWith(c: Char) = underlying.nonEmpty && underlying.charAt(0) == c
+  def startsWith(c: Char): Boolean = underlying.nonEmpty && underlying.charAt(0) == c
 
   /**
    * Determines whether the underlying String ends with the given character.
    */
-  def endsWith(c: Char) = underlying.nonEmpty && underlying.charAt(underlying.length - 1) == c
+  def endsWith(c: Char): Boolean = underlying.nonEmpty && underlying.charAt(underlying.length - 1) == c
 
   /** Strips margin and fixes the newline sequence to the given one preventing dependencies on the build platform */
   def stripMarginWithNewline(newline: String) = underlying.stripMargin.replace("\r\n", "\n").replace("\n", newline)

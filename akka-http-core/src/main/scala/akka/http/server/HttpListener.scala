@@ -1,22 +1,24 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.server
 
 import scala.concurrent.duration._
 import akka.io.{ Tcp, IO }
-import akka.stream.io.StreamTcp
+import akka.stream.io.{ TcpListenStreamActor, StreamTcp }
 import akka.stream.{ Transformer, FlowMaterializer }
 import akka.stream.scaladsl.Flow
 import akka.http.util.Timestamp
 import akka.http.{ Http, HttpExt }
 import akka.actor._
 
+/**
+ * INTERNAL API
+ */
 private[http] class HttpListener(bindCommander: ActorRef,
                                  bind: Http.Bind,
                                  httpSettings: HttpExt#Settings) extends Actor with ActorLogging {
-  import context.dispatcher
   import HttpListener._
   import bind._
 
@@ -24,10 +26,7 @@ private[http] class HttpListener(bindCommander: ActorRef,
 
   log.debug("Binding to {}", endpoint)
 
-  {
-    import context.system
-    IO(StreamTcp) ! StreamTcp.Bind(materializerSettings, endpoint, backlog, options)
-  }
+  IO(StreamTcp)(context.system) ! StreamTcp.Bind(materializerSettings, endpoint, backlog, options)
 
   context.setReceiveTimeout(settings.bindTimeout)
 
@@ -54,19 +53,19 @@ private[http] class HttpListener(bindCommander: ActorRef,
       context.setReceiveTimeout(Duration.Undefined)
       context.become(connected(sender()))
 
-    case x @ Status.Failure(StreamTcp.BindFailedException) ⇒
+    case Status.Failure(_: TcpListenStreamActor.TcpListenStreamException) ⇒
       log.warning("Bind to {} failed", endpoint)
-      bindCommander ! x
+      bindCommander ! Status.Failure(Http.BindFailedException)
       context.stop(self)
 
     case ReceiveTimeout ⇒
       log.warning("Bind to {} failed, timeout {} expired", endpoint, settings.bindTimeout)
-      bindCommander ! Status.Failure(StreamTcp.BindFailedException)
+      bindCommander ! Status.Failure(Http.BindFailedException)
       context.stop(self)
 
     case Http.Unbind(_) ⇒ // no children possible, so no reason to note the timeout
       log.info("Bind to {} aborted", endpoint)
-      bindCommander ! Status.Failure(StreamTcp.BindFailedException)
+      bindCommander ! Status.Failure(Http.BindFailedException)
       context.become(bindingAborted(Set(sender())))
   }
 
@@ -75,7 +74,7 @@ private[http] class HttpListener(bindCommander: ActorRef,
     case _: StreamTcp.TcpServerBinding ⇒
       unbind(sender(), unbindCommanders, Duration.Zero)
 
-    case Status.Failure(StreamTcp.BindFailedException) ⇒
+    case Status.Failure(_: TcpListenStreamActor.TcpListenStreamException) ⇒
       unbindCommanders foreach (_ ! Http.Unbound)
       context.stop(self)
 
@@ -104,7 +103,7 @@ private[http] class HttpListener(bindCommander: ActorRef,
 
     case ReceiveTimeout ⇒
       log.warning("Unbinding from {} failed, timeout {} expired, stopping", endpoint, settings.unbindTimeout)
-      commanders foreach (_ ! Status.Failure(StreamTcp.UnbindFailedException))
+      commanders foreach (_ ! Status.Failure(Http.UnbindFailedException))
       context.stop(self)
 
     case Http.Unbind(_) ⇒
@@ -127,6 +126,9 @@ private[http] class HttpListener(bindCommander: ActorRef,
   }
 }
 
-object HttpListener {
+private[http] object HttpListener {
+  def props(bindCommander: ActorRef, bind: Http.Bind, httpSettings: HttpExt#Settings) =
+    Props(new HttpListener(bindCommander, bind, httpSettings)) withDispatcher httpSettings.ListenerDispatcher
+
   private case object Tick
 }

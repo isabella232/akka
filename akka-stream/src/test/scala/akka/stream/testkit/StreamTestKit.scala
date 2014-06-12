@@ -9,6 +9,10 @@ import org.reactivestreams.tck._
 import akka.actor.ActorSystem
 import scala.concurrent.duration.FiniteDuration
 import scala.annotation.tailrec
+import akka.stream.impl.EmptyProducer
+import org.reactivestreams.api.Producer
+import akka.stream.impl.ErrorProducer
+import org.reactivestreams.api.Consumer
 
 object StreamTestKit {
   def consumerProbe[I]()(implicit system: ActorSystem): AkkaConsumerProbe[I] =
@@ -41,6 +45,15 @@ object StreamTestKit {
             expectError()
           case OnError(cause) ⇒ cause
         }
+
+      def expectCompletedOrSubscriptionFollowedByComplete(): Unit = {
+        probe.expectMsgPF() {
+          case s: OnSubscribe ⇒
+            s.subscription.requestMore(1)
+            expectComplete()
+          case OnComplete ⇒
+        }
+      }
 
       def expectNoMsg(): Unit = probe.expectNoMsg()
       def expectNoMsg(max: FiniteDuration): Unit = probe.expectNoMsg(max)
@@ -89,4 +102,55 @@ object StreamTestKit {
 
       def getPublisher: Publisher[I] = this
     }
+
+  /**
+   * Completes subscribers immediately, before handing out subscription.
+   */
+  def emptyProducer[T]: Producer[T] = EmptyProducer.asInstanceOf[Producer[T]]
+
+  /**
+   * Subscribes the subscriber and completes after the first requestMore.
+   */
+  def lazyEmptyProducer[T]: Producer[T] = new Producer[T] with Publisher[T] {
+    override def getPublisher = this
+    override def produceTo(consumer: Consumer[T]): Unit = getPublisher.subscribe(consumer.getSubscriber)
+    override def subscribe(subscriber: Subscriber[T]): Unit =
+      subscriber.onSubscribe(CompletedSubscription(subscriber))
+  }
+
+  /**
+   * Signals error to subscribers immediately, before handing out subscription.
+   */
+  def errorProducer[T](cause: Throwable): Producer[T] = ErrorProducer(cause: Throwable).asInstanceOf[Producer[T]]
+
+  /**
+   * Subscribes the subscriber and signals error after the first requestMore.
+   */
+  def lazyErrorProducer[T](cause: Throwable): Producer[T] = new Producer[T] with Publisher[T] {
+    override def getPublisher = this
+    override def produceTo(consumer: Consumer[T]): Unit = getPublisher.subscribe(consumer.getSubscriber)
+    override def subscribe(subscriber: Subscriber[T]): Unit =
+      subscriber.onSubscribe(FailedSubscription(subscriber, cause))
+  }
+
+  private case class FailedSubscription[T](subscriber: Subscriber[T], cause: Throwable) extends Subscription {
+    override def requestMore(elements: Int): Unit = subscriber.onError(cause)
+    override def cancel(): Unit = ()
+  }
+
+  private case class CompletedSubscription[T](subscriber: Subscriber[T]) extends Subscription {
+    override def requestMore(elements: Int): Unit = subscriber.onComplete()
+    override def cancel(): Unit = ()
+  }
+
+  class AutoProducer[T](probe: ProducerProbe[T], initialPendingRequests: Int = 0) {
+    val subscription = probe.expectSubscription()
+    var pendingRequests = initialPendingRequests
+
+    def sendNext(elem: T): Unit = {
+      if (pendingRequests == 0) pendingRequests = subscription.expectRequestMore()
+      pendingRequests -= 1
+      subscription.sendNext(elem)
+    }
+  }
 }

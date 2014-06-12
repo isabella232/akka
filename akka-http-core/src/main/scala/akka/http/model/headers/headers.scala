@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -307,13 +307,13 @@ final case class `Cache-Control`(directives: immutable.Seq[CacheDirective]) exte
 
 // http://tools.ietf.org/html/rfc6266
 object `Content-Disposition` extends ModeledCompanion
-final case class `Content-Disposition`(dispositionType: ContentDispositionType, parameters: Map[String, String] = Map.empty) extends japi.headers.Content_Disposition with ModeledHeader {
+final case class `Content-Disposition`(dispositionType: ContentDispositionType, params: Map[String, String] = Map.empty) extends japi.headers.Content_Disposition with ModeledHeader {
 
-  def renderValue[R <: Rendering](r: R): r.type = { r ~~ dispositionType; parameters foreach { case (k, v) ⇒ r ~~ "; " ~~ k ~~ '=' ~~# v }; r }
+  def renderValue[R <: Rendering](r: R): r.type = { r ~~ dispositionType; params foreach { case (k, v) ⇒ r ~~ "; " ~~ k ~~ '=' ~~# v }; r }
   protected def companion = `Content-Disposition`
 
   /** Java API */
-  def getParameters = parameters.asJava
+  def getParams = params.asJava
 }
 
 // http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-3.1.2.2

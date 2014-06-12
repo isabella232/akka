@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.parsing
@@ -16,9 +16,12 @@ import akka.http.model._
 import headers._
 import StatusCodes._
 
+/**
+ * INTERNAL API
+ */
 private[http] class HttpRequestParser(_settings: ParserSettings,
                                       rawRequestUriHeader: Boolean,
-                                      materializer: FlowMaterializer)(_headerParser: HttpHeaderParser = HttpHeaderParser(_settings))(implicit ec: ExecutionContext)
+                                      materializer: FlowMaterializer)(_headerParser: HttpHeaderParser = HttpHeaderParser(_settings))
   extends HttpMessageParser[ParserOutput.RequestOutput](_settings, _headerParser) {
 
   private[this] var method: HttpMethod = _
@@ -34,10 +37,7 @@ private[http] class HttpRequestParser(_settings: ParserSettings,
     cursor = parseProtocol(input, cursor)
     if (byteChar(input, cursor) == '\r' && byteChar(input, cursor + 1) == '\n')
       parseHeaderLines(input, cursor + 2)
-    else {
-      println("MARK: " + input.utf8String.flatMap(escape))
-      badProtocol
-    }
+    else badProtocol
   }
 
   def parseMethod(input: ByteString, cursor: Int): Int = {
@@ -105,15 +105,11 @@ private[http] class HttpRequestParser(_settings: ParserSettings,
 
   def badProtocol = throw new ParsingException(HTTPVersionNotSupported)
 
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-3.3
+  // http://tools.ietf.org/html/rfc7230#section-3.3
   def parseEntity(headers: List[HttpHeader], protocol: HttpProtocol, input: ByteString, bodyStart: Int,
                   clh: Option[`Content-Length`], cth: Option[`Content-Type`], teh: Option[`Transfer-Encoding`],
                   hostHeaderPresent: Boolean, closeAfterResponseCompletion: Boolean): StateResult =
     if (hostHeaderPresent || protocol == HttpProtocols.`HTTP/1.0`) {
-      val contentType = cth match {
-        case Some(x) ⇒ x.contentType
-        case None    ⇒ ContentTypes.`application/octet-stream`
-      }
       def emitRequestStart(createEntity: Producer[ParserOutput.RequestOutput] ⇒ HttpEntity.Regular) =
         emit(ParserOutput.RequestStart(method, uri, protocol, headers, createEntity, closeAfterResponseCompletion))
 
@@ -126,22 +122,22 @@ private[http] class HttpRequestParser(_settings: ParserSettings,
           if (contentLength > settings.maxContentLength)
             fail(RequestEntityTooLarge,
               s"Request Content-Length $contentLength exceeds the configured limit of $settings.maxContentLength")
-          else {
-            emitRequestStart { entityParts ⇒
-              val data = Flow(entityParts).collect { case ParserOutput.EntityPart(bytes) ⇒ bytes }.toProducer(materializer)
-              HttpEntity.Default(contentType, contentLength, data)
-            }
-            if (contentLength == 0) startNewMessage(input, bodyStart)
-            else parseFixedLengthBody(contentLength)(input, bodyStart)
+          else if (contentLength == 0) {
+            emitRequestStart(emptyEntity(cth))
+            startNewMessage(input, bodyStart)
+          } else if (contentLength < input.size - bodyStart) {
+            val cl = contentLength.toInt
+            emitRequestStart(strictEntity(cth, input, bodyStart, cl))
+            startNewMessage(input, bodyStart + cl)
+          } else {
+            emitRequestStart(defaultEntity(cth, contentLength, materializer))
+            parseFixedLengthBody(contentLength)(input, bodyStart)
           }
 
         case Some(te) ⇒
           if (te.encodings.size == 1 && te.hasChunked) {
             if (clh.isEmpty) {
-              emitRequestStart { entityChunks ⇒
-                val chunks = Flow(entityChunks).collect { case ParserOutput.EntityChunk(chunk) ⇒ chunk }.toProducer(materializer)
-                HttpEntity.Chunked(contentType, chunks)
-              }
+              emitRequestStart(chunkedEntity(cth, materializer))
               parseChunk(input, bodyStart)
             } else fail("A chunked request must not contain a Content-Length header.")
           } else fail(NotImplemented, s"`$te` is not supported by this server")

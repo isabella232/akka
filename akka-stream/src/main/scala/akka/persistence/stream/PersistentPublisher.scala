@@ -70,7 +70,7 @@ case class PersistentPublisherSettings(fromSequenceNr: Long = 1L, maxBufferSize:
 
 private object PersistentPublisher {
   def props(processorId: String, publisherSettings: PersistentPublisherSettings, settings: MaterializerSettings): Props =
-    Props(classOf[PersistentPublisherImpl], processorId, publisherSettings, settings)
+    Props(classOf[PersistentPublisherImpl], processorId, publisherSettings, settings).withDispatcher(settings.dispatcher)
 }
 
 private case class PersistentPublisherNode(processorId: String, publisherSettings: PersistentPublisherSettings) extends ProducerNode[Persistent] {
@@ -90,7 +90,8 @@ private class PersistentPublisherImpl(processorId: String, publisherSettings: Pe
 
   type S = ActorSubscription[Persistent]
 
-  private val buffer = context.actorOf(Props(classOf[PersistentPublisherBuffer], processorId, publisherSettings, self), "publisherBuffer")
+  private val buffer = context.actorOf(Props(classOf[PersistentPublisherBuffer], processorId, publisherSettings, self).
+    withDispatcher(context.props.dispatcher), "publisherBuffer")
 
   private var pub: ActorPublisher[Persistent] = _
   private var shutdownReason: Option[Throwable] = ActorPublisher.NormalShutdownReason
@@ -136,18 +137,18 @@ private class PersistentPublisherImpl(processorId: String, publisherSettings: Pe
     new ActorSubscription(self, subscriber)
 
   override def cancelUpstream(): Unit = {
-    pub.shutdown(shutdownReason)
+    if (pub ne null) pub.shutdown(shutdownReason)
     context.stop(buffer)
     softShutdown()
   }
   override def shutdown(completed: Boolean): Unit = {
-    pub.shutdown(shutdownReason)
+    if (pub ne null) pub.shutdown(shutdownReason)
     context.stop(buffer)
     softShutdown()
   }
 
   override def postStop(): Unit = {
-    pub.shutdown(shutdownReason)
+    if (pub ne null) pub.shutdown(shutdownReason)
   }
 }
 

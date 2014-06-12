@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -27,7 +27,8 @@ sealed abstract class HttpCharsetRange extends japi.HttpCharsetRange with ValueR
 
 object HttpCharsetRange {
   case class `*`(qValue: Float) extends HttpCharsetRange {
-    def render[R <: Rendering](r: R): r.type = if (qValue < 1.0f) r ~~ "*;q=" ~~ qValue else r ~~ '*'
+    require(0.0f <= qValue && qValue <= 1.0f, "qValue must be >= 0 and <= 1.0")
+    final def render[R <: Rendering](r: R): r.type = if (qValue < 1.0f) r ~~ "*;q=" ~~ qValue else r ~~ '*'
     def matches(charset: HttpCharset) = true
     def matchesAll: Boolean = true
 
@@ -36,7 +37,8 @@ object HttpCharsetRange {
   }
   object `*` extends `*`(1.0f)
 
-  case class One(charset: HttpCharset, qValue: Float) extends HttpCharsetRange {
+  final case class One(charset: HttpCharset, qValue: Float) extends HttpCharsetRange {
+    require(0.0f <= qValue && qValue <= 1.0f, "qValue must be >= 0 and <= 1.0")
     def matches(charset: HttpCharset) = this.charset.value.equalsIgnoreCase(charset.value)
     def matchesAll: Boolean = false
 
@@ -48,7 +50,7 @@ object HttpCharsetRange {
   def apply(charset: HttpCharset, qValue: Float): HttpCharsetRange = One(charset, qValue)
 }
 
-case class HttpCharset private[http] (override val value: String)(val aliases: immutable.Seq[String])
+final case class HttpCharset private[http] (override val value: String)(val aliases: immutable.Seq[String])
   extends japi.HttpCharset with SingletonValueRenderable with WithQValue[HttpCharsetRange] {
   @transient private[this] var _nioCharset: Charset = Charset.forName(value)
   def nioCharset: Charset = _nioCharset

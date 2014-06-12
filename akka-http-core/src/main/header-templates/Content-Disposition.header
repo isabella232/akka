@@ -1,6 +1,6 @@
 name: Content-Disposition
 spec: http://tools.ietf.org/html/rfc6266
-rendering: { r ~~ dispositionType; parameters foreach { case (k, v) ⇒ r ~~ "; " ~~ k ~~ '=' ~~# v }; r }
+rendering: { r ~~ dispositionType; params foreach { case (k, v) ⇒ r ~~ "; " ~~ k ~~ '=' ~~# v }; r }
 parameters:
   dispositionType: headers.ContentDispositionType
-  parameters: Map[String, String] = Map.empty
+  params: Map[String, String] = Map.empty

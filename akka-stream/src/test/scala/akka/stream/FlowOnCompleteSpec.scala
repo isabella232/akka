@@ -14,6 +14,7 @@ import akka.stream.scaladsl.Flow
 import akka.testkit.TestProbe
 import scala.util.Try
 import scala.util.Success
+import scala.util.control.NoStackTrace
 
 @org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class FlowOnCompleteSpec extends AkkaSpec with ScriptedTest {
@@ -22,7 +23,8 @@ class FlowOnCompleteSpec extends AkkaSpec with ScriptedTest {
     initialInputBufferSize = 2,
     maximumInputBufferSize = 16,
     initialFanOutBufferSize = 1,
-    maxFanOutBufferSize = 16))
+    maxFanOutBufferSize = 16,
+    dispatcher = "akka.test.stream-dispatcher"))
 
   "A Flow with onComplete" must {
 
@@ -44,7 +46,7 @@ class FlowOnCompleteSpec extends AkkaSpec with ScriptedTest {
       Flow(p).onComplete(materializer) { onCompleteProbe.ref ! _ }
       val proc = p.expectSubscription
       proc.expectRequestMore()
-      val ex = new RuntimeException("ex")
+      val ex = new RuntimeException("ex") with NoStackTrace
       proc.sendError(ex)
       onCompleteProbe.expectMsg(Failure(ex))
       onCompleteProbe.expectNoMsg(100.millis)

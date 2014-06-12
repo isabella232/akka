@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http
@@ -28,11 +28,11 @@ object Http extends ExtensionKey[HttpExt] {
    */
   sealed trait OutgoingHttpChannelSetup
 
-  case class Connect(remoteAddress: InetSocketAddress,
-                     sslEncryption: Boolean,
-                     localAddress: Option[InetSocketAddress],
-                     options: immutable.Traversable[Inet.SocketOption],
-                     settings: Option[ClientConnectionSettings]) extends OutgoingHttpChannelSetup
+  final case class Connect(remoteAddress: InetSocketAddress,
+                           sslEncryption: Boolean,
+                           localAddress: Option[InetSocketAddress],
+                           options: immutable.Traversable[Inet.SocketOption],
+                           settings: Option[ClientConnectionSettings]) extends OutgoingHttpChannelSetup
   object Connect {
     def apply(host: String, port: Int = 80, sslEncryption: Boolean = false, localAddress: Option[InetSocketAddress] = None,
               options: immutable.Traversable[Inet.SocketOption] = Nil, settings: Option[ClientConnectionSettings] = None): Connect =
@@ -56,15 +56,16 @@ object Http extends ExtensionKey[HttpExt] {
 
   case object HttpRequestChannelSetup extends OutgoingHttpChannelSetup
 
-  case class OpenOutgoingHttpChannel(channelSetup: OutgoingHttpChannelSetup)
+  final case class OpenOutgoingHttpChannel(channelSetup: OutgoingHttpChannelSetup)
 
   /**
    * Command triggering the shutdown of the respective HTTP channel.
+   *
    * If sent to
-   * - client-side connection actors: triggers the closing of the connection
-   * - host-connector actors: triggers the closing of all connections and the shutdown of the host-connector
-   * - the `HttpManager` actor: triggers the closing of all outgoing and incoming connections, the shutdown of all
-   *   host-connectors and the unbinding of all servers
+   *  - client-side connection actors: triggers the closing of the connection
+   *  - host-connector actors: triggers the closing of all connections and the shutdown of the host-connector
+   *  - the `HttpManager` actor: triggers the closing of all outgoing and incoming connections, the shutdown of all
+   *    host-connectors and the unbinding of all servers
    */
   type CloseCommand = Tcp.CloseCommand
   val Close = Tcp.Close
@@ -75,14 +76,14 @@ object Http extends ExtensionKey[HttpExt] {
   object ClientConnectionType {
     object Direct extends ClientConnectionType
     object AutoProxied extends ClientConnectionType
-    case class Proxied(proxyHost: String, proxyPort: Int) extends ClientConnectionType
+    final case class Proxied(proxyHost: String, proxyPort: Int) extends ClientConnectionType
   }
 
-  case class Bind(endpoint: InetSocketAddress,
-                  backlog: Int,
-                  options: immutable.Traversable[Inet.SocketOption],
-                  serverSettings: Option[ServerSettings],
-                  materializerSettings: MaterializerSettings)
+  final case class Bind(endpoint: InetSocketAddress,
+                        backlog: Int,
+                        options: immutable.Traversable[Inet.SocketOption],
+                        serverSettings: Option[ServerSettings],
+                        materializerSettings: MaterializerSettings)
   object Bind {
     def apply(interface: String, port: Int = 80, backlog: Int = 100,
               options: immutable.Traversable[Inet.SocketOption] = Nil,
@@ -112,25 +113,29 @@ object Http extends ExtensionKey[HttpExt] {
     def transport: ActorRef
   }
 
-  case class Connected(transport: ActorRef,
-                       remoteAddress: InetSocketAddress,
-                       localAddress: InetSocketAddress) extends OutgoingHttpChannelInfo
+  final case class Connected(transport: ActorRef,
+                             remoteAddress: InetSocketAddress,
+                             localAddress: InetSocketAddress) extends OutgoingHttpChannelInfo
 
-  case class HostConnectorInfo(transport: ActorRef,
-                               setup: HostConnectorSetup) extends OutgoingHttpChannelInfo
+  final case class HostConnectorInfo(transport: ActorRef,
+                                     setup: HostConnectorSetup) extends OutgoingHttpChannelInfo
 
-  case class HttpRequestChannelInfo(transport: ActorRef) extends OutgoingHttpChannelInfo
+  final case class HttpRequestChannelInfo(transport: ActorRef) extends OutgoingHttpChannelInfo
 
   ///////////////////// server-side events ////////////////////////
 
-  case class ServerBinding(localAddress: InetSocketAddress,
-                           connectionStream: Producer[IncomingConnection])
+  final case class ServerBinding(localAddress: InetSocketAddress,
+                                 connectionStream: Producer[IncomingConnection])
 
-  case class IncomingConnection(remoteAddress: InetSocketAddress,
-                                requestProducer: Producer[HttpRequest],
-                                responseConsumer: Consumer[HttpResponse])
+  final case class IncomingConnection(remoteAddress: InetSocketAddress,
+                                      requestProducer: Producer[HttpRequest],
+                                      responseConsumer: Consumer[HttpResponse])
 
   val Unbound = Tcp.Unbound
+
+  case object BindFailedException extends SingletonException
+
+  case object UnbindFailedException extends SingletonException
 
   class ConnectionException(message: String) extends RuntimeException(message)
 
@@ -149,7 +154,5 @@ class HttpExt(system: ExtendedActorSystem) extends akka.io.IO.Extension {
     val ConnectionDispatcher = config getString "connection-dispatcher"
   }
 
-  val manager = system.actorOf(
-    props = Props(new HttpManager(Settings)) withDispatcher Settings.ManagerDispatcher,
-    name = "IO-HTTP")
+  val manager = system.actorOf(props = HttpManager.props(Settings), name = "IO-HTTP")
 }

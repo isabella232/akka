@@ -1,15 +1,20 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.util
 
 import scala.annotation.tailrec
 
-class EnhancedByteArray(val underlying: Array[Byte]) extends AnyVal {
+/**
+ * INTERNAL API
+ */
+private[http] class EnhancedByteArray(val underlying: Array[Byte]) extends AnyVal {
 
   /**
-   * Tests two byte arrays for value equality avoiding timing attacks.
+   * Tests two byte arrays for value equality in a way that defends against timing attacks.
+   * Simple equality testing will stop at the end of a matching prefix thereby leaking information
+   * about the length of the matching prefix which can be exploited for per-byte progressive brute-forcing.
    *
    * @note This function leaks information about the length of each byte array as well as
    *       whether the two byte arrays have the same length.

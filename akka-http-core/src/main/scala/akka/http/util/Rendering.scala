@@ -1,34 +1,49 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.util
 
+import java.text.DecimalFormat
 import scala.annotation.tailrec
-import scala.collection.LinearSeq
-import org.parboiled2.{ CharPredicate, CharUtils }
+import scala.collection.{ immutable, LinearSeq }
+import akka.parboiled2.{ CharPredicate, CharUtils }
 import akka.http.model.parser.CharacterClasses
 import akka.util.{ ByteStringBuilder, ByteString }
 
-/** An entity that can render itself */
-trait Renderable {
+/**
+ * INTERNAL API
+ *
+ * An entity that can render itself
+ */
+private[http] trait Renderable {
   def render[R <: Rendering](r: R): r.type
 }
 
-/** An entity that can render itself and implements toString in terms of its rendering */
-trait ToStringRenderable extends Renderable {
+/**
+ * INTERNAL API
+ *
+ * An entity that can render itself and implements toString in terms of its rendering
+ */
+private[http] trait ToStringRenderable extends Renderable {
   override def toString = render(new StringRendering).get
 }
 
-/** An entity that has a rendered value (like an HttpHeader) */
-trait ValueRenderable extends ToStringRenderable {
+/**
+ * INTERNAL API
+ *
+ * An entity that has a rendered value (like an HttpHeader)
+ */
+private[http] trait ValueRenderable extends ToStringRenderable {
   def value: String = toString
 }
 
 /**
+ * INTERNAL API
+ *
  * An entity whose rendering result is cached in an unsynchronized and non-volatile lazy.
  */
-trait LazyValueBytesRenderable extends Renderable {
+private[http] trait LazyValueBytesRenderable extends Renderable {
   // unsynchronized and non-volatile lazy init, worst case: we init once per core
   // which, since instances of derived classes are usually long-lived, is still better
   // that a synchronization overhead or even @volatile reads
@@ -42,23 +57,27 @@ trait LazyValueBytesRenderable extends Renderable {
 }
 
 /**
+ * INTERNAL API
+ *
  * An entity whose rendering result is determined eagerly at instantiation (and then is cached).
  * Useful for common predefined singleton values.
  */
-trait SingletonValueRenderable extends Product with Renderable {
+private[http] trait SingletonValueRenderable extends Product with Renderable {
   private[this] val valueBytes = value.getAsciiBytes
   def value = productPrefix
   def render[R <: Rendering](r: R): r.type = r ~~ valueBytes
 }
 
 /**
+ * INTERNAL API
+ *
  * A typeclass for rendering values.
  */
-trait Renderer[-T] {
+private[http] trait Renderer[-T] {
   def render[R <: Rendering](r: R, value: T): r.type
 }
 
-object Renderer {
+private[http] object Renderer {
   implicit object CharRenderer extends Renderer[Char] {
     def render[R <: Rendering](r: R, value: Char): r.type = r ~~ value
   }
@@ -76,7 +95,7 @@ object Renderer {
   }
   implicit def renderableRenderer[T <: Renderable]: Renderer[T] = RenderableRenderer
 
-  def optionRenderer[D, T](defaultValue: D)(implicit sRenderer: Renderer[D], tRenderer: Renderer[T]) =
+  def optionRenderer[D, T](defaultValue: D)(implicit sRenderer: Renderer[D], tRenderer: Renderer[T]): Renderer[Option[T]] =
     new Renderer[Option[T]] {
       def render[R <: Rendering](r: R, value: Option[T]): r.type =
         if (value.isEmpty) sRenderer.render(r, defaultValue) else tRenderer.render(r, value.get)
@@ -84,9 +103,9 @@ object Renderer {
 
   def defaultSeqRenderer[T: Renderer] = genericSeqRenderer[Renderable, T](Rendering.`, `, Rendering.Empty)
   def seqRenderer[T: Renderer](separator: String = ", ", empty: String = "") = genericSeqRenderer[String, T](separator, empty)
-  def genericSeqRenderer[S, T](separator: S, empty: S)(implicit sRenderer: Renderer[S], tRenderer: Renderer[T]) =
-    new Renderer[Seq[T]] {
-      def render[R <: Rendering](r: R, value: Seq[T]): r.type = {
+  def genericSeqRenderer[S, T](separator: S, empty: S)(implicit sRenderer: Renderer[S], tRenderer: Renderer[T]): Renderer[immutable.Seq[T]] =
+    new Renderer[immutable.Seq[T]] {
+      def render[R <: Rendering](r: R, value: immutable.Seq[T]): r.type = {
         @tailrec def recI(values: IndexedSeq[T], ix: Int = 0): r.type =
           if (ix < values.size) {
             if (ix > 0) sRenderer.render(r, separator)
@@ -105,21 +124,22 @@ object Renderer {
           case Nil              ⇒ r ~~ empty
           case x: IndexedSeq[T] ⇒ recI(x)
           case x: LinearSeq[T]  ⇒ recL(x)
-          case x                ⇒ sys.error("Unsupported Seq type: " + x)
         }
       }
     }
 }
 
 /**
+ * INTERNAL API
+ *
  * The interface for a rendering sink. May be implemented with different backing stores.
  */
-trait Rendering {
+private[http] trait Rendering {
   def ~~(ch: Char): this.type
   def ~~(bytes: Array[Byte]): this.type
   def ~~(bytes: ByteString): this.type
 
-  def ~~(f: Float): this.type = this ~~ f.toString
+  def ~~(f: Float): this.type = this ~~ Rendering.floatFormat.format(f)
   def ~~(d: Double): this.type = this ~~ d.toString
 
   def ~~(i: Int): this.type = this ~~ i.toLong
@@ -181,7 +201,8 @@ trait Rendering {
   }
 }
 
-object Rendering {
+private[http] object Rendering {
+  val floatFormat = new DecimalFormat("0.0##")
   val `\"` = CharPredicate('\\', '"')
 
   case object `, ` extends SingletonValueRenderable // default separator
@@ -194,8 +215,10 @@ object Rendering {
   }
 }
 
-/** A rendering sink that renders into a String by appending to a StringBuilder. */
-class StringRendering extends Rendering {
+/**
+ * INTERNAL API
+ */
+private[http] class StringRendering extends Rendering {
   private[this] val sb = new java.lang.StringBuilder
   def ~~(ch: Char): this.type = { sb.append(ch); this }
   def ~~(bytes: Array[Byte]): this.type = {
@@ -207,7 +230,10 @@ class StringRendering extends Rendering {
   def get: String = sb.toString
 }
 
-class ByteArrayRendering(sizeHint: Int) extends Rendering {
+/**
+ * INTERNAL API
+ */
+private[http] class ByteArrayRendering(sizeHint: Int) extends Rendering {
   private[this] var array = new Array[Byte](sizeHint)
   private[this] var size = 0
 
@@ -240,19 +266,22 @@ class ByteArrayRendering(sizeHint: Int) extends Rendering {
   private def growBy(delta: Int): Int = {
     val oldSize = size
     val neededSize = oldSize.toLong + delta
-    if (array.length < neededSize)
-      if (neededSize < Int.MaxValue) {
-        val newLen = math.min(math.max(array.length.toLong << 1, neededSize), Int.MaxValue).toInt
-        val newArray = new Array[Byte](newLen)
-        System.arraycopy(array, 0, newArray, 0, array.length)
-        array = newArray
-      } else sys.error("Cannot create byte array greater than 2GB in size")
+    if (array.length < neededSize) {
+      require(neededSize < Int.MaxValue, "Cannot create byte array greater than 2GB in size")
+      val newLen = math.min(math.max(array.length.toLong << 1, neededSize), Int.MaxValue).toInt
+      val newArray = new Array[Byte](newLen)
+      System.arraycopy(array, 0, newArray, 0, array.length)
+      array = newArray
+    }
     size = neededSize.toInt
     oldSize
   }
 }
 
-class ByteStringRendering(sizeHint: Int) extends Rendering {
+/**
+ * INTERNAL API
+ */
+private[http] class ByteStringRendering(sizeHint: Int) extends Rendering {
   private[this] val builder = new ByteStringBuilder
   builder.sizeHint(sizeHint)
 

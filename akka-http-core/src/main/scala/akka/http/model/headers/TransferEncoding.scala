@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -26,7 +26,7 @@ object TransferEncodings {
   case object compress extends Predefined
   case object deflate extends Predefined
   case object gzip extends Predefined
-  case class Extension(name: String, parameters: Map[String, String] = Map.empty) extends TransferEncoding {
+  final case class Extension(name: String, parameters: Map[String, String] = Map.empty) extends TransferEncoding {
     def render[R <: Rendering](r: R): r.type = {
       r ~~ name
       parameters foreach { case (k, v) ⇒ r ~~ "; " ~~ k ~~ '=' ~~# v }

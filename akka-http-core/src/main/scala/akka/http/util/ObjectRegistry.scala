@@ -1,10 +1,12 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.util
 
 /**
+ * INTERNAL API
+ *
  * A registry to keep track of singleton instances similar to what
  * java.lang.Enum provides.
  */

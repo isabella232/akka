@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -119,7 +119,7 @@ class ContentNegotiationSpec extends FreeSpec with Matchers {
         }
       } else Nil
     val request = HttpRequest(headers = headers)
-    body(request.acceptableContentType)
+    body(contentTypes ⇒ request.acceptableContentType(Vector(contentTypes: _*)))
   }
 
   def reject = equal(None)

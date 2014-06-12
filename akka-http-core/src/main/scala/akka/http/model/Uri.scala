@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -10,12 +10,12 @@ import java.nio.charset.Charset
 import scala.annotation.tailrec
 import scala.collection.{ immutable, mutable, LinearSeqOptimized }
 import scala.collection.immutable.LinearSeq
-import org.parboiled2.{ CharUtils, CharPredicate, ParserInput, UTF8 }
+import akka.parboiled2.{ CharUtils, CharPredicate, ParserInput, UTF8 }
 import akka.http.model.parser.UriParser
 import akka.http.model.parser.CharacterClasses._
 import akka.http.util._
 import Uri._
-import java.net.InetAddress
+import java.net.{ Inet4Address, Inet6Address, InetAddress }
 
 /**
  * An immutable model of an internet URI as defined by http://tools.ietf.org/html/rfc3986.
@@ -27,8 +27,6 @@ sealed abstract case class Uri(scheme: String, authority: Authority, path: Path,
   def isAbsolute: Boolean = !isRelative
   def isRelative: Boolean = scheme.isEmpty
   def isEmpty: Boolean
-
-  def inspect: String = s"Uri(scheme=$scheme, authority=$authority, path=$path, query=$query, fragment=$fragment)"
 
   /**
    * The effective port of this Uri given the currently set authority and scheme values.
@@ -47,9 +45,9 @@ sealed abstract case class Uri(scheme: String, authority: Authority, path: Path,
   /**
    * Returns a copy of this Uri with the given scheme. The `scheme` change of the Uri has the following
    * effect on the port value:
-   * - If the Uri has a non-default port for the scheme before the change this port will remain unchanged.
-   * - If the Uri has the default port for the scheme before the change it will have the default port for
-   *   the '''new''' scheme after the change.
+   *  - If the Uri has a non-default port for the scheme before the change this port will remain unchanged.
+   *  - If the Uri has the default port for the scheme before the change it will have the default port for
+   *    the '''new''' scheme after the change.
    */
   def withScheme(scheme: String): Uri = copy(scheme = scheme)
 
@@ -128,7 +126,7 @@ sealed abstract case class Uri(scheme: String, authority: Authority, path: Path,
 
   /**
    * Converts this URI to an "effective HTTP request URI" as defined by
-   * http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-5.5
+   * http://tools.ietf.org/html/rfc7230#section-5.5
    */
   def toEffectiveHttpRequestUri(hostHeaderHost: Host, hostHeaderPort: Int, securedConnection: Boolean = false,
                                 defaultAuthority: Authority = Authority.Empty): Uri =
@@ -245,7 +243,7 @@ object Uri {
 
   /**
    * Parses the given string into an HTTP request target URI as defined by
-   * http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-22#section-5.3.
+   * http://tools.ietf.org/html/rfc7230#section-5.3.
    * If strict is `false`, accepts unencoded visible 7-bit ASCII characters in addition to the RFC.
    * If the given string is not a valid URI the method throws an `IllegalUriException`.
    */
@@ -255,10 +253,10 @@ object Uri {
 
   /**
    * Normalizes the given URI string by performing the following normalizations:
-   * - the `scheme` and `host` components are converted to lowercase
-   * - a potentially existing `port` component is removed if it matches one of the defined default ports for the scheme
-   * - percent-encoded octets are decoded if allowed, otherwise they are converted to uppercase hex notation
-   * - `.` and `..` path segments are resolved as far as possible
+   *  - the `scheme` and `host` components are converted to lowercase
+   *  - a potentially existing `port` component is removed if it matches one of the defined default ports for the scheme
+   *  - percent-encoded octets are decoded if allowed, otherwise they are converted to uppercase hex notation
+   *  - `.` and `..` path segments are resolved as far as possible
    *
    * If strict is `false`, accepts unencoded visible 7-bit ASCII characters in addition to the RFC.
    * If the given string is not a valid URI the method throws an `IllegalUriException`.
@@ -268,7 +266,7 @@ object Uri {
 
   /**
    * Converts a set of URI components to an "effective HTTP request URI" as defined by
-   * http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-22#section-5.5.
+   * http://tools.ietf.org/html/rfc7230#section-5.5.
    */
   def effectiveHttpRequestUri(scheme: String, host: Host, port: Int, path: Path, query: Query, fragment: Option[String],
                               securedConnection: Boolean, hostHeaderHost: Host, hostHeaderPort: Int,
@@ -293,7 +291,7 @@ object Uri {
 
   def httpScheme(securedConnection: Boolean = false) = if (securedConnection) "https" else "http"
 
-  case class Authority(host: Host, port: Int = 0, userinfo: String = "") {
+  final case class Authority(host: Host, port: Int = 0, userinfo: String = "") {
     def isEmpty = host.isEmpty
     def normalizedForHttp(encrypted: Boolean = false) =
       normalizedFor(httpScheme(encrypted))
@@ -332,18 +330,26 @@ object Uri {
       def address: String = ""
       def isEmpty = true
       def toOption = None
-      def equalsIgnoreCase(other: Host): Boolean = other eq this
+      def inetAddresses: immutable.Seq[InetAddress] = Nil
 
-      def inetAddresses = Nil
+      def equalsIgnoreCase(other: Host): Boolean = other eq this
     }
     def apply(string: String, charset: Charset = UTF8, mode: Uri.ParsingMode = Uri.ParsingMode.Relaxed): Host =
       if (!string.isEmpty) new UriParser(string, UTF8, mode).parseHost() else Empty
+
+    def apply(address: InetAddress): Host = address match {
+      case ipv4: Inet4Address ⇒ apply(ipv4)
+      case ipv6: Inet6Address ⇒ apply(ipv6)
+      case _                  ⇒ throw new IllegalArgumentException(s"Unexpected address type(${address.getClass.getSimpleName}): $address")
+    }
+    def apply(address: Inet4Address): IPv4Host = IPv4Host(address.getAddress, address.getHostAddress)
+    def apply(address: Inet6Address): IPv6Host = IPv6Host(address.getAddress, address.getHostAddress)
   }
   sealed abstract class NonEmptyHost extends Host {
     def isEmpty = false
     def toOption = Some(this)
   }
-  case class IPv4Host(bytes: immutable.Seq[Byte], address: String) extends NonEmptyHost {
+  final case class IPv4Host private[http] (bytes: immutable.Seq[Byte], address: String) extends NonEmptyHost {
     require(bytes.length == 4, "bytes array must have length 4")
     require(!address.isEmpty, "address must not be empty")
     def equalsIgnoreCase(other: Host): Boolean = other match {
@@ -358,15 +364,12 @@ object Uri {
     def apply(address: String): IPv4Host = apply(address.split('.').map(_.toInt.toByte))
     def apply(byte1: Byte, byte2: Byte, byte3: Byte, byte4: Byte): IPv4Host = apply(Array(byte1, byte2, byte3, byte4))
     def apply(bytes: Array[Byte]): IPv4Host = apply(bytes, bytes.map(_ & 0xFF).mkString("."))
-    def apply(bytes: Array[Byte], address: String): IPv4Host = apply(immutable.Seq(bytes: _*), address)
+
+    private[http] def apply(bytes: Array[Byte], address: String): IPv4Host = IPv4Host(immutable.Seq(bytes: _*), address)
   }
-  case class IPv6Host(bytes: immutable.Seq[Byte], address: String) extends NonEmptyHost {
+  final case class IPv6Host private (bytes: immutable.Seq[Byte], address: String) extends NonEmptyHost {
     require(bytes.length == 16, "bytes array must have length 16")
     require(!address.isEmpty, "address must not be empty")
-    def inspect: String = bytes.grouped(2).map { byte ⇒
-      import CharUtils.{ upperHexDigit ⇒ hexDigit }
-      new String(Array(hexDigit(byte(0) >> 4), hexDigit(byte(0)), hexDigit(byte(1) >> 4), hexDigit(byte(1))))
-    }.mkString("IPv6Host(", ":", s", $address)")
     def equalsIgnoreCase(other: Host): Boolean = other match {
       case IPv6Host(`bytes`, _) ⇒ true
       case _                    ⇒ false
@@ -376,14 +379,17 @@ object Uri {
     def inetAddresses = immutable.Seq(InetAddress.getByAddress(bytes.toArray))
   }
   object IPv6Host {
-    def apply(bytes: String, address: String): IPv6Host = {
+    def apply(bytes: Array[Byte]): IPv6Host = Host(InetAddress.getByAddress(bytes).asInstanceOf[Inet6Address])
+    def apply(bytes: immutable.Seq[Byte]): IPv6Host = apply(bytes.toArray)
+
+    private[http] def apply(bytes: String, address: String): IPv6Host = {
       import CharUtils.{ hexValue ⇒ hex }
       require(bytes.length == 32, "`bytes` must be a 32 character hex string")
       apply(bytes.toCharArray.grouped(2).map(s ⇒ (hex(s(0)) * 16 + hex(s(1))).toByte).toArray, address)
     }
-    def apply(bytes: Array[Byte], address: String): IPv6Host = apply(immutable.Seq(bytes: _*), address)
+    private[http] def apply(bytes: Array[Byte], address: String): IPv6Host = apply(immutable.Seq(bytes: _*), address)
   }
-  case class NamedHost(address: String) extends NonEmptyHost {
+  final case class NamedHost(address: String) extends NonEmptyHost {
     def equalsIgnoreCase(other: Host): Boolean = other match {
       case NamedHost(otherAddress) ⇒ address equalsIgnoreCase otherAddress
       case _                       ⇒ false
@@ -448,7 +454,7 @@ object Uri {
       def startsWith(that: Path): Boolean = that.isEmpty
       def dropChars(count: Int) = this
     }
-    case class Slash(tail: Path) extends SlashOrEmpty {
+    final case class Slash(tail: Path) extends SlashOrEmpty {
       type Head = Char
       def head = '/'
       def startsWithSlash = true
@@ -461,7 +467,7 @@ object Uri {
       def startsWith(that: Path): Boolean = that.isEmpty || that.startsWithSlash && tail.startsWith(that.tail)
       def dropChars(count: Int): Path = if (count < 1) this else tail.dropChars(count - 1)
     }
-    case class Segment(head: String, tail: SlashOrEmpty) extends Path {
+    final case class Segment(head: String, tail: SlashOrEmpty) extends Path {
       if (head.isEmpty) throw new IllegalArgumentException("Path segment must not be empty")
       type Head = String
       def isEmpty = false
@@ -555,12 +561,12 @@ object Uri {
       override def head = throw new NoSuchElementException("head of empty list")
       override def tail = throw new UnsupportedOperationException("tail of empty query")
     }
-    case class Cons(key: String, value: String, override val tail: Query) extends Query {
+    final case class Cons(key: String, value: String, override val tail: Query) extends Query {
       def isRaw = false
       override def isEmpty = false
       override def head = (key, value)
     }
-    case class Raw(value: String) extends Query {
+    final case class Raw(value: String) extends Query {
       def key = ""
       def isRaw = true
       override def isEmpty = false
@@ -589,8 +595,6 @@ object Uri {
         case x                        ⇒ throw new IllegalArgumentException(x + " is not a legal UriParsingMode")
       }
   }
-
-  /////////////////////////////////// PRIVATE //////////////////////////////////////////
 
   // http://tools.ietf.org/html/rfc3986#section-5.2.2
   private[http] def resolve(scheme: String, userinfo: String, host: Host, port: Int, path: Path, query: Query,

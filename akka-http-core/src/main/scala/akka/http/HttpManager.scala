@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http
@@ -13,6 +13,8 @@ import akka.http.client._
 import akka.actor._
 
 /**
+ * INTERNAL API
+ *
  * The gateway actor into the low-level HTTP layer.
  */
 private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor with ActorLogging {
@@ -35,10 +37,10 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
   def receive = withTerminationManagement {
     case request: HttpRequest ⇒
       try {
-        val req = request.withEffectiveUri(securedConnection = false)
-        val connector = connectorForUri(req.uri)
+        val uri = request.effectiveUri(securedConnection = false)
+        val connector = connectorForUri(uri)
         // we never render absolute URIs, also drop any potentially existing fragment
-        connector.forward(req.copy(uri = req.uri.toRelative.withoutFragment))
+        connector.forward(request.copy(uri = uri.toRelative.withoutFragment))
       } catch {
         case NonFatal(e) ⇒
           log.error("Illegal request: {}", e.getMessage)
@@ -61,7 +63,7 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
       sender().tell(Http.HostConnectorInfo(connector, setup), connector)
 
     // we support sending an HttpRequest instance together with a corresponding HostConnectorSetup
-    // in once step (rather than sending the setup first and having to wait for the response)
+    // in one step (rather than sending the setup first and having to wait for the response)
     case (request: HttpRequest, setup: Http.HostConnectorSetup) ⇒
       connectorFor(setup).forward(request)
 
@@ -71,7 +73,7 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
       val commander = sender()
       listeners :+= context.watch {
         context.actorOf(
-          props = Props(new HttpListener(commander, bind, httpSettings)) withDispatcher ListenerDispatcher,
+          props = HttpListener.props(commander, bind, httpSettings),
           name = "listener-" + listenerCounter.next())
       }
 
@@ -115,7 +117,7 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
     normalizedSetup.connectionType match {
       case _: Proxied  ⇒ proxiedConnectorFor(normalizedSetup)
       case Direct      ⇒ hostConnectorFor(normalizedSetup)
-      case AutoProxied ⇒ throw new IllegalStateException
+      case AutoProxied ⇒ throw new IllegalStateException("Unexpected unresolved connectionType `AutoProxied`")
     }
   }
 
@@ -125,7 +127,7 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
     val proxySetup = proxyConnectorSetup(normalizedSetup, proxyConnector)
     def createAndRegisterProxiedConnector = {
       val proxiedConnector = context.actorOf(
-        props = Props(new ProxiedHostConnector(normalizedSetup.host, normalizedSetup.port, proxyConnector)),
+        props = ProxiedHostConnector.props(normalizedSetup.host, normalizedSetup.port, proxyConnector),
         name = "proxy-connector-" + proxyConnectorCounter.next())
       connectors = connectors.updated(proxySetup, proxiedConnector)
       context.watch(proxiedConnector)
@@ -135,9 +137,9 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
 
   def hostConnectorFor(normalizedSetup: Http.HostConnectorSetup): ActorRef = {
     def createAndRegisterHostConnector = {
-      val settingsGroup = settingsGroupFor(normalizedSetup.settings.get.connectionSettings) // must not be moved into the Props(...)!
+      val settingsGroup = settingsGroupFor(normalizedSetup.settings.get.connectionSettings)
       val hostConnector = context.actorOf(
-        props = Props(new HttpHostConnector(normalizedSetup, settingsGroup)) withDispatcher HostConnectorDispatcher,
+        props = HttpHostConnector.props(normalizedSetup, settingsGroup, HostConnectorDispatcher),
         name = "host-connector-" + hostConnectorCounter.next())
       connectors = connectors.updated(normalizedSetup, hostConnector)
       context.watch(hostConnector)
@@ -148,7 +150,7 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
   def settingsGroupFor(settings: ClientConnectionSettings): ActorRef = {
     def createAndRegisterSettingsGroup = {
       val group = context.actorOf(
-        props = Props(new HttpClientSettingsGroup(settings, httpSettings)) withDispatcher SettingsGroupDispatcher,
+        props = HttpClientSettingsGroup.props(settings, httpSettings),
         name = "group-" + groupCounter.next())
       settingsGroups = settingsGroups.updated(settings, group)
       context.watch(group)
@@ -157,6 +159,8 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
   }
 
   /////////////////// ORDERLY SHUTDOWN PROCESS //////////////////////
+
+  // TODO: add configurable timeouts for these shutdown steps
 
   def shutdownSettingsGroups(cmd: Http.CloseCommand, commanders: Set[ActorRef]): Unit =
     if (!settingsGroups.isEmpty) {
@@ -172,7 +176,6 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
       case Terminated(_) ⇒
         if (settingsGroups.isEmpty) // if we are done with the outgoing connections, close all host connectors
           shutdownHostConnectors(cmd, commanders)
-        else context.become(closingSettingsGroups(cmd, commanders))
     }
 
   def shutdownHostConnectors(cmd: Http.CloseCommand, commanders: Set[ActorRef]): Unit =
@@ -189,7 +192,6 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
       case Terminated(_) ⇒
         if (connectors.isEmpty) // if we are done with the host connectors, close all listeners
           shutdownListeners(cmd, commanders)
-        else context.become(closingConnectors(cmd, commanders))
     }
 
   def shutdownListeners(cmd: Http.CloseCommand, commanders: Set[ActorRef]): Unit = {
@@ -208,11 +210,14 @@ private[http] class HttpManager(httpSettings: HttpExt#Settings) extends Actor wi
           // if we are done with the listeners we have completed the full orderly shutdown
           commanders.foreach(_ ! cmd.event)
           context.become(receive)
-        } else context.become(unbinding(cmd, commanders))
+        }
     }
 }
 
 private[http] object HttpManager {
+  def props(httpSettings: HttpExt#Settings) =
+    Props(classOf[HttpManager], httpSettings) withDispatcher httpSettings.ManagerDispatcher
+
   private class ProxyConnectorSetup(host: String, port: Int, sslEncryption: Boolean,
                                     options: immutable.Traversable[Inet.SocketOption],
                                     settings: Option[HostConnectorSettings], connectionType: Http.ClientConnectionType,

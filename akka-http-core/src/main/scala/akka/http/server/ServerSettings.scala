@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.server
@@ -11,8 +11,9 @@ import akka.http.parsing.ParserSettings
 import akka.http.model.parser.HeaderParser
 import akka.http.model.headers.{ Server, Host, RawHeader }
 import akka.http.util._
+import akka.ConfigurationException
 
-case class ServerSettings(
+final case class ServerSettings(
   serverHeader: Option[Server],
   sslEncryption: Boolean,
   pipeliningLimit: Int,
@@ -22,7 +23,6 @@ case class ServerSettings(
   remoteAddressHeader: Boolean,
   rawRequestUriHeader: Boolean,
   transparentHeadRequests: Boolean,
-  chunklessStreaming: Boolean,
   verboseErrorMessages: Boolean,
   responseHeaderSizeHint: Int,
   maxEncryptionChunkSize: Int,
@@ -36,12 +36,12 @@ case class ServerSettings(
 }
 
 object ServerSettings extends SettingsCompanion[ServerSettings]("akka.http.server") {
-  case class Timeouts(idleTimeout: Duration,
-                      requestTimeout: Duration,
-                      timeoutTimeout: Duration,
-                      bindTimeout: Duration,
-                      unbindTimeout: Duration,
-                      parseErrorAbortTimeout: Duration) {
+  final case class Timeouts(idleTimeout: Duration,
+                            requestTimeout: Duration,
+                            timeoutTimeout: Duration,
+                            bindTimeout: Duration,
+                            unbindTimeout: Duration,
+                            parseErrorAbortTimeout: Duration) {
     require(idleTimeout >= Duration.Zero, "idleTimeout must be > 0 or 'infinite'")
     require(requestTimeout >= Duration.Zero, "requestTimeout must be > 0 or 'infinite'")
     require(timeoutTimeout >= Duration.Zero, "timeoutTimeout must be > 0 or 'infinite'")
@@ -59,25 +59,24 @@ object ServerSettings extends SettingsCompanion[ServerSettings]("akka.http.serve
     c getBoolean "ssl-encryption",
     c.getString("pipelining-limit") match { case "disabled" ⇒ 0; case _ ⇒ c getInt "pipelining-limit" },
     Timeouts(
-      c getDuration "idle-timeout",
-      c getDuration "request-timeout",
-      c getDuration "timeout-timeout",
-      c getDuration "bind-timeout",
-      c getDuration "unbind-timeout",
-      c getDuration "parse-error-abort-timeout"),
+      c getPotentiallyInfiniteDuration "idle-timeout",
+      c getPotentiallyInfiniteDuration "request-timeout",
+      c getPotentiallyInfiniteDuration "timeout-timeout",
+      c getPotentiallyInfiniteDuration "bind-timeout",
+      c getPotentiallyInfiniteDuration "unbind-timeout",
+      c getPotentiallyInfiniteDuration "parse-error-abort-timeout"),
     c getString "timeout-handler",
-    c getDuration "reaping-cycle",
+    c getPotentiallyInfiniteDuration "reaping-cycle",
     c getBoolean "remote-address-header",
     c getBoolean "raw-request-uri-header",
     c getBoolean "transparent-head-requests",
-    c getBoolean "chunkless-streaming",
     c getBoolean "verbose-error-messages",
     c getIntBytes "response-header-size-hint",
     c getIntBytes "max-encryption-chunk-size",
     defaultHostHeader =
       HeaderParser.parseHeader(RawHeader("Host", c getString "default-host-header")) match {
         case Right(x: Host) ⇒ x
-        case Left(error)    ⇒ sys.error(error.withSummary("Configured `default-host-header` is illegal").formatPretty)
+        case Left(error)    ⇒ throw new ConfigurationException(error.withSummary("Configured `default-host-header` is illegal").formatPretty)
         case Right(_)       ⇒ throw new IllegalStateException
       },
     ParserSettings fromSubConfig c.getConfig("parsing"))

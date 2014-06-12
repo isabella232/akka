@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -38,16 +38,16 @@ object StatusCodes extends ObjectRegistry[Int, StatusCode] {
   }
 
   // format: OFF
-  case class Informational private[StatusCodes] (intValue: Int)(val reason: String,
+  final case class Informational private[StatusCodes] (intValue: Int)(val reason: String,
                                                                 val defaultMessage: String) extends HttpSuccess { def allowsEntity = false }
-  case class Success       private[StatusCodes] (intValue: Int)(val reason: String, val defaultMessage: String,
+  final case class Success       private[StatusCodes] (intValue: Int)(val reason: String, val defaultMessage: String,
                                                                 val allowsEntity: Boolean = true) extends HttpSuccess
-  case class Redirection   private[StatusCodes] (intValue: Int)(val reason: String, val defaultMessage: String,
+  final case class Redirection   private[StatusCodes] (intValue: Int)(val reason: String, val defaultMessage: String,
                                                                 val htmlTemplate: String, val allowsEntity: Boolean = true) extends HttpSuccess
-  case class ClientError   private[StatusCodes] (intValue: Int)(val reason: String, val defaultMessage: String) extends HttpFailure
-  case class ServerError   private[StatusCodes] (intValue: Int)(val reason: String, val defaultMessage: String) extends HttpFailure
+  final case class ClientError   private[StatusCodes] (intValue: Int)(val reason: String, val defaultMessage: String) extends HttpFailure
+  final case class ServerError   private[StatusCodes] (intValue: Int)(val reason: String, val defaultMessage: String) extends HttpFailure
 
-  case class CustomStatusCode private[StatusCodes] (intValue: Int)(
+  final case class CustomStatusCode private[StatusCodes] (intValue: Int)(
     val reason: String,
     val defaultMessage: String,
     val isSuccess: Boolean,
@@ -77,7 +77,7 @@ object StatusCodes extends ObjectRegistry[Int, StatusCode] {
     else if (300 to 399 contains intValue) Redirection(intValue)(reason, defaultMessage, defaultMessage)
     else if (400 to 499 contains intValue) ClientError(intValue)(reason, defaultMessage)
     else if (500 to 599 contains intValue) ServerError(intValue)(reason, defaultMessage)
-    else sys.error("Can't register status code in non-standard region without additional information")
+    else throw new IllegalArgumentException("Can't register status code in non-standard region")
   }
 
   import Informational.{apply => i}

@@ -8,15 +8,17 @@ import scala.concurrent.{ Future, Promise }
 import scala.util.Try
 import org.reactivestreams.api.Consumer
 import org.reactivestreams.api.Producer
-import Ast.{ AstNode, Recover, Transform }
-import akka.stream.FlowMaterializer
+import Ast.{ AstNode, Transform }
+import akka.stream.{ OverflowStrategy, FlowMaterializer, Transformer }
+import akka.stream.{ FlattenStrategy, FlowMaterializer, Transformer }
 import akka.stream.scaladsl.Flow
 import scala.util.Success
 import scala.util.Failure
-import akka.stream.Transformer
-import akka.stream.RecoveryTransformer
 import org.reactivestreams.api.Consumer
 import akka.stream.scaladsl.Duct
+import scala.concurrent.duration.FiniteDuration
+import akka.stream.TimerTransformer
+import akka.util.Collections.EmptyImmutableSeq
 
 /**
  * INTERNAL API
@@ -30,30 +32,38 @@ private[akka] case class FlowImpl[I, O](producerNode: Ast.ProducerNode[I], ops: 
   // Storing ops in reverse order
   override protected def andThen[U](op: Ast.AstNode): Flow[U] = this.copy(ops = op :: ops)
 
+  override def append[U](duct: Duct[_ >: O, U]): Flow[U] =
+    copy(ops = duct.ops ++: ops)
+
+  override def appendJava[U](duct: akka.stream.javadsl.Duct[_ >: O, U]): Flow[U] =
+    copy(ops = duct.ops ++: ops)
+
   override def toFuture(materializer: FlowMaterializer): Future[O] = {
     val p = Promise[O]()
-    transformRecover(new RecoveryTransformer[O, Unit] {
+    transform(new Transformer[O, Unit] {
       var done = false
       override def onNext(in: O) = { p success in; done = true; Nil }
-      override def onErrorRecover(e: Throwable) = { p failure e; Nil }
+      override def onError(e: Throwable) = { p failure e }
       override def isComplete = done
-      override def onComplete() = { p.tryFailure(new NoSuchElementException("empty stream")); Nil }
+      override def onTermination(e: Option[Throwable]) = { p.tryFailure(new NoSuchElementException("empty stream")); Nil }
     }).consume(materializer)
     p.future
   }
 
-  override def consume(materializer: FlowMaterializer): Unit = materializer.consume(producerNode, ops)
+  override def consume(materializer: FlowMaterializer): Unit =
+    produceTo(materializer, new BlackholeConsumer(materializer.settings.maximumInputBufferSize))
 
   override def onComplete(materializer: FlowMaterializer)(callback: Try[Unit] ⇒ Unit): Unit =
-    transformRecover(new RecoveryTransformer[O, Unit] {
-      var ok = true
+    transform(new Transformer[O, Unit] {
       override def onNext(in: O) = Nil
-      override def onErrorRecover(e: Throwable) = {
+      override def onError(e: Throwable) = {
         callback(Failure(e))
-        ok = false
+        throw e
+      }
+      override def onTermination(e: Option[Throwable]) = {
+        callback(Builder.SuccessUnit)
         Nil
       }
-      override def onComplete() = { if (ok) callback(Builder.SuccessUnit); Nil }
     }).consume(materializer)
 
   override def toProducer(materializer: FlowMaterializer): Producer[O] = materializer.toProducer(producerNode, ops)
@@ -74,22 +84,29 @@ private[akka] case class DuctImpl[In, Out](ops: List[Ast.AstNode]) extends Duct[
   // Storing ops in reverse order
   override protected def andThen[U](op: Ast.AstNode): Duct[In, U] = this.copy(ops = op :: ops)
 
+  override def append[U](duct: Duct[_ >: In, U]): Duct[In, U] =
+    copy(ops = duct.ops ++: ops)
+
+  override def appendJava[U](duct: akka.stream.javadsl.Duct[_ >: In, U]): Duct[In, U] =
+    copy(ops = duct.ops ++: ops)
+
   override def produceTo(materializer: FlowMaterializer, consumer: Consumer[Out]): Consumer[In] =
     materializer.ductProduceTo(consumer, ops)
 
   override def consume(materializer: FlowMaterializer): Consumer[In] =
-    materializer.ductConsume(ops)
+    produceTo(materializer, new BlackholeConsumer(materializer.settings.maximumInputBufferSize))
 
   override def onComplete(materializer: FlowMaterializer)(callback: Try[Unit] ⇒ Unit): Consumer[In] =
-    transformRecover(new RecoveryTransformer[Out, Unit] {
-      var ok = true
+    transform(new Transformer[Out, Unit] {
       override def onNext(in: Out) = Nil
-      override def onErrorRecover(e: Throwable) = {
+      override def onError(e: Throwable) = {
         callback(Failure(e))
-        ok = false
+        throw e
+      }
+      override def onTermination(e: Option[Throwable]) = {
+        callback(Builder.SuccessUnit)
         Nil
       }
-      override def onComplete() = { if (ok) callback(Builder.SuccessUnit); Nil }
     }).consume(materializer)
 
   override def build(materializer: FlowMaterializer): (Consumer[In], Producer[Out]) =
@@ -104,6 +121,10 @@ private[akka] case class DuctImpl[In, Out](ops: List[Ast.AstNode]) extends Duct[
 private[akka] object Builder {
   val SuccessUnit = Success[Unit](())
   private val ListOfUnit = List(())
+
+  private case object TakeWithinTimerKey
+  private case object DropWithinTimerKey
+  private case object GroupedWithinTimerKey
 
   private val takeCompletedTransformer: Transformer[Any, Any] = new Transformer[Any, Any] {
     override def onNext(elem: Any) = Nil
@@ -134,6 +155,9 @@ private[akka] trait Builder[Out] {
       override def name = "map"
     })
 
+  def mapFuture[U](f: Out ⇒ Future[U]): Thing[U] =
+    andThen(MapFuture(f.asInstanceOf[Any ⇒ Future[Any]]))
+
   def filter(p: Out ⇒ Boolean): Thing[Out] =
     transform(new Transformer[Out, Out] {
       override def onNext(in: Out) = if (p(in)) List(in) else Nil
@@ -148,18 +172,18 @@ private[akka] trait Builder[Out] {
   def foreach(c: Out ⇒ Unit): Thing[Unit] =
     transform(new Transformer[Out, Unit] {
       override def onNext(in: Out) = { c(in); Nil }
-      override def onComplete() = ListOfUnit
+      override def onTermination(e: Option[Throwable]) = ListOfUnit
       override def name = "foreach"
     })
 
   def fold[U](zero: U)(f: (U, Out) ⇒ U): Thing[U] =
     transform(new FoldTransformer[U](zero, f))
 
-  // Without this class compiler complains about 
+  // Without this class compiler complains about
   // "Parameter type in structural refinement may not refer to an abstract type defined outside that refinement"
   class FoldTransformer[S](var state: S, f: (S, Out) ⇒ S) extends Transformer[Out, S] {
     override def onNext(in: Out): immutable.Seq[S] = { state = f(state, in); Nil }
-    override def onComplete(): immutable.Seq[S] = List(state)
+    override def onTermination(e: Option[Throwable]): immutable.Seq[S] = List(state)
     override def name = "fold"
   }
 
@@ -181,6 +205,23 @@ private[akka] trait Builder[Out] {
       override def name = "drop"
     })
 
+  def dropWithin(d: FiniteDuration): Thing[Out] =
+    transform(new TimerTransformer[Out, Out] {
+      scheduleOnce(DropWithinTimerKey, d)
+
+      var delegate: Transformer[Out, Out] =
+        new Transformer[Out, Out] {
+          override def onNext(in: Out) = Nil
+        }
+
+      override def onNext(in: Out) = delegate.onNext(in)
+      override def onTimer(timerKey: Any) = {
+        delegate = identityTransformer.asInstanceOf[Transformer[Out, Out]]
+        Nil
+      }
+      override def name = "dropWithin"
+    })
+
   def take(n: Int): Thing[Out] =
     transform(new Transformer[Out, Out] {
       var delegate: Transformer[Out, Out] =
@@ -200,6 +241,23 @@ private[akka] trait Builder[Out] {
       override def name = "take"
     })
 
+  def takeWithin(d: FiniteDuration): Thing[Out] =
+    transform(new TimerTransformer[Out, Out] {
+      scheduleOnce(TakeWithinTimerKey, d)
+
+      var delegate: Transformer[Out, Out] = identityTransformer.asInstanceOf[Transformer[Out, Out]]
+
+      override def onNext(in: Out) = delegate.onNext(in)
+      override def isComplete = delegate.isComplete
+      override def onTimer(timerKey: Any) = {
+        delegate = takeCompletedTransformer.asInstanceOf[Transformer[Out, Out]]
+        Nil
+      }
+      override def name = "takeWithin"
+    })
+
+  def prefixAndTail(n: Int): Thing[(immutable.Seq[Out], Producer[Out])] = andThen(PrefixAndTail(n))
+
   def grouped(n: Int): Thing[immutable.Seq[Out]] =
     transform(new Transformer[Out, immutable.Seq[Out]] {
       var buf: Vector[Out] = Vector.empty
@@ -212,8 +270,33 @@ private[akka] trait Builder[Out] {
         } else
           Nil
       }
-      override def onComplete() = if (buf.isEmpty) Nil else List(buf)
+      override def onTermination(e: Option[Throwable]) = if (buf.isEmpty) Nil else List(buf)
       override def name = "grouped"
+    })
+
+  def groupedWithin(n: Int, d: FiniteDuration): Thing[immutable.Seq[Out]] =
+    transform(new TimerTransformer[Out, immutable.Seq[Out]] {
+      schedulePeriodically(GroupedWithinTimerKey, d)
+      var buf: Vector[Out] = Vector.empty
+
+      override def onNext(in: Out) = {
+        buf :+= in
+        if (buf.size == n) {
+          // start new time window
+          schedulePeriodically(GroupedWithinTimerKey, d)
+          emitGroup()
+        } else Nil
+      }
+      override def onTermination(e: Option[Throwable]) = if (buf.isEmpty) Nil else List(buf)
+      override def onTimer(timerKey: Any) = emitGroup()
+      private def emitGroup(): immutable.Seq[immutable.Seq[Out]] =
+        if (buf.isEmpty) EmptyImmutableSeq
+        else {
+          val group = buf
+          buf = Vector.empty
+          List(group)
+        }
+      override def name = "groupedWithin"
     })
 
   def mapConcat[U](f: Out ⇒ immutable.Seq[U]): Thing[U] =
@@ -224,9 +307,6 @@ private[akka] trait Builder[Out] {
 
   def transform[U](transformer: Transformer[Out, U]): Thing[U] =
     andThen(Transform(transformer.asInstanceOf[Transformer[Any, Any]]))
-
-  def transformRecover[U](recoveryTransformer: RecoveryTransformer[Out, U]): Thing[U] =
-    andThen(Recover(recoveryTransformer.asInstanceOf[RecoveryTransformer[Any, Any]]))
 
   def zip[O2](other: Producer[O2]): Thing[(Out, O2)] = andThen(Zip(other.asInstanceOf[Producer[Any]]))
 
@@ -239,6 +319,22 @@ private[akka] trait Builder[Out] {
   def groupBy[K](f: (Out) ⇒ K): Thing[(K, Producer[Out])] = andThen(GroupBy(f.asInstanceOf[Any ⇒ Any]))
 
   def tee(other: Consumer[_ >: Out]): Thing[Out] = andThen(Tee(other.asInstanceOf[Consumer[Any]]))
+
+  def conflate[S](seed: Out ⇒ S, aggregate: (S, Out) ⇒ S): Thing[S] =
+    andThen(Conflate(seed.asInstanceOf[Any ⇒ Any], aggregate.asInstanceOf[(Any, Any) ⇒ Any]))
+
+  def expand[S, U](seed: Out ⇒ S, extrapolate: S ⇒ (U, S)): Thing[U] =
+    andThen(Expand(seed.asInstanceOf[Any ⇒ Any], extrapolate.asInstanceOf[Any ⇒ (Any, Any)]))
+
+  def buffer(size: Int, overflowStrategy: OverflowStrategy): Thing[Out] = {
+    require(size > 0, s"Buffer size must be larger than zero but was [$size]")
+    andThen(Buffer(size, overflowStrategy))
+  }
+
+  def flatten[U](strategy: FlattenStrategy[Out, U]): Thing[U] = strategy match {
+    case _: FlattenStrategy.Concat[Out] ⇒ andThen(ConcatAll)
+    case _                              ⇒ throw new IllegalArgumentException(s"Unsupported flattening strategy [${strategy.getClass.getSimpleName}]")
+  }
 
 }
 

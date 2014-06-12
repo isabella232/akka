@@ -1,15 +1,15 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
 package parser
 
-import org.parboiled2.Parser
+import akka.parboiled2.Parser
 
 private[parser] trait AcceptCharsetHeader { this: Parser with CommonRules with CommonActions ⇒
 
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-5.3.3
+  // http://tools.ietf.org/html/rfc7231#section-5.3.3
   def `accept-charset` = rule {
     oneOrMore(`charset-range-decl`).separatedBy(listSep) ~ EOI ~> (headers.`Accept-Charset`(_))
   }

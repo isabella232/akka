@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.parsing
@@ -9,7 +9,7 @@ import scala.collection.JavaConverters._
 import akka.http.model.Uri
 import akka.http.util._
 
-case class ParserSettings(
+final case class ParserSettings(
   maxUriLength: Int,
   maxResponseReasonLength: Int,
   maxHeaderNameLength: Int,

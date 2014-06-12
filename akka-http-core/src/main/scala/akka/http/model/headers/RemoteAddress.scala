@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -26,7 +26,7 @@ object RemoteAddress {
     def isUnknown = true
   }
 
-  case class IP(ip: InetAddress) extends RemoteAddress {
+  final case class IP(ip: InetAddress) extends RemoteAddress {
     def toOption: Option[InetAddress] = Some(ip)
     def render[R <: Rendering](r: R): r.type = r ~~ ip.getHostAddress
 

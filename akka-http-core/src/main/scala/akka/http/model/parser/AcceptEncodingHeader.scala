@@ -1,16 +1,16 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
 package parser
 
-import org.parboiled2.Parser
+import akka.parboiled2.Parser
 import headers._
 
 private[parser] trait AcceptEncodingHeader { this: Parser with CommonRules with CommonActions ⇒
 
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-5.3.4
+  // http://tools.ietf.org/html/rfc7231#section-5.3.4
   def `accept-encoding` = rule {
     zeroOrMore(`encoding-range-decl`).separatedBy(listSep) ~ EOI ~> (`Accept-Encoding`(_: _*))
   }

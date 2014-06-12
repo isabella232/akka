@@ -1,18 +1,18 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
 package headers
 
-import org.parboiled2.CharPredicate
+import akka.parboiled2.CharPredicate
 import akka.http.util._
 import akka.japi.{ Option ⇒ JOption }
 
 import akka.http.model.japi.JavaMapping.Implicits._
 
 // see http://tools.ietf.org/html/rfc6265
-case class HttpCookie(
+final case class HttpCookie(
   name: String,
   content: String,
   expires: Option[DateTime] = None,

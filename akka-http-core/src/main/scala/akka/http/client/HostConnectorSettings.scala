@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.client
@@ -8,7 +8,7 @@ import com.typesafe.config.Config
 import scala.concurrent.duration.Duration
 import akka.http.util._
 
-case class HostConnectorSettings(
+final case class HostConnectorSettings(
   maxConnections: Int,
   maxRetries: Int,
   maxRedirects: Int,
@@ -28,6 +28,6 @@ object HostConnectorSettings extends SettingsCompanion[HostConnectorSettings]("a
     c getInt "host-connector.max-retries",
     c getInt "host-connector.max-redirects",
     c getBoolean "host-connector.pipelining",
-    c getDuration "host-connector.idle-timeout",
+    c getPotentiallyInfiniteDuration "host-connector.idle-timeout",
     ClientConnectionSettings fromSubConfig c.getConfig("client"))
 }

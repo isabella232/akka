@@ -1,11 +1,11 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model.parser
 
 import java.nio.charset.Charset
-import org.parboiled2._
+import akka.parboiled2._
 import akka.http.model.Uri
 import akka.http.model.headers.HttpOrigin
 import Uri._
@@ -187,12 +187,12 @@ private[http] class UriParser(val input: ParserInput,
 
   //////////////////////////// ADDITIONAL HTTP-SPECIFIC RULES //////////////////////////
 
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-22#section-2.7
+  // http://tools.ietf.org/html/rfc7230#section-2.7
   def `absolute-path` = rule {
     clearSB() ~ oneOrMore('/' ~ appendSB('/') ~ segment) ~ savePath()
   }
 
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-22#section-5.3
+  // http://tools.ietf.org/html/rfc7230#section-5.3
   def `request-target` = rule(
     `absolute-path` ~ optional('?' ~ query) // origin-form
       | `absolute-URI` // absolute-form

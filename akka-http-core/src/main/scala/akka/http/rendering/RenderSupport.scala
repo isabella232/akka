@@ -1,14 +1,17 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.rendering
 
-import org.parboiled2.CharUtils
+import akka.parboiled2.CharUtils
 import akka.http.model.{ HttpEntity, HttpHeader }
 import akka.http.util._
 import akka.util.ByteString
 
+/**
+ * INTERNAL API
+ */
 private object RenderSupport {
   val DefaultStatusLine = "HTTP/1.1 200 OK\r\n".getAsciiBytes
   val StatusLineStart = "HTTP/1.1 ".getAsciiBytes

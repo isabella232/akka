@@ -19,7 +19,11 @@ object HeaderCodeGeneration {
       else s"\n$importStats\n"
     }
 
-    s"""package akka.http.model.japi.headers;
+    s"""/**
+       | * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+       | */
+       |
+       |package akka.http.model.japi.headers;
        |$imports
        |/**
        | *  Model for the `$name` header.${documentation.map(_.split("\n").map("\n *  " + _).mkString).getOrElse("")}${specSource.map("\n *  Specification: " + _).getOrElse("")}

@@ -1,3 +1,7 @@
+/**
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ */
+
 package akka.http.model.japi;
 
 import akka.http.model.HttpEntity$;
@@ -33,7 +37,7 @@ public abstract class HttpEntity {
     /**
      * The empty entity.
      */
-    public static final HttpEntityRegular Empty = HttpEntity$.MODULE$.Empty();
+    public static final HttpEntityStrict Empty = HttpEntity$.MODULE$.Empty();
 
     /**
      * Returns if this entity is known to be empty. Open-ended entity types like
@@ -66,26 +70,26 @@ public abstract class HttpEntity {
      */
     public abstract Producer<ByteString> getDataBytes(FlowMaterializer materializer);
 
-    public static HttpEntityDefault create(String string) {
+    public static HttpEntityStrict create(String string) {
         return HttpEntity$.MODULE$.apply(string);
     }
-    public static HttpEntityDefault create(byte[] bytes) {
+    public static HttpEntityStrict create(byte[] bytes) {
         return HttpEntity$.MODULE$.apply(bytes);
     }
-    public static HttpEntityDefault create(ByteString bytes) {
+    public static HttpEntityStrict create(ByteString bytes) {
         return HttpEntity$.MODULE$.apply(bytes);
     }
-    public static HttpEntityDefault create(ContentType contentType, String string) {
+    public static HttpEntityStrict create(ContentType contentType, String string) {
         return HttpEntity$.MODULE$.apply((akka.http.model.ContentType) contentType, string);
     }
-    public static HttpEntityDefault create(ContentType contentType, byte[] bytes) {
+    public static HttpEntityStrict create(ContentType contentType, byte[] bytes) {
         return HttpEntity$.MODULE$.apply((akka.http.model.ContentType) contentType, bytes);
     }
-    public static HttpEntityDefault create(ContentType contentType, ByteString bytes) {
+    public static HttpEntityStrict create(ContentType contentType, ByteString bytes) {
         return HttpEntity$.MODULE$.apply((akka.http.model.ContentType) contentType, bytes);
     }
-    public static HttpEntityDefault create(ContentType contentType, File file) {
-        return HttpEntity$.MODULE$.apply((akka.http.model.ContentType) contentType, file);
+    public static HttpEntityRegular create(ContentType contentType, File file) {
+        return (HttpEntityRegular) HttpEntity$.MODULE$.apply((akka.http.model.ContentType) contentType, file);
     }
     public static HttpEntityDefault create(ContentType contentType, long contentLength, Producer<ByteString> data) {
         return new akka.http.model.HttpEntity.Default((akka.http.model.ContentType) contentType, contentLength, data);
@@ -97,5 +101,10 @@ public abstract class HttpEntity {
         return new akka.http.model.HttpEntity.Chunked(
                 (akka.http.model.ContentType) contentType,
                 Util.<ChunkStreamPart, akka.http.model.HttpEntity.ChunkStreamPart>upcastProducer(chunks));
+    }
+    public static HttpEntityChunked createChunked(ContentType contentType, Producer<ByteString> data, FlowMaterializer materializer) {
+        return akka.http.model.HttpEntity.Chunked$.MODULE$.apply(
+                (akka.http.model.ContentType) contentType,
+                data, materializer);
     }
 }

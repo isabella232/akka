@@ -17,7 +17,8 @@ abstract class TwoStreamsSetup extends AkkaSpec {
     initialInputBufferSize = 2,
     maximumInputBufferSize = 2,
     initialFanOutBufferSize = 2,
-    maxFanOutBufferSize = 2))
+    maxFanOutBufferSize = 2,
+    dispatcher = "akka.test.stream-dispatcher"))
 
   case class TE(message: String) extends RuntimeException(message) with NoStackTrace
 
@@ -39,58 +40,30 @@ abstract class TwoStreamsSetup extends AkkaSpec {
     override def getPublisher: Publisher[T] = pub
   }
 
-  def failedPublisher[T]: Publisher[T] = new Publisher[T] {
-    override def subscribe(subscriber: Subscriber[T]): Unit = {
-      subscriber.onError(TestException)
-    }
-  }
+  def failedPublisher[T]: Publisher[T] = StreamTestKit.errorProducer[T](TestException).getPublisher
 
-  def completedPublisher[T]: Publisher[T] = new Publisher[T] {
-    override def subscribe(subscriber: Subscriber[T]): Unit = {
-      subscriber.onComplete()
-    }
-  }
+  def completedPublisher[T]: Publisher[T] = StreamTestKit.emptyProducer[T].getPublisher
 
   def nonemptyPublisher[T](elems: Iterator[T]): Publisher[T] = Flow(elems).toProducer(materializer).getPublisher
 
-  def soonToFailPublisher[T]: Publisher[T] = new Publisher[T] {
-    override def subscribe(subscriber: Subscriber[T]): Unit = subscriber.onSubscribe(FailedSubscription(subscriber))
-  }
+  def soonToFailPublisher[T]: Publisher[T] = StreamTestKit.lazyErrorProducer[T](TestException).getPublisher
 
-  def soonToCompletePublisher[T]: Publisher[T] = new Publisher[T] {
-    override def subscribe(subscriber: Subscriber[T]): Unit = subscriber.onSubscribe(CompletedSubscription(subscriber))
-  }
-
-  case class FailedSubscription(subscriber: Subscriber[_]) extends Subscription {
-    override def requestMore(elements: Int): Unit = subscriber.onError(TestException)
-    override def cancel(): Unit = ()
-  }
-
-  case class CompletedSubscription(subscriber: Subscriber[_]) extends Subscription {
-    override def requestMore(elements: Int): Unit = subscriber.onComplete()
-    override def cancel(): Unit = ()
-  }
+  def soonToCompletePublisher[T]: Publisher[T] = StreamTestKit.lazyEmptyProducer[T].getPublisher
 
   def commonTests() = {
     "work with two immediately completed producers" in {
       val consumer = setup(completedPublisher, completedPublisher)
-      val subscription = consumer.expectSubscription()
-      subscription.requestMore(1)
-      consumer.expectComplete()
+      consumer.expectCompletedOrSubscriptionFollowedByComplete()
     }
 
     "work with two delayed completed producers" in {
       val consumer = setup(soonToCompletePublisher, soonToCompletePublisher)
-      val subscription = consumer.expectSubscription()
-      subscription.requestMore(1)
-      consumer.expectComplete()
+      consumer.expectCompletedOrSubscriptionFollowedByComplete()
     }
 
     "work with one immediately completed and one delayed completed producer" in {
       val consumer = setup(completedPublisher, soonToCompletePublisher)
-      val subscription = consumer.expectSubscription()
-      subscription.requestMore(1)
-      consumer.expectComplete()
+      consumer.expectCompletedOrSubscriptionFollowedByComplete()
     }
 
     "work with two immediately failed producers" in {

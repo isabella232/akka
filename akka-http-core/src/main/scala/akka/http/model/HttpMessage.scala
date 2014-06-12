@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -9,6 +9,9 @@ import scala.annotation.tailrec
 import scala.reflect.{ classTag, ClassTag }
 import HttpCharsets._
 import headers._
+import scala.concurrent.duration.FiniteDuration
+import akka.stream.FlowMaterializer
+import scala.concurrent.{ ExecutionContext, Future }
 import akka.util.ByteString
 
 /**
@@ -42,6 +45,10 @@ sealed trait HttpMessage extends japi.HttpMessage {
   /** Returns a copy of this message with the entity set to the given one. */
   def withEntity(entity: japi.HttpEntity): Self
 
+  /** Returns a sharable and serializable copy of this message with a strict entity. */
+  def toStrict(timeout: FiniteDuration, materializer: FlowMaterializer)(implicit ec: ExecutionContext): Future[Self] =
+    entity.toStrict(timeout, materializer).map(this.withEntity)
+
   /** Returns a copy of this message with the entity and headers set to the given ones. */
   def withHeadersAndEntity(headers: immutable.Seq[HttpHeader], entity: HttpEntity): Self
 
@@ -67,9 +74,9 @@ sealed trait HttpMessage extends japi.HttpMessage {
   }
 
   /**
-   * Returns true if this message is an
-   * - HttpRequest and the client does not want to reuse the connection after the response for this request has been received
-   * - HttpResponse and the server will close the connection after this response
+   * Returns true if this message is an:
+   *  - HttpRequest and the client does not want to reuse the connection after the response for this request has been received
+   *  - HttpResponse and the server will close the connection after this response
    */
   def connectionCloseExpected: Boolean = HttpMessage.connectionCloseExpected(protocol, header[Connection])
 
@@ -112,12 +119,13 @@ object HttpMessage {
 /**
  * The immutable model HTTP request model.
  */
-case class HttpRequest(method: HttpMethod = HttpMethods.GET,
-                       uri: Uri = Uri./,
-                       headers: immutable.Seq[HttpHeader] = Nil,
-                       entity: HttpEntity.Regular = HttpEntity.Empty,
-                       protocol: HttpProtocol = HttpProtocols.`HTTP/1.1`) extends japi.HttpRequest with HttpMessage {
+final case class HttpRequest(method: HttpMethod = HttpMethods.GET,
+                             uri: Uri = Uri./,
+                             headers: immutable.Seq[HttpHeader] = Nil,
+                             entity: HttpEntity.Regular = HttpEntity.Empty,
+                             protocol: HttpProtocol = HttpProtocols.`HTTP/1.1`) extends japi.HttpRequest with HttpMessage {
   require(!uri.isEmpty, "An HttpRequest must not have an empty Uri")
+  require(entity.isKnownEmpty || method.isEntityAccepted)
 
   type Self = HttpRequest
 
@@ -126,23 +134,24 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
 
   /**
    * Returns a copy of this requests with the URI resolved according to the logic defined at
-   * http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-5.5
+   * http://tools.ietf.org/html/rfc7230#section-5.5
    */
-  def withEffectiveUri(securedConnection: Boolean, defaultHostHeader: Host = Host.empty): HttpRequest = {
+  def effectiveUri(securedConnection: Boolean, defaultHostHeader: Host = Host.empty): Uri = {
     val hostHeader = header[Host]
     if (uri.isRelative) {
       def fail(detail: String) =
-        sys.error(s"Cannot establish effective request URI of $this, request has a relative URI and $detail")
+        throw new IllegalUriException(s"Cannot establish effective request URI of $this, request has a relative URI and $detail")
       val Host(host, port) = hostHeader match {
         case None                 ⇒ if (defaultHostHeader.isEmpty) fail("is missing a `Host` header") else defaultHostHeader
         case Some(x) if x.isEmpty ⇒ if (defaultHostHeader.isEmpty) fail("an empty `Host` header") else defaultHostHeader
         case Some(x)              ⇒ x
       }
-      copy(uri = uri.toEffectiveHttpRequestUri(host, port, securedConnection))
-    } else // http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-22#section-5.4
+      uri.toEffectiveHttpRequestUri(host, port, securedConnection)
+    } else // http://tools.ietf.org/html/rfc7230#section-5.4
     if (hostHeader.isEmpty || uri.authority.isEmpty && hostHeader.get.isEmpty ||
-      hostHeader.get.host.equalsIgnoreCase(uri.authority.host)) this
-    else sys.error("'Host' header value doesn't match request target authority")
+      hostHeader.get.host.equalsIgnoreCase(uri.authority.host)) uri
+    else throw new IllegalUriException("'Host' header value doesn't match request target authority",
+      s"Host header: $hostHeader\nrequest target authority: ${uri.authority}")
   }
 
   /**
@@ -191,7 +200,7 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
    */
   def qValueForMediaType(mediaType: MediaType, ranges: Seq[MediaRange] = acceptedMediaRanges): Float =
     ranges match {
-      case Nil ⇒ 1.0f // http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.1
+      case Nil ⇒ 1.0f // http://tools.ietf.org/html/rfc7231#section-5.3.1
       case x   ⇒ x collectFirst { case r if r matches mediaType ⇒ r.qValue } getOrElse 0f
     }
 
@@ -206,7 +215,7 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
    */
   def qValueForCharset(charset: HttpCharset, ranges: Seq[HttpCharsetRange] = acceptedCharsetRanges): Float =
     ranges match {
-      case Nil ⇒ 1.0f // http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.2
+      case Nil ⇒ 1.0f // http://tools.ietf.org/html/rfc7231#section-5.3.1
       case x   ⇒ x collectFirst { case r if r matches charset ⇒ r.qValue } getOrElse (if (charset == `ISO-8859-1`) 1f else 0f)
     }
 
@@ -221,7 +230,7 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
    */
   def qValueForEncoding(encoding: HttpEncoding, ranges: Seq[HttpEncodingRange] = acceptedEncodingRanges): Float =
     ranges match {
-      case Nil ⇒ 1.0f // http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.3
+      case Nil ⇒ 1.0f // http://tools.ietf.org/html/rfc7231#section-5.3.1
       case x   ⇒ x collectFirst { case r if r matches encoding ⇒ r.qValue } getOrElse 0f
     }
 
@@ -230,7 +239,7 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
    * If a given ContentType does not define a charset an accepted charset is selected, i.e. the method guarantees
    * that, if a ContentType instance is returned within the option, it will contain a defined charset.
    */
-  def acceptableContentType(contentTypes: Seq[ContentType]): Option[ContentType] = {
+  def acceptableContentType(contentTypes: IndexedSeq[ContentType]): Option[ContentType] = {
     val mediaRanges = acceptedMediaRanges // cache for performance
     val charsetRanges = acceptedCharsetRanges // cache for performance
 
@@ -242,21 +251,20 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
         else findBest(ix + 1, result, maxQ)
       } else Option(result)
 
-    findBest() match {
-      case x @ Some(ct) if ct.isCharsetDefined ⇒ x
-      case Some(ct) ⇒
-        // logic for choosing the charset adapted from http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.2
-        def withCharset(cs: HttpCharset) = Some(ContentType(ct.mediaType, cs))
-        if (qValueForCharset(`UTF-8`, charsetRanges) == 1f) withCharset(`UTF-8`)
-        else charsetRanges match { // ranges are sorted by descending q-value
-          case (HttpCharsetRange.One(cs, qValue)) :: _ ⇒
-            if (qValue == 1f) withCharset(cs)
-            else if (qValueForCharset(`ISO-8859-1`, charsetRanges) == 1f) withCharset(`ISO-8859-1`)
-            else if (qValue > 0f) withCharset(cs)
-            else None
-          case _ ⇒ None
-        }
-      case None ⇒ None
+    findBest() flatMap { ct ⇒
+      def withCharset(cs: HttpCharset) = Some(ContentType(ct.mediaType, cs))
+
+      // logic for choosing the charset adapted from http://tools.ietf.org/html/rfc7231#section-5.3.3
+      if (ct.isCharsetDefined) Some(ct) // if there is already an acceptable charset chosen we are done
+      else if (qValueForCharset(`UTF-8`, charsetRanges) == 1f) withCharset(`UTF-8`) // prefer UTF-8 if fully accepted
+      else charsetRanges match { // ranges are sorted by descending q-value,
+        case (HttpCharsetRange.One(cs, qValue)) :: _ ⇒ // so we only need to look at the first one
+          if (qValue == 1f) withCharset(cs) // if the client has high preference for this charset, pick it
+          else if (qValueForCharset(`ISO-8859-1`, charsetRanges) == 1f) withCharset(`ISO-8859-1`) // give some more preference to `ISO-8859-1`
+          else if (qValue > 0f) withCharset(cs) // ok, simply choose the first one if the client doesn't reject it
+          else None
+        case _ ⇒ None
+      }
     }
   }
 
@@ -295,10 +303,10 @@ case class HttpRequest(method: HttpMethod = HttpMethods.GET,
 /**
  * The immutable HTTP response model.
  */
-case class HttpResponse(status: StatusCode = StatusCodes.OK,
-                        headers: immutable.Seq[HttpHeader] = Nil,
-                        entity: HttpEntity = HttpEntity.Empty,
-                        protocol: HttpProtocol = HttpProtocols.`HTTP/1.1`) extends japi.HttpResponse with HttpMessage {
+final case class HttpResponse(status: StatusCode = StatusCodes.OK,
+                              headers: immutable.Seq[HttpHeader] = Nil,
+                              entity: HttpEntity = HttpEntity.Empty,
+                              protocol: HttpProtocol = HttpProtocols.`HTTP/1.1`) extends japi.HttpResponse with HttpMessage {
   type Self = HttpResponse
 
   def isRequest = false

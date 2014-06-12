@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.util
@@ -12,12 +12,15 @@ import scala.collection.immutable.ListMap
 import scala.collection.JavaConverters._
 import akka.actor.ActorSystem
 
-abstract class SettingsCompanion[T](prefix: String) {
+/**
+ * INTERNAL API
+ */
+private[http] abstract class SettingsCompanion[T](prefix: String) {
   private final val MaxCached = 8
   private[this] var cache = ListMap.empty[ActorSystem, T]
 
   def apply(system: ActorSystem): T =
-    // we use and update the cache without any synchronization
+    // we use and update the cache without any synchronization,
     // there are two possible "problems" resulting from this:
     // - cache misses of things another thread has already put into the cache,
     //   in these cases we do double work, but simply accept it

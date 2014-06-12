@@ -1,7 +1,11 @@
+/**
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ */
+
 package akka.http.model.japi;
 
 import akka.japi.Option;
-import org.parboiled2.ParserInput$;
+import akka.parboiled2.ParserInput$;
 
 import java.nio.charset.Charset;
 import java.util.Map;

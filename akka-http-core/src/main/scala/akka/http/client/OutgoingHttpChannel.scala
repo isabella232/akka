@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.client
@@ -26,17 +26,17 @@ sealed trait OutgoingHttpChannel {
 /**
  * An `OutgoingHttpChannel` with a single outgoing HTTP connection as the underlying transport.
  */
-case class OutgoingHttpConnection(remoteAddress: InetSocketAddress,
-                                  localAddress: InetSocketAddress,
-                                  untypedProcessor: HttpClientProcessor[Any]) extends OutgoingHttpChannel {
+final case class OutgoingHttpConnection(remoteAddress: InetSocketAddress,
+                                        localAddress: InetSocketAddress,
+                                        untypedProcessor: HttpClientProcessor[Any]) extends OutgoingHttpChannel {
   def processor[T] = untypedProcessor.asInstanceOf[HttpClientProcessor[T]]
 }
 
 /**
  * An `OutgoingHttpChannel` with a connection pool to a specific host/port as the underlying transport.
  */
-case class HttpHostChannel(host: String, port: Int,
-                           untypedProcessor: HttpClientProcessor[Any]) extends OutgoingHttpChannel {
+final case class HttpHostChannel(host: String, port: Int,
+                                 untypedProcessor: HttpClientProcessor[Any]) extends OutgoingHttpChannel {
   def processor[T] = untypedProcessor.asInstanceOf[HttpClientProcessor[T]]
 }
 
@@ -44,6 +44,6 @@ case class HttpHostChannel(host: String, port: Int,
  * A general `OutgoingHttpChannel` with connection pools to all possible host/port combinations
  * as the underlying transport.
  */
-case class HttpRequestChannel(untypedProcessor: HttpClientProcessor[Any]) extends OutgoingHttpChannel {
+final case class HttpRequestChannel(untypedProcessor: HttpClientProcessor[Any]) extends OutgoingHttpChannel {
   def processor[T] = untypedProcessor.asInstanceOf[HttpClientProcessor[T]]
 }

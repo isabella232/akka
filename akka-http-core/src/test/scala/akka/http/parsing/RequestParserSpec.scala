@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.parsing
@@ -10,8 +10,9 @@ import scala.concurrent.duration._
 import org.scalatest.{ BeforeAndAfterAll, FreeSpec, Matchers }
 import org.scalatest.matchers.Matcher
 import org.reactivestreams.api.Producer
-import akka.stream.scaladsl.{ Flow, StreamProducer }
-import akka.stream.{ MaterializerSettings, FlowMaterializer }
+import akka.stream.scaladsl.Flow
+import akka.stream.impl.SynchronousProducerFromIterable
+import akka.stream.{ FlattenStrategy, MaterializerSettings, FlowMaterializer }
 import akka.util.ByteString
 import akka.actor.ActorSystem
 import akka.http.server.HttpServerPipeline
@@ -160,7 +161,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
 
         "request start" in new Test {
           Seq(start, "rest") should generalMultiParseTo(
-            Right(baseRequest.withEntity(HttpEntity.Chunked(`application/pdf`, StreamProducer.empty))),
+            Right(baseRequest.withEntity(HttpEntity.Chunked(`application/pdf`, producer()))),
             Left(ParseError(400: StatusCode, ErrorInfo("Illegal character 'r' in chunk start"))))
           closeAfterResponseCompletion shouldEqual Seq(false)
         }
@@ -179,7 +180,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
               |0123456789""",
             """ABCDEF
               |dead""") should generalMultiParseTo(
-              Right(baseRequest.withEntity(HttpEntity.Chunked(`application/pdf`, StreamProducer.of(
+              Right(baseRequest.withEntity(HttpEntity.Chunked(`application/pdf`, producer(
                 HttpEntity.Chunk(ByteString("abc")),
                 HttpEntity.Chunk(ByteString("0123456789ABCDEF"), "some=stuff;bla"),
                 HttpEntity.Chunk(ByteString("0123456789ABCDEF"), "foo=bar"),
@@ -192,7 +193,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
             """0
               |
               |""") should generalMultiParseTo(
-              Right(baseRequest.withEntity(HttpEntity.Chunked(`application/pdf`, StreamProducer.of(HttpEntity.LastChunk)))))
+              Right(baseRequest.withEntity(HttpEntity.Chunked(`application/pdf`, producer(HttpEntity.LastChunk)))))
           closeAfterResponseCompletion shouldEqual Seq(false)
         }
 
@@ -205,7 +206,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
               |
               |GE""") should generalMultiParseTo(
               Right(baseRequest.withEntity(HttpEntity.Chunked(`application/pdf`,
-                StreamProducer.of(HttpEntity.LastChunk("nice=true", List(RawHeader("Bar", "xyz"), RawHeader("Foo", "pip apo"))))))))
+                producer(HttpEntity.LastChunk("nice=true", List(RawHeader("Bar", "xyz"), RawHeader("Foo", "pip apo"))))))))
           closeAfterResponseCompletion shouldEqual Seq(false)
         }
       }
@@ -219,7 +220,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
             |
             |"""
         val baseRequest = HttpRequest(PATCH, "/data", List(Host("ping"), Connection("lalelu"),
-          `Transfer-Encoding`(TransferEncodings.chunked)), HttpEntity.Chunked(`application/octet-stream`, StreamProducer.empty))
+          `Transfer-Encoding`(TransferEncodings.chunked)), HttpEntity.Chunked(`application/octet-stream`, producer()))
 
         "an illegal char after chunk size" in new Test {
           Seq(start,
@@ -380,7 +381,7 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
                 }
               }.toProducer(materializer)
             }
-            .concatAll
+            .flatten(FlattenStrategy.concat)
             .grouped(1000).toFuture(materializer)
         Await.result(future, 250.millis)
       }
@@ -389,23 +390,17 @@ class RequestParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
 
     private def compactEntity(entity: HttpEntity): Future[HttpEntity] =
       entity match {
-        case x: HttpEntity.Default ⇒ compactEntityData(x.data).map(compacted ⇒ x.copy(data = compacted))
         case x: HttpEntity.Chunked ⇒ compactEntityChunks(x.chunks).map(compacted ⇒ x.copy(chunks = compacted))
-        case _                     ⇒ fail("Unexpected " + entity)
+        case _                     ⇒ entity.toStrict(250.millis, materializer)
       }
 
-    private def compactEntityData(data: Producer[ByteString]): Future[Producer[ByteString]] =
-      // compact and convert to `StreamProducer.ForIterable` which provides value equality
-      Flow(data)
-        .fold(ByteString.empty)(_ ++ _)
-        .mapConcat(bytes ⇒ if (bytes.isEmpty) Nil else bytes :: Nil)
-        .toFuture(materializer)
-        .map(StreamProducer.of(_)) // creates `StreamProducer.ForIterable`
-        .recover { case _: NoSuchElementException ⇒ StreamProducer.empty[ByteString] }
-
     private def compactEntityChunks(data: Producer[ChunkStreamPart]): Future[Producer[ChunkStreamPart]] =
-      Flow(data).grouped(1000).toFuture(materializer).map(StreamProducer.apply(_))
+      Flow(data).grouped(1000).toFuture(materializer)
+        .map(producer(_: _*))
+        .recover { case _: NoSuchElementException ⇒ producer[ChunkStreamPart]() }
 
     def prep(response: String) = response.stripMarginWithNewline("\r\n")
   }
+
+  def producer[T](elems: T*): Producer[T] = SynchronousProducerFromIterable(elems.toList)
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -7,7 +7,7 @@ package akka.http.model
 import language.implicitConversions
 import akka.http.util._
 
-case class ContentTypeRange(mediaRange: MediaRange, charsetRange: HttpCharsetRange) extends ValueRenderable {
+final case class ContentTypeRange(mediaRange: MediaRange, charsetRange: HttpCharsetRange) extends ValueRenderable {
   def matches(contentType: ContentType) =
     mediaRange.matches(contentType.mediaType) && charsetRange.matches(contentType.charset)
 
@@ -24,7 +24,7 @@ object ContentTypeRange {
   implicit def apply(mediaRange: MediaRange): ContentTypeRange = apply(mediaRange, HttpCharsetRange.`*`)
 }
 
-case class ContentType(mediaType: MediaType, definedCharset: Option[HttpCharset]) extends japi.ContentType with ValueRenderable {
+final case class ContentType(mediaType: MediaType, definedCharset: Option[HttpCharset]) extends japi.ContentType with ValueRenderable {
   def render[R <: Rendering](r: R): r.type = definedCharset match {
     case Some(cs) ⇒ r ~~ mediaType ~~ ContentType.`; charset=` ~~ cs
     case _        ⇒ r ~~ mediaType

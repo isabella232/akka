@@ -1,17 +1,17 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
 package parser
 
 import scala.annotation.tailrec
-import org.parboiled2.Parser
+import akka.parboiled2.Parser
 import headers._
 
 private[parser] trait ContentTypeHeader { this: Parser with CommonRules with CommonActions ⇒
 
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-3.1.1.5
+  // http://tools.ietf.org/html/rfc7231#section-3.1.1.5
   def `content-type` = rule {
     `media-type` ~ EOI ~> ((main, sub, params) ⇒ `Content-Type`(contentType(main, sub, params)))
   }

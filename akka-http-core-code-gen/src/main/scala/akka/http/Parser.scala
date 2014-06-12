@@ -1,9 +1,8 @@
 package akka.http
 
-import org.parboiled2._
+import akka.parboiled2._
 import scala.io.Source
 import java.io.FileReader
-import org.parboiled2.ParseError
 
 import HeaderType._
 

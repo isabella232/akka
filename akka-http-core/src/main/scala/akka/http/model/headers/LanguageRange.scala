@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -15,7 +15,7 @@ sealed trait LanguageRange extends japi.headers.LanguageRange with ValueRenderab
   def primaryTag: String
   def subTags: immutable.Seq[String]
   def matches(lang: Language): Boolean
-  def render[R <: Rendering](r: R): r.type = {
+  final def render[R <: Rendering](r: R): r.type = {
     r ~~ primaryTag
     if (subTags.nonEmpty) subTags.foreach(r ~~ '-' ~~ _)
     if (qValue < 1.0f) r ~~ ";q=" ~~ qValue
@@ -28,6 +28,7 @@ sealed trait LanguageRange extends japi.headers.LanguageRange with ValueRenderab
 }
 object LanguageRange {
   case class `*`(qValue: Float) extends LanguageRange {
+    require(0.0f <= qValue && qValue <= 1.0f, "qValue must be >= 0 and <= 1.0")
     def primaryTag = "*"
     def subTags = Nil
     def matches(lang: Language): Boolean = true
@@ -37,7 +38,8 @@ object LanguageRange {
   object `*` extends `*`(1.0f)
 }
 
-case class Language(primaryTag: String, subTags: immutable.Seq[String], qValue: Float = 1.0f) extends japi.headers.Language with LanguageRange {
+final case class Language(primaryTag: String, subTags: immutable.Seq[String], qValue: Float = 1.0f) extends japi.headers.Language with LanguageRange {
+  require(0.0f <= qValue && qValue <= 1.0f, "qValue must be >= 0 and <= 1.0")
   def matches(lang: Language): Boolean = lang.primaryTag == this.primaryTag && lang.subTags == this.subTags
   def withQValue(qValue: Float): Language = Language(primaryTag, subTags, qValue)
   override def withQValue(qValue: Double): Language = withQValue(qValue.toFloat)

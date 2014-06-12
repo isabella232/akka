@@ -1,15 +1,14 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.server
 
 import org.reactivestreams.api.Producer
-import scala.concurrent.ExecutionContext
 import akka.event.LoggingAdapter
 import akka.util.ByteString
 import akka.stream.io.StreamTcp
-import akka.stream.{ Transformer, FlowMaterializer }
+import akka.stream.{ FlattenStrategy, Transformer, FlowMaterializer }
 import akka.stream.scaladsl.{ Flow, Duct }
 import akka.http.parsing.HttpRequestParser
 import akka.http.rendering.{ ResponseRenderingContext, HttpResponseRendererFactory }
@@ -17,9 +16,12 @@ import akka.http.model.{ StatusCode, ErrorInfo, HttpRequest, HttpResponse }
 import akka.http.parsing.ParserOutput._
 import akka.http.Http
 
+/**
+ * INTERNAL API
+ */
 private[http] class HttpServerPipeline(settings: ServerSettings,
                                        materializer: FlowMaterializer,
-                                       log: LoggingAdapter)(implicit ec: ExecutionContext)
+                                       log: LoggingAdapter)
   extends (StreamTcp.IncomingTcpConnection ⇒ Http.IncomingConnection) {
   import HttpServerPipeline._
 
@@ -28,7 +30,7 @@ private[http] class HttpServerPipeline(settings: ServerSettings,
     if (settings.parserSettings.illegalHeaderWarnings)
       log.warning(errorInfo.withSummaryPrepended("Illegal request header").formatPretty)
 
-  val responseRendererFactory = new HttpResponseRendererFactory(settings.serverHeader, settings.chunklessStreaming,
+  val responseRendererFactory = new HttpResponseRendererFactory(settings.serverHeader,
     settings.responseHeaderSizeHint, materializer, log)
 
   def apply(tcpConn: StreamTcp.IncomingTcpConnection): Http.IncomingConnection = {
@@ -51,7 +53,7 @@ private[http] class HttpServerPipeline(settings: ServerSettings,
         .merge(applicationBypassProducer)
         .transform(applyApplicationBypass)
         .transform(responseRendererFactory.newRenderer)
-        .concatAll
+        .flatten(FlattenStrategy.concat)
         .transform {
           new Transformer[ByteString, ByteString] {
             def onNext(element: ByteString) = element :: Nil
@@ -116,15 +118,9 @@ private[http] object HttpServerPipeline {
   }
 
   implicit class FlowWithHeadAndTail[T](val underlying: Flow[Producer[T]]) {
-    def headAndTail(materializer: FlowMaterializer): Flow[(T, Producer[T])] = {
-      val duct: Duct[Producer[T], (T, Producer[T])] =
-        Duct[Producer[T]].map { p ⇒
-          val (ductIn, tailStream) = Duct[T].drop(1).build(materializer)
-          Flow(p).tee(ductIn).take(1).map(_ -> tailStream).toProducer(materializer)
-        }.concatAll
-      val (headAndTailC, headAndTailP) = duct.build(materializer)
-      underlying.produceTo(materializer, headAndTailC)
-      Flow(headAndTailP)
-    }
+    def headAndTail(materializer: FlowMaterializer): Flow[(T, Producer[T])] =
+      underlying.map { p ⇒
+        Flow(p).prefixAndTail(1).map { case (prefix, tail) ⇒ (prefix.head, tail) }.toProducer(materializer)
+      }.flatten(FlattenStrategy.Concat())
   }
 }

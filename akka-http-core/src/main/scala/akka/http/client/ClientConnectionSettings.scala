@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.client
@@ -11,13 +11,12 @@ import akka.http.model.headers.`User-Agent`
 import akka.http.parsing.ParserSettings
 import akka.http.util._
 
-case class ClientConnectionSettings(
+final case class ClientConnectionSettings(
   userAgentHeader: Option[`User-Agent`],
   connectingTimeout: Duration,
   idleTimeout: Duration,
   requestTimeout: Duration,
   reapingCycle: Duration,
-  chunklessStreaming: Boolean,
   requestHeaderSizeHint: Int,
   maxEncryptionChunkSize: Int,
   proxySettings: Map[String, ProxySettings],
@@ -35,11 +34,10 @@ object ClientConnectionSettings extends SettingsCompanion[ClientConnectionSettin
   def fromSubConfig(c: Config) = {
     apply(
       c.getString("user-agent-header").toOption.map(`User-Agent`(_)),
-      c getDuration "connecting-timeout",
-      c getDuration "idle-timeout",
-      c getDuration "request-timeout",
-      c getDuration "reaping-cycle",
-      c getBoolean "chunkless-streaming",
+      c getPotentiallyInfiniteDuration "connecting-timeout",
+      c getPotentiallyInfiniteDuration "idle-timeout",
+      c getPotentiallyInfiniteDuration "request-timeout",
+      c getPotentiallyInfiniteDuration "reaping-cycle",
       c getIntBytes "request-header-size-hint",
       c getIntBytes "max-encryption-chunk-size",
       ProxySettings fromSubConfig c.getConfig("proxy"),

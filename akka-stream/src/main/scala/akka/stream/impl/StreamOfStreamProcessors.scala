@@ -4,9 +4,10 @@
 package akka.stream.impl
 
 import akka.stream.MaterializerSettings
-import akka.actor.{ Terminated, ActorRef }
+import akka.actor.{ Actor, Terminated, ActorRef }
 import org.reactivestreams.spi.{ Subscriber, Subscription }
 import org.reactivestreams.api.Producer
+import akka.stream.actor.ActorConsumer.{ OnNext, OnError, OnComplete, OnSubscribe }
 
 /**
  * INTERNAL API
@@ -37,7 +38,12 @@ private[akka] abstract class MultiStreamOutputProcessor(_settings: MaterializerS
     private var completed: Boolean = false
     private var demands: Int = 0
 
-    val substream = context.watch(context.actorOf(IdentityProcessorImpl.props(settings)))
+    override def subreceive: SubReceive =
+      throw new UnsupportedOperationException("Substream outputs are managed in a dedicated receive block")
+
+    val substream = context.watch(context.actorOf(
+      IdentityProcessorImpl.props(settings)
+        .withDispatcher(context.props.dispatcher)))
     val processor = new ActorProcessor[AnyRef, AnyRef](substream)
 
     override def isClosed: Boolean = completed
@@ -75,12 +81,12 @@ private[akka] abstract class MultiStreamOutputProcessor(_settings: MaterializerS
     outputs
   }
 
-  def fullyCompleted: Boolean = isShuttingDown && isPumpFinished && context.children.isEmpty
+  def fullyCompleted: Boolean = primaryOutputsShutdown && isPumpFinished && context.children.isEmpty
 
   protected def invalidateSubstream(substream: ActorRef): Unit = {
     substreamOutputs(substream).complete()
     substreamOutputs -= substream
-    if (fullyCompleted) shutdown()
+    shutdownHooks()
     pump()
   }
 
@@ -89,19 +95,15 @@ private[akka] abstract class MultiStreamOutputProcessor(_settings: MaterializerS
     super.fail(e)
   }
 
-  override def primaryOutputsFinished(completed: Boolean): Unit = {
-    // If the master stream is cancelled (no one consumes substreams as elements from the master stream)
-    // then this callback does not mean we are shutting down
-    // We can only shut down after all substreams (our children) are closed
-    if (fullyCompleted) shutdown()
-  }
+  // FIXME: proper shutdown scheduling
+  override def shutdownHooks(): Unit = if (fullyCompleted) super.shutdownHooks()
 
   override def pumpFinished(): Unit = {
     context.children foreach (_ ! OnComplete)
     super.pumpFinished()
   }
 
-  override val downstreamManagement: Receive = super.downstreamManagement orElse {
+  val substreamManagement: Receive = {
     case SubstreamRequestMore(key, demand) ⇒
       substreamOutputs(key).enqueueOutputDemand(demand)
       pump()
@@ -109,6 +111,8 @@ private[akka] abstract class MultiStreamOutputProcessor(_settings: MaterializerS
     case Terminated(child)    ⇒ invalidateSubstream(child)
 
   }
+
+  override def receive = primaryInputs.subreceive orElse primaryOutputs.subreceive orElse substreamManagement
 }
 
 /**
@@ -116,7 +120,7 @@ private[akka] abstract class MultiStreamOutputProcessor(_settings: MaterializerS
  */
 private[akka] object TwoStreamInputProcessor {
   class OtherActorSubscriber[T](val impl: ActorRef) extends Subscriber[T] {
-    override def onError(cause: Throwable): Unit = impl ! OnError(cause)
+    override def onError(cause: Throwable): Unit = impl ! OtherStreamOnError(cause)
     override def onComplete(): Unit = impl ! OtherStreamOnComplete
     override def onNext(element: T): Unit = impl ! OtherStreamOnNext(element)
     override def onSubscribe(subscription: Subscription): Unit = impl ! OtherStreamOnSubscribe(subscription)
@@ -125,6 +129,7 @@ private[akka] object TwoStreamInputProcessor {
   case object OtherStreamOnComplete
   case class OtherStreamOnNext(element: Any)
   case class OtherStreamOnSubscribe(subscription: Subscription)
+  case class OtherStreamOnError(ex: Throwable)
 }
 
 /**
@@ -134,51 +139,115 @@ private[akka] abstract class TwoStreamInputProcessor(_settings: MaterializerSett
   extends ActorProcessorImpl(_settings) {
   import TwoStreamInputProcessor._
 
-  var secondaryInputs: Inputs = _
+  val secondaryInputs: Inputs = new BatchingInputBuffer(settings.initialInputBufferSize, this) {
+    override val subreceive: SubReceive = new SubReceive(waitingForUpstream)
 
-  override def primaryOutputsReady(): Unit = {
-    other.getPublisher.subscribe(new OtherActorSubscriber(self))
-    super.primaryOutputsReady()
+    override def inputOnError(e: Throwable): Unit = TwoStreamInputProcessor.this.onError(e)
+
+    override def waitingForUpstream: Receive = {
+      case OtherStreamOnComplete                ⇒ onComplete()
+      case OtherStreamOnSubscribe(subscription) ⇒ onSubscribe(subscription)
+      case OtherStreamOnError(e)                ⇒ TwoStreamInputProcessor.this.onError(e)
+    }
+
+    override def upstreamRunning: Receive = {
+      case OtherStreamOnNext(element) ⇒ enqueueInputElement(element)
+      case OtherStreamOnComplete      ⇒ onComplete()
+      case OtherStreamOnError(e)      ⇒ TwoStreamInputProcessor.this.onError(e)
+    }
+    override protected def completed: Actor.Receive = {
+      case OtherStreamOnSubscribe(_) ⇒ throw new IllegalStateException("Cannot subscribe shutdown subscriber")
+    }
   }
 
-  override def waitingForUpstream: Receive = super.waitingForUpstream orElse {
-    case OtherStreamOnComplete ⇒
-      secondaryInputs = EmptyInputs
-      transitionToRunningWhenReady()
-    case OtherStreamOnSubscribe(subscription) ⇒
-      assert(subscription != null)
-      secondaryInputs = new BatchingInputBuffer(subscription, settings.initialInputBufferSize)
-      transitionToRunningWhenReady()
+  override def receive = secondaryInputs.subreceive orElse primaryInputs.subreceive orElse primaryOutputs.subreceive
+
+  other.getPublisher.subscribe(new OtherActorSubscriber(self))
+
+  override def shutdownHooks(): Unit = {
+    secondaryInputs.cancel()
+    super.shutdownHooks()
+  }
+}
+
+/**
+ * INTERNAL API
+ */
+private[akka] object MultiStreamInputProcessor {
+  case class SubstreamKey(id: Int)
+
+  class SubstreamSubscriber[T](val impl: ActorRef, key: SubstreamKey) extends Subscriber[T] {
+    override def onError(cause: Throwable): Unit = impl ! SubstreamOnError(key, cause)
+    override def onComplete(): Unit = impl ! SubstreamOnComplete(key)
+    override def onNext(element: T): Unit = impl ! SubstreamOnNext(key, element)
+    override def onSubscribe(subscription: Subscription): Unit = impl ! SubstreamStreamOnSubscribe(key, subscription)
   }
 
-  override def running: Receive = super.running orElse {
-    case OtherStreamOnNext(element) ⇒
-      secondaryInputs.enqueueInputElement(element)
-      pump()
-    case OtherStreamOnComplete ⇒
-      secondaryInputs.complete()
-      primaryInputOnComplete()
-      pump()
+  case class SubstreamOnComplete(key: SubstreamKey)
+  case class SubstreamOnNext(key: SubstreamKey, element: Any)
+  case class SubstreamOnError(key: SubstreamKey, e: Throwable)
+  case class SubstreamStreamOnSubscribe(key: SubstreamKey, subscription: Subscription)
+}
+
+/**
+ * INTERNAL API
+ */
+private[akka] abstract class MultiStreamInputProcessor(_settings: MaterializerSettings) extends ActorProcessorImpl(_settings) {
+  import MultiStreamInputProcessor._
+  var nextId = 0
+
+  private val substreamInputs = collection.mutable.Map.empty[SubstreamKey, SubstreamInputs]
+
+  class SubstreamInputs(val key: SubstreamKey) extends BatchingInputBuffer(settings.initialInputBufferSize, pump = this) {
+    // Not driven directly
+    override val subreceive = new SubReceive(Actor.emptyBehavior)
+
+    def substreamOnComplete(): Unit = onComplete()
+    def substreamOnSubscribe(subscription: Subscription): Unit = onSubscribe(subscription)
+    def substreamOnError(e: Throwable): Unit = onError(e)
+    def substreamOnNext(elem: Any): Unit = enqueueInputElement(elem)
+
+    override protected def inputOnError(e: Throwable): Unit = {
+      super.inputOnError(e)
+      invalidateSubstream(key, e)
+    }
   }
 
-  override def primaryInputOnComplete(): Unit = {
-    if (secondaryInputs.isClosed && primaryInputs.isClosed)
-      super.primaryInputOnComplete()
+  val substreamManagement: Receive = {
+    case SubstreamStreamOnSubscribe(key, subscription) ⇒ substreamInputs(key).substreamOnSubscribe(subscription)
+    case SubstreamOnNext(key, element)                 ⇒ substreamInputs(key).substreamOnNext(element)
+    case SubstreamOnComplete(key) ⇒ {
+      substreamInputs(key).substreamOnComplete()
+      substreamInputs -= key
+    }
+    case SubstreamOnError(key, e) ⇒ substreamInputs(key).substreamOnError(e)
+
   }
 
-  override def transitionToRunningWhenReady(): Unit = if ((primaryInputs ne null) && (secondaryInputs ne null)) {
-    secondaryInputs.prefetch()
-    super.transitionToRunningWhenReady()
+  def createSubstreamInputs(p: Producer[Any]): SubstreamInputs = {
+    val key = SubstreamKey(nextId)
+    val inputs = new SubstreamInputs(key)
+    p.getPublisher.subscribe(new SubstreamSubscriber(self, key))
+    substreamInputs(key) = inputs
+    nextId += 1
+    inputs
   }
 
-  override def fail(cause: Throwable): Unit = {
-    if (secondaryInputs ne null) secondaryInputs.cancel()
-    super.fail(cause)
+  protected def invalidateSubstream(substream: SubstreamKey, e: Throwable): Unit = {
+    substreamInputs(substream).cancel()
+    substreamInputs -= substream
+    pump()
   }
 
-  override def primaryOutputsFinished(completed: Boolean) {
-    if (secondaryInputs ne null) secondaryInputs.cancel()
-    super.primaryOutputsFinished(completed)
+  override def fail(e: Throwable): Unit = {
+    substreamInputs.values foreach (_.cancel())
+    super.fail(e)
   }
 
+  override def shutdownHooks(): Unit = {
+    substreamInputs.values foreach (_.cancel())
+    super.shutdownHooks()
+  }
+
+  override def receive = primaryInputs.subreceive orElse primaryOutputs.subreceive orElse substreamManagement
 }

@@ -1,12 +1,12 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
 package parser
 
 import scala.annotation.tailrec
-import org.parboiled2.Parser
+import akka.parboiled2.Parser
 import headers._
 
 private[parser] trait ContentDispositionHeader { this: Parser with CommonRules with CommonActions ⇒

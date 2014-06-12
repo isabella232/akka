@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -17,7 +17,7 @@ object ContentDispositionTypes {
   case object inline extends Predefined
   case object attachment extends Predefined
   case object `form-data` extends Predefined
-  case class Ext(name: String) extends ContentDispositionType {
+  final case class Ext(name: String) extends ContentDispositionType {
     def render[R <: Rendering](r: R): r.type = r ~~ name
   }
 }

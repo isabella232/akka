@@ -56,7 +56,7 @@ private[akka] class ActorProducer[T]( final val impl: ActorRef, val equalityValu
  */
 private[akka] object ActorProducer {
   def props[T](settings: MaterializerSettings, f: () ⇒ T): Props =
-    Props(new ActorProducerImpl(f, settings))
+    Props(new ActorProducerImpl(f, settings)).withDispatcher(settings.dispatcher)
 
   def unapply(o: Any): Option[(ActorRef, Option[AnyRef])] = o match {
     case other: ActorProducer[_] ⇒ Some((other.impl, other.equalityValue))
@@ -202,9 +202,8 @@ private[akka] class ActorProducerImpl[T](f: () ⇒ T, settings: MaterializerSett
       generate()
   }
 
-  override def postStop(): Unit = {
-    pub.shutdown(shutdownReason)
-  }
+  override def postStop(): Unit =
+    if (pub ne null) pub.shutdown(shutdownReason)
 
   private var demand = 0
   private def generate(): Unit = {

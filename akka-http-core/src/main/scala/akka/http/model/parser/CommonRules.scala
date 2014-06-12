@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -7,15 +7,15 @@ package parser
 
 import scala.collection.immutable
 import akka.http.util.DateTime
-import org.parboiled2._
-import shapeless._
+import akka.parboiled2._
+import akka.shapeless._
 import headers._
 
 private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   import CharacterClasses._
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-1.2 referencing
+  // http://tools.ietf.org/html/rfc7230#section-1.2 referencing
   // http://tools.ietf.org/html/rfc5234#appendix-B.1
   // ******************************************************************************************
   def CRLF = rule { CR ~ LF }
@@ -23,7 +23,7 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   def OCTET = rule { ANY }
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-3.2.3
+  // http://tools.ietf.org/html/rfc7230#section-3.2.3
   // ******************************************************************************************
 
   def OWS = rule { zeroOrMore(optional(CRLF) ~ oneOrMore(WSP)) } // extended with `obs-fold`
@@ -31,7 +31,7 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   def RWS = rule { oneOrMore(optional(CRLF) ~ oneOrMore(WSP)) } // extended with `obs-fold`
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-3.2.6
+  // http://tools.ietf.org/html/rfc7230#section-3.2.6
   // ******************************************************************************************
   def word = rule { token | `quoted-string` }
 
@@ -62,7 +62,7 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   def `quoted-cpair` = `quoted-pair`
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-7.1.1.1
+  // http://tools.ietf.org/html/rfc7231#section-7.1.1.1
   // but more lenient where we have already seen differing implementations in the field
   // ******************************************************************************************
 
@@ -111,7 +111,7 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   def date3 = rule { month ~ ' ' ~ (digit2 | ' ' ~ digit) }
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-5.3.1
+  // http://tools.ietf.org/html/rfc7231#section-5.3.1
   // ******************************************************************************************
 
   def weight = rule { ws(';') ~ ws('q') ~ ws('=') ~ qvalue } // a bit more lenient than the spec
@@ -123,7 +123,7 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   }
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-3.1.1.1
+  // http://tools.ietf.org/html/rfc7231#section-3.1.1.1
   // ******************************************************************************************
 
   def `media-type`: RuleN[String :: String :: Seq[(String, String)] :: HNil] = rule {
@@ -176,23 +176,23 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   }
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p6-cache-26#section-1.2.1
+  // http://tools.ietf.org/html/rfc7234#section-1.2.1
   // ******************************************************************************************
 
   def `delta-seconds` = rule { longNumberCappedAtIntMaxValue }
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-2.3
+  // http://tools.ietf.org/html/rfc7232#section-2.3
   // ******************************************************************************************
 
   def `entity-tag` = rule {
-    ("W/" ~ push(true) | push(false)) ~ `opaque-tag` ~> ((weak, tag) ⇒ akka.http.model.headers.EntityTag(tag, weak))
+    ("W/" ~ push(true) | push(false)) ~ `opaque-tag` ~> ((weak, tag) ⇒ EntityTag(tag, weak))
   }
 
   def `opaque-tag` = rule { '"' ~ capture(zeroOrMore(`etagc-base` | `obs-text`)) ~ '"' }
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p7-auth-26#section-2.1
+  // http://tools.ietf.org/html/rfc7235#section-2.1
   // ******************************************************************************************
   def credentials = rule {
     `basic-credential-def` | `oauth2-bearer-token` | `generic-credentials`
@@ -282,7 +282,7 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   }
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p5-range-26#appendix-D
+  // http://tools.ietf.org/html/rfc7233#appendix-D
   // ******************************************************************************************
 
   def `byte-content-range` = rule { `bytes-unit` ~ (`byte-range-resp` | `unsatisfied-range`) }
@@ -332,7 +332,7 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   def `unsatisfied-range` = rule { '*' ~ '/' ~ `complete-length` ~> (ContentRange.Unsatisfiable(_)) }
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-5.5.3
+  // http://tools.ietf.org/html/rfc7231#section-5.5.3
   // ******************************************************************************************
 
   def product = rule { token ~ (ws('/') ~ `product-version` | push("")) }
@@ -349,7 +349,7 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   }
 
   // ******************************************************************************************
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-26#section-4
+  // http://tools.ietf.org/html/rfc7230#section-4
   // ******************************************************************************************
 
   def `transfer-coding` = rule(
@@ -399,8 +399,8 @@ private[parser] trait CommonRules { this: Parser with StringBuilding ⇒
   private def createDateTime(year: Int, month: Int, day: Int, hour: Int, min: Int, sec: Int, wkday: Int) = {
     val dt = DateTime(year, month, day, hour, min, sec)
     if (dt.weekday != wkday)
-      throw new ParsingException(s"Illegal weekday in date $dt: is '${DateTime.WEEKDAYS(wkday)}' but " +
-        s"should be '${DateTime.WEEKDAYS(dt.weekday)}'")
+      throw new ParsingException(s"Illegal weekday in date $dt: is '${DateTime.weekday(wkday)}' but " +
+        s"should be '${DateTime.weekday(dt.weekday)}'")
     dt
   }
 

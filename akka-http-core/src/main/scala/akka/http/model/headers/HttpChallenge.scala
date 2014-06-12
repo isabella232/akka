@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -10,8 +10,8 @@ import java.util
 
 import akka.http.model.japi.JavaMapping.Implicits._
 
-case class HttpChallenge(scheme: String, realm: String,
-                         parameters: Map[String, String] = Map.empty) extends japi.headers.HttpChallenge with ValueRenderable {
+final case class HttpChallenge(scheme: String, realm: String,
+                               parameters: Map[String, String] = Map.empty) extends japi.headers.HttpChallenge with ValueRenderable {
 
   def render[R <: Rendering](r: R): r.type = {
     r ~~ scheme ~~ " realm=" ~~# realm

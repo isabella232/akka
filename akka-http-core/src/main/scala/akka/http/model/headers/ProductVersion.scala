@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model.headers
@@ -8,11 +8,11 @@ import akka.http.model.japi
 
 import scala.collection.immutable
 import scala.util.{ Failure, Success }
-import org.parboiled2.ParseError
+import akka.parboiled2.ParseError
 import akka.http.model.parser.HeaderParser
 import akka.http.util._
 
-case class ProductVersion(product: String = "", version: String = "", comment: String = "") extends japi.headers.ProductVersion with ValueRenderable {
+final case class ProductVersion(product: String = "", version: String = "", comment: String = "") extends japi.headers.ProductVersion with ValueRenderable {
   def render[R <: Rendering](r: R): r.type = {
     r ~~ product
     if (!version.isEmpty) r ~~ '/' ~~ version
@@ -25,7 +25,7 @@ case class ProductVersion(product: String = "", version: String = "", comment: S
 }
 
 object ProductVersion {
-  implicit val productsRenderer: Renderer[Seq[ProductVersion]] = Renderer.seqRenderer[ProductVersion](separator = " ")
+  implicit val productsRenderer: Renderer[immutable.Seq[ProductVersion]] = Renderer.seqRenderer[ProductVersion](separator = " ")
 
   /** parses a string of multiple ProductVersions */
   def parseMultiple(string: String): immutable.Seq[ProductVersion] = {

@@ -1,17 +1,17 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
 package parser
 
-import org.parboiled2.Parser
+import akka.parboiled2.Parser
 import headers._
 import CacheDirectives._
 
 private[parser] trait CacheControlHeader { this: Parser with CommonRules with CommonActions ⇒
 
-  // http://tools.ietf.org/html/draft-ietf-httpbis-p6-cache-26#section-5.2
+  // http://tools.ietf.org/html/rfc7234#section-5.2
   def `cache-control` = rule {
     oneOrMore(`cache-directive`).separatedBy(listSep) ~ EOI ~> (`Cache-Control`(_))
   }

@@ -19,7 +19,7 @@ This is the basic message model which models HTTP message entities as a ``Produc
      // ...
    }
 
-   case class HttpRequest(method: HttpMethod,
+   final case class HttpRequest(method: HttpMethod,
                           uri: Uri,
                           headers: List[HttpHeader],
                           entity: HttpEntity,
@@ -27,7 +27,7 @@ This is the basic message model which models HTTP message entities as a ``Produc
      // ...
    }
 
-   case class HttpResponse(status: StatusCode,
+   final case class HttpResponse(status: StatusCode,
                            headers: List[HttpHeader],
                            entity: HttpEntity,
                            protocol: HttpProtocol) extends HttpMessage {
@@ -59,7 +59,7 @@ On the client-side akka-http offers 3 different API-levels (mirroring what we cu
       val connection: Future[OutgoingHttpConnection] =
         IO(Http) ? Http.Connect(remoteAddress: InetSocketAddress /*, ... options */)
 
-      case class OutgoingHttpConnection(remoteAddress: InetSocketAddress,
+      final case class OutgoingHttpConnection(remoteAddress: InetSocketAddress,
                                         localAddress: InetSocketAddress,
                                         untypedProcessor: HttpClientProcessor[Any]) extends OutgoingHttpChannel {
         def processor[T] = untypedProcessor.asInstanceOf[HttpClientProcessor[T]]
@@ -86,7 +86,7 @@ On the client-side akka-http offers 3 different API-levels (mirroring what we cu
       val infoFuture: Future[HostConnectorInfo] =
         IO(Http) ? Http.HostConnectorSetup(host, port /*, ... options */)
 
-      case class HostConnectorInfo(hostConnector: ActorRef, setup: HostConnectorSetup)
+      final case class HostConnectorInfo(hostConnector: ActorRef, setup: HostConnectorSetup)
 
       for {
         info <- infoFuture
@@ -119,7 +119,7 @@ add a stream-based API on top, so you can say something like this:
    val hostChannel: Future[HttpHostChannel] =
      IO(Http) ? Http.HostChannelSetup(host, port /*, ... options */)
 
-   case class HttpHostChannel(host: String, port: Int,
+   final case class HttpHostChannel(host: String, port: Int,
                               untypedProcessor: HttpClientProcessor[Any]) extends OutgoingHttpChannel {
      def processor[T] = untypedProcessor.asInstanceOf[HttpClientProcessor[T]]
    }
@@ -127,7 +127,7 @@ add a stream-based API on top, so you can say something like this:
    val requestChannel: Future[HttpRequestChannel] =
      IO(Http) ? Http.RequestChannelSetup(/*, ... options */)
 
-   case class HttpRequestChannel(untypedProcessor: HttpClientProcessor[Any]) extends OutgoingHttpChannel {
+   final case class HttpRequestChannel(untypedProcessor: HttpClientProcessor[Any]) extends OutgoingHttpChannel {
      def processor[T] = untypedProcessor.asInstanceOf[HttpClientProcessor[T]]
    }
 
@@ -142,13 +142,13 @@ This is how you set up an HTTP server:
    val binding: Future[HttpServerBinding] =
      IO(Http) ? Http.Bind(endpoint: InetSocketAddress /*, ... options */)
 
-   case class HttpServerBinding(localAddress: InetSocketAddress,
+   final case class HttpServerBinding(localAddress: InetSocketAddress,
                                 connectionStream: Producer[IncomingHttpConnection]) {
      def handleWith(f: HttpRequest => Future[HttpResponse]): Unit =
        connectionStream.foreach(_ handle f)
    }
 
-   case class IncomingHttpConnection(remoteAddress: InetSocketAddress,
+   final case class IncomingHttpConnection(remoteAddress: InetSocketAddress,
                                      requestStream: Producer[HttpRequest],
                                      responseStream: Consumer[HttpResponse]) {
      def handleWith(f: HttpRequest => Future[HttpResponse]): Unit =
@@ -190,7 +190,7 @@ The TCP and HTTP interfaces should be structurally very similar:
    val connection: Future[OutgoingTcpConnection] =
      IO(Tcp) ? Tcp.Connect(remoteAddress: InetSocketAddress /*, ... options */)
 
-   case class OutgoingTcpConnection(remoteAddress: InetSocketAddress,
+   final case class OutgoingTcpConnection(remoteAddress: InetSocketAddress,
                                     localAddress: InetSocketAddress,
                                     processor: TcpClientProcessor) {
      def outputStream: Consumer[ByteString] = processor
@@ -220,10 +220,10 @@ Again the TCP and HTTP interfaces should be structurally very similar:
    val binding: Future[TcpServerBinding] =
      IO(Tcp) ? Tcp.Bind(endpoint: InetSocketAddress /*, ... options */)
 
-   case class TcpServerBinding(localAddress: InetSocketAddress,
+   final case class TcpServerBinding(localAddress: InetSocketAddress,
                                connectionStream: Producer[IncomingTcpConnection])
 
-    case class IncomingTcpConnection(remoteAddress: InetSocketAddress,
+    final case class IncomingTcpConnection(remoteAddress: InetSocketAddress,
                                      inputStream: Producer[ByteString],
                                      outputStream: Consumer[ByteString]) {
       def handleWith(processor: Processor[ByteString, ByteString]): Unit = {
@@ -256,12 +256,12 @@ SSL
        def cypherTextOutput: Producer[ByteString]
      }
 
-     case class IncomingSslSession(
+     final case class IncomingSslSession(
        sessionInfo: SessionInfo,
        data: Producer[ByteString]
      )
 
-     case class OutgoingSslSession(
+     final case class OutgoingSslSession(
        negotiation: SessionNegotiation,
        data: Consumer[ByteString]
      )

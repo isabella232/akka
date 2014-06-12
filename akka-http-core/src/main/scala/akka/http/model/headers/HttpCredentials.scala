@@ -1,11 +1,11 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
 package headers
 
-import org.parboiled2.util.Base64
+import akka.parboiled2.util.Base64
 import akka.http.model.HttpCharsets._
 import akka.http.util.{ Rendering, ValueRenderable }
 
@@ -20,13 +20,12 @@ sealed abstract class HttpCredentials extends japi.headers.HttpCredentials with 
   def getParameters: java.util.Map[String, String] = parameters.asJava
 }
 
-case class BasicHttpCredentials(username: String, password: String) extends japi.headers.BasicHttpCredentials {
+final case class BasicHttpCredentials(username: String, password: String) extends japi.headers.BasicHttpCredentials {
   val cookie = {
     val userPass = username + ':' + password
     val bytes = userPass.getBytes(`ISO-8859-1`.nioCharset)
     Base64.rfc2045.encodeToChar(bytes, false)
   }
-
   def render[R <: Rendering](r: R): r.type = r ~~ "Basic " ~~ cookie
 
   def scheme: String = "Basic"
@@ -45,15 +44,15 @@ object BasicHttpCredentials {
   }
 }
 
-case class OAuth2BearerToken(token: String) extends japi.headers.OAuth2BearerToken {
+final case class OAuth2BearerToken(token: String) extends japi.headers.OAuth2BearerToken {
   def render[R <: Rendering](r: R): r.type = r ~~ "Bearer " ~~ token
 
   def scheme: String = "Bearer"
   def parameters: Map[String, String] = Map.empty
 }
 
-case class GenericHttpCredentials(scheme: String, token: String,
-                                  parameters: Map[String, String] = Map.empty) extends HttpCredentials {
+final case class GenericHttpCredentials(scheme: String, token: String,
+                                        parameters: Map[String, String] = Map.empty) extends HttpCredentials {
   def render[R <: Rendering](r: R): r.type = {
     r ~~ scheme
     if (!token.isEmpty) r ~~ ' ' ~~ token

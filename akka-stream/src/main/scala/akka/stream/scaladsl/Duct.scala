@@ -8,10 +8,11 @@ import scala.collection.immutable
 import scala.util.Try
 import org.reactivestreams.api.Consumer
 import org.reactivestreams.api.Producer
-import akka.stream.FlowMaterializer
-import akka.stream.RecoveryTransformer
-import akka.stream.Transformer
+import akka.stream.{ FlattenStrategy, OverflowStrategy, FlowMaterializer, Transformer }
 import akka.stream.impl.DuctImpl
+import akka.stream.impl.Ast
+import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.Future
 
 object Duct {
 
@@ -41,6 +42,15 @@ trait Duct[In, +Out] {
    * as they pass through this processing step.
    */
   def map[U](f: Out ⇒ U): Duct[In, U]
+
+  /**
+   * Transform this stream by applying the given function to each of the elements
+   * as they pass through this processing step. The function returns a `Future` of the
+   * element that will be emitted downstream. As many futures as requested elements by
+   * downstream may run in parallel and may complete in any order, but the elements that
+   * are emitted downstream are in the same order as from upstream.
+   */
+  def mapFuture[U](f: Out ⇒ Future[U]): Duct[In, U]
 
   /**
    * Only pass on those elements that satisfy the given predicate.
@@ -77,6 +87,11 @@ trait Duct[In, +Out] {
   def drop(n: Int): Duct[In, Out]
 
   /**
+   * Discard the elements received within the given duration at beginning of the stream.
+   */
+  def dropWithin(d: FiniteDuration): Duct[In, Out]
+
+  /**
    * Terminate processing (and cancel the upstream producer) after the given
    * number of elements. Due to input buffering some elements may have been
    * requested from upstream producers that will then not be processed downstream
@@ -85,10 +100,30 @@ trait Duct[In, +Out] {
   def take(n: Int): Duct[In, Out]
 
   /**
+   * Terminate processing (and cancel the upstream producer) after the given
+   * duration. Due to input buffering some elements may have been
+   * requested from upstream producers that will then not be processed downstream
+   * of this step.
+   *
+   * Note that this can be combined with [[#take]] to limit the number of elements
+   * within the duration.
+   */
+  def takeWithin(d: FiniteDuration): Duct[In, Out]
+
+  /**
    * Chunk up this stream into groups of the given size, with the last group
    * possibly smaller than requested due to end-of-stream.
    */
   def grouped(n: Int): Duct[In, immutable.Seq[Out]]
+
+  /**
+   * Chunk up this stream into groups of elements received within a time window,
+   * or limited by the given number of elements, whatever happens first.
+   * Empty groups will not be emitted if no elements are received from upstream.
+   * The last group before end-of-stream will contain the buffered elements
+   * since the previously emitted group.
+   */
+  def groupedWithin(n: Int, d: FiniteDuration): Duct[In, immutable.Seq[Out]]
 
   /**
    * Transform each input element into a sequence of output elements that is
@@ -113,19 +148,18 @@ trait Duct[In, +Out] {
    * ordinary instance variables. The [[Transformer]] is executed by an actor and
    * therefore you don not have to add any additional thread safety or memory
    * visibility constructs to access the state from the callback methods.
+   *
+   * Note that you can use [[akka.stream.TimerTransformer]] if you need support
+   * for scheduled events in the transformer.
    */
   def transform[U](transformer: Transformer[Out, U]): Duct[In, U]
 
   /**
-   * This transformation stage works exactly like [[#transform]] with the
-   * change that failure signaled from upstream will invoke
-   * [[RecoveryTransformer#onError]], which can emit an additional sequence of
-   * elements before the stream ends.
-   *
-   * After normal completion or error the [[RecoveryTransformer#cleanup]] function
-   * is called.
+   * Takes up to n elements from the stream and returns a pair containing a strict sequence of the taken element
+   * and a stream representing the remaining elements. If ''n'' is zero or negative, then this will return a pair
+   * of an empty collection and a stream containing the whole upstream unchanged.
    */
-  def transformRecover[U](recoveryTransformer: RecoveryTransformer[Out, U]): Duct[In, U]
+  def prefixAndTail(n: Int): Duct[In, (immutable.Seq[Out], Producer[Out @uncheckedVariance])]
 
   /**
    * This operation demultiplexes the incoming stream into separate output
@@ -187,6 +221,60 @@ trait Duct[In, +Out] {
   def tee(other: Consumer[_ >: Out]): Duct[In, Out]
 
   /**
+   * Transforms a stream of streams into a contiguous stream of elements using the provided flattening strategy.
+   * This operation can be used on a stream of element type [[Producer]].
+   */
+  def flatten[U](strategy: FlattenStrategy[Out, U]): Duct[In, U]
+
+  /**
+   * Allows a faster upstream to progress independently of a slower consumer by conflating elements into a summary
+   * until the consumer is ready to accept them. For example a conflate step might average incoming numbers if the
+   * upstream producer is faster.
+   *
+   * This element only rolls up elements if the upstream is faster, but if the downstream is faster it will not
+   * duplicate elements.
+   *
+   * @param seed Provides the first state for a conflated value using the first unconsumed element as a start
+   * @param aggregate Takes the currently aggregated value and the current pending element to produce a new aggregate
+   */
+  def conflate[S](seed: Out ⇒ S, aggregate: (S, Out) ⇒ S): Duct[In, S]
+
+  /**
+   * Allows a faster downstream to progress independently of a slower producer by extrapolating elements from an older
+   * element until new element comes from the upstream. For example an expand step might repeat the last element for
+   * the consumer until it receives an update from upstream.
+   *
+   * This element will never "drop" upstream elements as all elements go through at least one extrapolation step.
+   * This means that if the upstream is actually faster than the upstream it will be backpressured by the downstream
+   * consumer.
+   *
+   * @param seed Provides the first state for extrapolation using the first unconsumed element
+   * @param extrapolate Takes the current extrapolation state to produce an output element and the next extrapolation
+   *                    state.
+   */
+  def expand[S, U](seed: Out ⇒ S, extrapolate: S ⇒ (U, S)): Duct[In, U]
+
+  /**
+   * Adds a fixed size buffer in the flow that allows to store elements from a faster upstream until it becomes full.
+   * Depending on the defined [[OverflowStrategy]] it might drop elements or backpressure the upstream if there is no
+   * space available
+   *
+   * @param size The size of the buffer in element count
+   * @param overflowStrategy Strategy that is used when incoming elements cannot fit inside the buffer
+   */
+  def buffer(size: Int, overflowStrategy: OverflowStrategy): Duct[In, Out]
+
+  /**
+   * Append the operations of a [[Duct]] to this `Duct`.
+   */
+  def append[U](duct: Duct[_ >: In, U]): Duct[In, U]
+
+  /**
+   * INTERNAL API
+   */
+  private[akka] def appendJava[U](duct: akka.stream.javadsl.Duct[_ >: In, U]): Duct[In, U]
+
+  /**
    * Materialize this `Duct` by attaching it to the specified downstream `consumer`
    * and return a `Consumer` representing the input side of the `Duct`.
    * The returned `Consumer` can later be connected to an upstream `Producer`.
@@ -233,6 +321,12 @@ trait Duct[In, +Out] {
    * broken down into individual processing steps.
    */
   def build(materializer: FlowMaterializer): (Consumer[In], Producer[Out] @uncheckedVariance)
+
+  /**
+   * INTERNAL API
+   * Used by `Flow.append(duct)`.
+   */
+  private[akka] def ops: immutable.Seq[Ast.AstNode]
 
 }
 

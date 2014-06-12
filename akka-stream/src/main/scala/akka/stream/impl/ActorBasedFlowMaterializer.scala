@@ -8,9 +8,7 @@ import scala.collection.immutable
 import org.reactivestreams.api.{ Consumer, Processor, Producer }
 import org.reactivestreams.spi.Subscriber
 import akka.actor.ActorRefFactory
-import akka.stream.{ MaterializerSettings, FlowMaterializer }
-import akka.stream.Transformer
-import akka.stream.RecoveryTransformer
+import akka.stream.{ OverflowStrategy, MaterializerSettings, FlowMaterializer, Transformer }
 import scala.util.Try
 import scala.concurrent.Future
 import scala.util.Success
@@ -22,20 +20,23 @@ import akka.actor.ExtensionId
 import akka.actor.ExtendedActorSystem
 import akka.actor.ActorSystem
 import akka.actor.Extension
+import akka.stream.actor.ActorConsumer
+import scala.concurrent.duration.FiniteDuration
+import akka.stream.TimerTransformer
 
 /**
  * INTERNAL API
  */
 private[akka] object Ast {
-  trait AstNode {
+  sealed trait AstNode {
     def name: String
   }
 
   case class Transform(transformer: Transformer[Any, Any]) extends AstNode {
     override def name = transformer.name
   }
-  case class Recover(recoveryTransformer: RecoveryTransformer[Any, Any]) extends AstNode {
-    override def name = recoveryTransformer.name
+  case class MapFuture(f: Any ⇒ Future[Any]) extends AstNode {
+    override def name = "mapFuture"
   }
   case class GroupBy(f: Any ⇒ Any) extends AstNode {
     override def name = "groupBy"
@@ -54,6 +55,24 @@ private[akka] object Ast {
   }
   case class Tee(other: Consumer[Any]) extends AstNode {
     override def name = "tee"
+  }
+  case class PrefixAndTail(n: Int) extends AstNode {
+    override def name = "prefixAndTail"
+  }
+  case object ConcatAll extends AstNode {
+    override def name = "concatFlatten"
+  }
+
+  case class Conflate(seed: Any ⇒ Any, aggregate: (Any, Any) ⇒ Any) extends AstNode {
+    override def name = "conflate"
+  }
+
+  case class Expand(seed: Any ⇒ Any, extrapolate: Any ⇒ (Any, Any)) extends AstNode {
+    override def name = "expand"
+  }
+
+  case class Buffer(size: Int, overflowStrategy: OverflowStrategy) extends AstNode {
+    override def name = "buffer"
   }
 
   trait ProducerNode[I] {
@@ -94,6 +113,11 @@ private[akka] object Ast {
             name = s"$flowName-0-future"), Some(future))
       }
   }
+  final case class TickProducerNode[I](interval: FiniteDuration, tick: () ⇒ I) extends ProducerNode[I] {
+    def createProducer(materializer: ActorBasedFlowMaterializer, flowName: String): Producer[I] =
+      new ActorProducer(materializer.context.actorOf(TickProducer.props(interval, tick, materializer.settings),
+        name = s"$flowName-0-tick"))
+  }
 }
 
 /**
@@ -123,10 +147,10 @@ private[akka] object ActorBasedFlowMaterializer {
  * INTERNAL API
  */
 private[akka] class ActorBasedFlowMaterializer(
-  val settings: MaterializerSettings,
+  settings: MaterializerSettings,
   _context: ActorRefFactory,
   namePrefix: String)
-  extends FlowMaterializer {
+  extends FlowMaterializer(settings) {
   import Ast._
   import ActorBasedFlowMaterializer._
 
@@ -190,35 +214,12 @@ private[akka] class ActorBasedFlowMaterializer(
       override def onNext(element: Any) = List(element)
     })
 
-  override def consume[I](producerNode: ProducerNode[I], ops: List[AstNode]): Unit = {
-    val flowName = createFlowName()
-    val consumer = consume(ops, flowName)
-    producerNode.createProducer(this, flowName).produceTo(consumer.asInstanceOf[Consumer[I]])
-  }
-
-  private def consume[In, Out](ops: List[Ast.AstNode], flowName: String): Consumer[In] = {
-    val c = ops match {
-      case Nil ⇒
-        new ActorConsumer[Any](context.actorOf(ActorConsumer.props(settings, blackholeTransform),
-          name = s"$flowName-1-consume"))
-      case head :: tail ⇒
-        val opsSize = ops.size
-        val c = new ActorConsumer[Any](context.actorOf(ActorConsumer.props(settings, head),
-          name = s"$flowName-$opsSize-${head.name}"))
-        processorChain(c, tail, flowName, ops.size - 1)
-    }
-    c.asInstanceOf[Consumer[In]]
-  }
-
   def processorForNode(op: AstNode, flowName: String, n: Int): Processor[Any, Any] =
     new ActorProcessor(context.actorOf(ActorProcessor.props(settings, op),
       name = s"$flowName-$n-${op.name}"))
 
   override def ductProduceTo[In, Out](consumer: Consumer[Out], ops: List[Ast.AstNode]): Consumer[In] =
     processorChain(consumer, ops, createFlowName(), ops.size).asInstanceOf[Consumer[In]]
-
-  override def ductConsume[In](ops: List[Ast.AstNode]): Consumer[In] =
-    consume(ops, createFlowName)
 
   override def ductBuild[In, Out](ops: List[Ast.AstNode]): (Consumer[In], Producer[Out]) = {
     val flowName = createFlowName()

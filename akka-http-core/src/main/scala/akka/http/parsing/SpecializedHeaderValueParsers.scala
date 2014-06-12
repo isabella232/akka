@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.parsing
@@ -10,6 +10,9 @@ import akka.http.model.{ HttpHeader, ErrorInfo }
 import akka.http.model.headers.`Content-Length`
 import akka.http.model.parser.CharacterClasses._
 
+/**
+ * INTERNAL API
+ */
 private object SpecializedHeaderValueParsers {
   import HttpHeaderParser._
 

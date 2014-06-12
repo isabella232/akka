@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -15,7 +15,7 @@ sealed trait HttpForm {
 /**
  * Model for `application/x-www-form-urlencoded` form data.
  */
-case class FormData(fields: Uri.Query) extends HttpForm {
+final case class FormData(fields: Uri.Query) extends HttpForm {
   type FieldType = (String, String)
 }
 
@@ -29,7 +29,7 @@ object FormData {
  * All parts must contain a Content-Disposition header with a type form-data
  * and a name parameter that is unique
  */
-case class MultipartFormData(fields: immutable.Seq[BodyPart]) extends HttpForm {
+final case class MultipartFormData(fields: immutable.Seq[BodyPart]) extends HttpForm {
   type FieldType = BodyPart
   def get(partName: String): Option[BodyPart] = fields.find(_.name.exists(_ == partName))
 }
@@ -46,7 +46,7 @@ object MultipartFormData {
   }
 }
 
-case class FormFile(name: Option[String], entity: HttpEntity.Default)
+final case class FormFile(name: Option[String], entity: HttpEntity.Default)
 
 object FormFile {
   def apply(name: String, entity: HttpEntity.Default): FormFile = apply(Some(name), entity)

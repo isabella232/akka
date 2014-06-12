@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -19,14 +19,16 @@ sealed abstract class HttpEncodingRange extends japi.headers.HttpEncodingRange w
 
 object HttpEncodingRange {
   case class `*`(qValue: Float) extends HttpEncodingRange {
-    def render[R <: Rendering](r: R): r.type = if (qValue < 1.0f) r ~~ "*;q=" ~~ qValue else r ~~ '*'
+    require(0.0f <= qValue && qValue <= 1.0f, "qValue must be >= 0 and <= 1.0")
+    final def render[R <: Rendering](r: R): r.type = if (qValue < 1.0f) r ~~ "*;q=" ~~ qValue else r ~~ '*'
     def matches(encoding: HttpEncoding) = true
     def withQValue(qValue: Float) =
       if (qValue == 1.0f) `*` else if (qValue != this.qValue) `*`(qValue.toFloat) else this
   }
   object `*` extends `*`(1.0f)
 
-  case class One(encoding: HttpEncoding, qValue: Float) extends HttpEncodingRange {
+  final case class One(encoding: HttpEncoding, qValue: Float) extends HttpEncodingRange {
+    require(0.0f <= qValue && qValue <= 1.0f, "qValue must be >= 0 and <= 1.0")
     def matches(encoding: HttpEncoding) = this.encoding.value.equalsIgnoreCase(encoding.value)
     def withQValue(qValue: Float) = One(encoding, qValue)
     def render[R <: Rendering](r: R): r.type = if (qValue < 1.0f) r ~~ encoding ~~ ";q=" ~~ qValue else r ~~ encoding
@@ -36,7 +38,7 @@ object HttpEncodingRange {
   def apply(encoding: HttpEncoding, qValue: Float): HttpEncodingRange = One(encoding, qValue)
 }
 
-case class HttpEncoding private[http] (value: String) extends japi.headers.HttpEncoding with LazyValueBytesRenderable with WithQValue[HttpEncodingRange] {
+final case class HttpEncoding private[http] (value: String) extends japi.headers.HttpEncoding with LazyValueBytesRenderable with WithQValue[HttpEncodingRange] {
   def withQValue(qValue: Float): HttpEncodingRange = HttpEncodingRange(this, qValue.toFloat)
 }
 

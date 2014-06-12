@@ -1,3 +1,7 @@
+/**
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ */
+
 package akka.http.model.japi;
 
 /**
@@ -6,6 +10,6 @@ package akka.http.model.japi;
 public final class HttpProtocols {
     private HttpProtocols() {}
 
-    final HttpProtocol Http10 = akka.http.model.HttpProtocols.HTTP$div1$u002E0();
-    final HttpProtocol Http11 = akka.http.model.HttpProtocols.HTTP$div1$u002E1();
+    final HttpProtocol HTTP_1_0 = akka.http.model.HttpProtocols.HTTP$div1$u002E0();
+    final HttpProtocol HTTP_1_1 = akka.http.model.HttpProtocols.HTTP$div1$u002E1();
 }

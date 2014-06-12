@@ -1,10 +1,10 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model.parser
 
-import org.parboiled2._
+import akka.parboiled2._
 
 private[parser] trait IpAddressParsing { this: Parser ⇒
   import CharacterClasses._

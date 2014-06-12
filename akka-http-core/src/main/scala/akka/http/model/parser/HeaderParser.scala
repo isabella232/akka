@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.model
@@ -10,8 +10,8 @@ import scala.collection.immutable
 import scala.util.control.NonFatal
 import akka.http.util.SingletonException
 import akka.http.model.{ ErrorInfo, HttpHeader }
-import org.parboiled2._
-import shapeless._
+import akka.parboiled2._
+import akka.shapeless._
 
 private[http] class HeaderParser(val input: ParserInput) extends Parser with DynamicRuleHandler[HeaderParser, HttpHeader :: HNil]
   with CommonRules

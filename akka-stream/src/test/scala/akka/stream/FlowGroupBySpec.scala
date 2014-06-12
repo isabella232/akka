@@ -16,7 +16,8 @@ class FlowGroupBySpec extends AkkaSpec {
     initialInputBufferSize = 2,
     maximumInputBufferSize = 2,
     initialFanOutBufferSize = 2,
-    maxFanOutBufferSize = 2))
+    maxFanOutBufferSize = 2,
+    dispatcher = "akka.test.stream-dispatcher"))
 
   case class StreamPuppet(p: Producer[Int]) {
     val probe = StreamTestKit.consumerProbe[Int]
@@ -203,9 +204,7 @@ class FlowGroupBySpec extends AkkaSpec {
       val consumer = StreamTestKit.consumerProbe[(Int, Producer[Int])]
       producer.produceTo(consumer)
 
-      val subscription = consumer.expectSubscription()
-      subscription.requestMore(100)
-      consumer.expectComplete()
+      consumer.expectCompletedOrSubscriptionFollowedByComplete()
     }
 
     "abort on onError from upstream" in {

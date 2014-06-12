@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.client
@@ -9,7 +9,7 @@ import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import akka.http.util._
 
-case class ProxySettings(host: String, port: Int, nonProxyHosts: List[String]) {
+final case class ProxySettings(host: String, port: Int, nonProxyHosts: List[String]) {
   require(host.nonEmpty, "proxy host must be non-empty")
   require(0 < port && port < 65536, "illegal proxy port")
   require(nonProxyHosts forall validIgnore, "illegal nonProxyHosts")
@@ -47,7 +47,7 @@ object ProxySettings extends SettingsCompanion[Map[String, ProxySettings]]("akka
     proxyHost map (apply(
       _,
       proxyPort.getOrElse("80").toInt,
-      nonProxyHosts.map(_.fastSplit('|')).getOrElse(Nil)))
+      nonProxyHosts.map(_.fastSplit('|')).getOrElse(Nil).toList))
   }
 
   def fromSubConfig(c: Config) = apply(c, sys.props.toMap): Map[String, ProxySettings]

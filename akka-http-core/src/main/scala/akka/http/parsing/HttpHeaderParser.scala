@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.parsing
@@ -7,15 +7,17 @@ package akka.http.parsing
 import java.util.Arrays.copyOf
 import java.lang.{ StringBuilder ⇒ JStringBuilder }
 import scala.annotation.tailrec
-import org.parboiled2.CharUtils
+import akka.parboiled2.CharUtils
 import akka.util.ByteString
 import akka.http.util.{ SingletonException, Rendering }
-import akka.http.model.{ StatusCodes, HttpHeader, ErrorInfo }
+import akka.http.model.{ IllegalHeaderException, StatusCodes, HttpHeader, ErrorInfo }
 import akka.http.model.headers.RawHeader
 import akka.http.model.parser.HeaderParser
 import akka.http.model.parser.CharacterClasses._
 
 /**
+ * INTERNAL API
+ *
  * Provides for time- and space-efficient parsing of an HTTP header line in an HTTP message.
  * It keeps a cache of all headers encountered in a previous request, so as to avoid reparsing and recreation of header
  * model instances.
@@ -38,10 +40,10 @@ import akka.http.model.parser.CharacterClasses._
  *    The LSB of leaf nodes is zero and the (MSB value - 1) is an index into the values array.
  *
  * This design has the following consequences:
- * - Since only leaf nodes can have values the trie cannot store keys that are prefixes of other stored keys.
- * - If the trie stores n values it has less than n branching nodes (adding the first value does not create a
- *   branching node, the addition of every subsequent value creates at most one additional branching node).
- * - If the trie has n branching nodes it stores at least n * 2 and at most n * 3 values.
+ *  - Since only leaf nodes can have values the trie cannot store keys that are prefixes of other stored keys.
+ *  - If the trie stores n values it has less than n branching nodes (adding the first value does not create a
+ *    branching node, the addition of every subsequent value creates at most one additional branching node).
+ *  - If the trie has n branching nodes it stores at least n * 2 and at most n * 3 values.
  *
  * The `branchData` array keeps the branching data for branching nodes in the trie.
  * It's a flattened two-dimensional array with a row consisting of the following 3 signed 16-bit integers:
@@ -185,10 +187,10 @@ private[parsing] final class HttpHeaderParser private (
 
   /**
    * Inserts a value into the cache trie.
-   * CAUTION: this method must only be called if
-   * - the trie is not empty (use `insertRemainingCharsAsNewNodes` for inserting the very first value)
-   * - the input does not contain illegal characters
-   * - the input is not a prefix of an already stored value, i.e. the input must be properly terminated (CRLF or colon)
+   * CAUTION: this method must only be called if:
+   *  - the trie is not empty (use `insertRemainingCharsAsNewNodes` for inserting the very first value)
+   *  - the input does not contain illegal characters
+   *  - the input is not a prefix of an already stored value, i.e. the input must be properly terminated (CRLF or colon)
    */
   @tailrec
   private def insert(input: ByteString, value: AnyRef)(cursor: Int = 0, endIx: Int = input.length, nodeIx: Int = 0, colonIx: Int = 0): Unit = {
@@ -368,6 +370,9 @@ private[parsing] final class HttpHeaderParser private (
   def formatSizes: String = s"$nodeCount nodes, ${branchDataCount / 3} branchData rows, $valueCount values"
 }
 
+/**
+ * INTERNAL API
+ */
 private object HttpHeaderParser {
   import SpecializedHeaderValueParsers._
 
@@ -390,7 +395,7 @@ private object HttpHeaderParser {
     "Cache-Control: no-cache",
     "Expect: 100-continue")
 
-  private val defaultIllegalHeaderWarning: ErrorInfo ⇒ Unit = info ⇒ sys.error(info.formatPretty)
+  private val defaultIllegalHeaderWarning: ErrorInfo ⇒ Unit = info ⇒ throw new IllegalHeaderException(info)
 
   def apply(settings: ParserSettings, warnOnIllegalHeader: ErrorInfo ⇒ Unit = defaultIllegalHeaderWarning) =
     prime(unprimed(settings, warnOnIllegalHeader))
@@ -499,7 +504,7 @@ private object HttpHeaderParser {
    * @param branchRootNodeIx the nodeIx for the root node of the trie branch holding all cached header values of this type
    * @param valueCount the number of values already stored in this header-type-specific branch
    */
-  private case class ValueBranch(valueIx: Int, parser: HeaderValueParser, branchRootNodeIx: Int, valueCount: Int) {
+  private final case class ValueBranch(valueIx: Int, parser: HeaderValueParser, branchRootNodeIx: Int, valueCount: Int) {
     def withValueCountIncreased = copy(valueCount = valueCount + 1)
     def spaceLeft = valueCount < parser.maxValueCount
   }

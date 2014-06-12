@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.util
@@ -7,6 +7,8 @@ package akka.http.util
 import scala.concurrent.duration._
 
 /**
+ * INTERNAL API
+ *
  * Helper for dealing with points in time rather than durations.
  * We mark it private[http] because we don't want to support it as public API.
  */
