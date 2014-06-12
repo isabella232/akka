@@ -98,6 +98,11 @@ object HeaderType {
   val IntType = PrimitiveType("Int")
   val LongType = PrimitiveType("Long")
   val BooleanType = PrimitiveType("Boolean")
+
+  val ContentTypeType = new FullyQualifiedBaseType("ContentType")
+  val ContentRangeType = new FullyQualifiedBaseType("ContentRange")
+  val RemoteAddressType = new FullyQualifiedBaseType("RemoteAddress")
+  val TransferEncodingType = new FullyQualifiedBaseType("TransferEncoding")
 }
 
 case object UriType extends SimpleType {
@@ -117,6 +122,12 @@ case object DateTimeType extends SimpleType {
   override def convertToScala(identifier: String): String = s"((akka.http.util.DateTime) $identifier)"
 }
 
+sealed class FullyQualifiedBaseType(name: String) extends BasePackageType(name) {
+  override def baseTypeNames = Set.empty
+
+  override def javaType: String = s"akka.http.model.japi.$name"
+}
+
 case class HttpHeaderDefinition(
   name: String,
   parameters: Seq[HeaderParameter],
@@ -127,7 +138,7 @@ case class HttpHeaderDefinition(
   extraObjectContent: Option[String],
   extraClassContent: Option[String]) {
   def javaIdentifier: String =
-    name.replace('-', '_')
+    name.replace("-", "")
 
   def javaParameterGetterDefinitions(sep: String): String =
     parameters.map(_.javaGetterDefinition).mkString(sep)

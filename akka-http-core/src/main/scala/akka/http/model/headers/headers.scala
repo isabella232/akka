@@ -130,7 +130,7 @@ object `Accept-Charset` extends ModeledCompanion {
   def apply(charsetRanges: HttpCharsetRange*): `Accept-Charset` = apply(immutable.Seq(charsetRanges: _*))
   implicit val charsetRangesRenderer = Renderer.defaultSeqRenderer[HttpCharsetRange] // cache
 }
-final case class `Accept-Charset`(charsetRanges: immutable.Seq[HttpCharsetRange]) extends japi.headers.Accept_Charset with ModeledHeader {
+final case class `Accept-Charset`(charsetRanges: immutable.Seq[HttpCharsetRange]) extends japi.headers.AcceptCharset with ModeledHeader {
   import `Accept-Charset`.charsetRangesRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ charsetRanges
   protected def companion = `Accept-Charset`
@@ -144,7 +144,7 @@ object `Accept-Encoding` extends ModeledCompanion {
   def apply(encodings: HttpEncodingRange*): `Accept-Encoding` = apply(immutable.Seq(encodings: _*))
   implicit val encodingsRenderer = Renderer.defaultSeqRenderer[HttpEncodingRange] // cache
 }
-final case class `Accept-Encoding`(encodings: immutable.Seq[HttpEncodingRange]) extends japi.headers.Accept_Encoding with ModeledHeader {
+final case class `Accept-Encoding`(encodings: immutable.Seq[HttpEncodingRange]) extends japi.headers.AcceptEncoding with ModeledHeader {
   import `Accept-Encoding`.encodingsRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ encodings
   protected def companion = `Accept-Encoding`
@@ -158,7 +158,7 @@ object `Accept-Language` extends ModeledCompanion {
   def apply(languages: LanguageRange*): `Accept-Language` = apply(immutable.Seq(languages: _*))
   implicit val languagesRenderer = Renderer.defaultSeqRenderer[LanguageRange] // cache
 }
-final case class `Accept-Language`(languages: immutable.Seq[LanguageRange]) extends japi.headers.Accept_Language with ModeledHeader {
+final case class `Accept-Language`(languages: immutable.Seq[LanguageRange]) extends japi.headers.AcceptLanguage with ModeledHeader {
   import `Accept-Language`.languagesRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ languages
   protected def companion = `Accept-Language`
@@ -172,7 +172,7 @@ object `Accept-Ranges` extends ModeledCompanion {
   def apply(rangeUnits: RangeUnit*): `Accept-Ranges` = apply(immutable.Seq(rangeUnits: _*))
   implicit val rangeUnitsRenderer = Renderer.defaultSeqRenderer[RangeUnit] // cache
 }
-final case class `Accept-Ranges`(rangeUnits: immutable.Seq[RangeUnit]) extends japi.headers.Accept_Ranges with ModeledHeader {
+final case class `Accept-Ranges`(rangeUnits: immutable.Seq[RangeUnit]) extends japi.headers.AcceptRanges with ModeledHeader {
   import `Accept-Ranges`.rangeUnitsRenderer
   def renderValue[R <: Rendering](r: R): r.type = if (rangeUnits.isEmpty) r ~~ "none" else r ~~ rangeUnits
   protected def companion = `Accept-Ranges`
@@ -183,7 +183,7 @@ final case class `Accept-Ranges`(rangeUnits: immutable.Seq[RangeUnit]) extends j
 
 // http://www.w3.org/TR/cors/#access-control-allow-credentials-response-header
 object `Access-Control-Allow-Credentials` extends ModeledCompanion
-final case class `Access-Control-Allow-Credentials`(allow: Boolean) extends japi.headers.Access_Control_Allow_Credentials with ModeledHeader {
+final case class `Access-Control-Allow-Credentials`(allow: Boolean) extends japi.headers.AccessControlAllowCredentials with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ allow.toString
   protected def companion = `Access-Control-Allow-Credentials`
@@ -194,7 +194,7 @@ object `Access-Control-Allow-Headers` extends ModeledCompanion {
   def apply(headers: String*): `Access-Control-Allow-Headers` = apply(immutable.Seq(headers: _*))
   implicit val headersRenderer = Renderer.defaultSeqRenderer[String] // cache
 }
-final case class `Access-Control-Allow-Headers`(headers: immutable.Seq[String]) extends japi.headers.Access_Control_Allow_Headers with ModeledHeader {
+final case class `Access-Control-Allow-Headers`(headers: immutable.Seq[String]) extends japi.headers.AccessControlAllowHeaders with ModeledHeader {
   import `Access-Control-Allow-Headers`.headersRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ headers
   protected def companion = `Access-Control-Allow-Headers`
@@ -208,7 +208,7 @@ object `Access-Control-Allow-Methods` extends ModeledCompanion {
   def apply(methods: HttpMethod*): `Access-Control-Allow-Methods` = apply(immutable.Seq(methods: _*))
   implicit val methodsRenderer = Renderer.defaultSeqRenderer[HttpMethod] // cache
 }
-final case class `Access-Control-Allow-Methods`(methods: immutable.Seq[HttpMethod]) extends japi.headers.Access_Control_Allow_Methods with ModeledHeader {
+final case class `Access-Control-Allow-Methods`(methods: immutable.Seq[HttpMethod]) extends japi.headers.AccessControlAllowMethods with ModeledHeader {
   import `Access-Control-Allow-Methods`.methodsRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ methods
   protected def companion = `Access-Control-Allow-Methods`
@@ -219,7 +219,7 @@ final case class `Access-Control-Allow-Methods`(methods: immutable.Seq[HttpMetho
 
 // http://www.w3.org/TR/cors/#access-control-allow-origin-response-header
 object `Access-Control-Allow-Origin` extends ModeledCompanion
-final case class `Access-Control-Allow-Origin`(range: HttpOriginRange) extends japi.headers.Access_Control_Allow_Origin with ModeledHeader {
+final case class `Access-Control-Allow-Origin`(range: HttpOriginRange) extends japi.headers.AccessControlAllowOrigin with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ range
   protected def companion = `Access-Control-Allow-Origin`
@@ -230,7 +230,7 @@ object `Access-Control-Expose-Headers` extends ModeledCompanion {
   def apply(headers: String*): `Access-Control-Expose-Headers` = apply(immutable.Seq(headers: _*))
   implicit val headersRenderer = Renderer.defaultSeqRenderer[String] // cache
 }
-final case class `Access-Control-Expose-Headers`(headers: immutable.Seq[String]) extends japi.headers.Access_Control_Expose_Headers with ModeledHeader {
+final case class `Access-Control-Expose-Headers`(headers: immutable.Seq[String]) extends japi.headers.AccessControlExposeHeaders with ModeledHeader {
   import `Access-Control-Expose-Headers`.headersRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ headers
   protected def companion = `Access-Control-Expose-Headers`
@@ -241,7 +241,7 @@ final case class `Access-Control-Expose-Headers`(headers: immutable.Seq[String])
 
 // http://www.w3.org/TR/cors/#access-control-max-age-response-header
 object `Access-Control-Max-Age` extends ModeledCompanion
-final case class `Access-Control-Max-Age`(deltaSeconds: Long) extends japi.headers.Access_Control_Max_Age with ModeledHeader {
+final case class `Access-Control-Max-Age`(deltaSeconds: Long) extends japi.headers.AccessControlMaxAge with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ deltaSeconds
   protected def companion = `Access-Control-Max-Age`
@@ -252,7 +252,7 @@ object `Access-Control-Request-Headers` extends ModeledCompanion {
   def apply(headers: String*): `Access-Control-Request-Headers` = apply(immutable.Seq(headers: _*))
   implicit val headersRenderer = Renderer.defaultSeqRenderer[String] // cache
 }
-final case class `Access-Control-Request-Headers`(headers: immutable.Seq[String]) extends japi.headers.Access_Control_Request_Headers with ModeledHeader {
+final case class `Access-Control-Request-Headers`(headers: immutable.Seq[String]) extends japi.headers.AccessControlRequestHeaders with ModeledHeader {
   import `Access-Control-Request-Headers`.headersRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ headers
   protected def companion = `Access-Control-Request-Headers`
@@ -263,7 +263,7 @@ final case class `Access-Control-Request-Headers`(headers: immutable.Seq[String]
 
 // http://www.w3.org/TR/cors/#access-control-request-method-request-header
 object `Access-Control-Request-Method` extends ModeledCompanion
-final case class `Access-Control-Request-Method`(method: HttpMethod) extends japi.headers.Access_Control_Request_Method with ModeledHeader {
+final case class `Access-Control-Request-Method`(method: HttpMethod) extends japi.headers.AccessControlRequestMethod with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ method
   protected def companion = `Access-Control-Request-Method`
@@ -296,7 +296,7 @@ object `Cache-Control` extends ModeledCompanion {
   def apply(directives: CacheDirective*): `Cache-Control` = apply(immutable.Seq(directives: _*))
   implicit val directivesRenderer = Renderer.defaultSeqRenderer[CacheDirective] // cache
 }
-final case class `Cache-Control`(directives: immutable.Seq[CacheDirective]) extends japi.headers.Cache_Control with ModeledHeader {
+final case class `Cache-Control`(directives: immutable.Seq[CacheDirective]) extends japi.headers.CacheControl with ModeledHeader {
   import `Cache-Control`.directivesRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ directives
   protected def companion = `Cache-Control`
@@ -307,7 +307,7 @@ final case class `Cache-Control`(directives: immutable.Seq[CacheDirective]) exte
 
 // http://tools.ietf.org/html/rfc6266
 object `Content-Disposition` extends ModeledCompanion
-final case class `Content-Disposition`(dispositionType: ContentDispositionType, params: Map[String, String] = Map.empty) extends japi.headers.Content_Disposition with ModeledHeader {
+final case class `Content-Disposition`(dispositionType: ContentDispositionType, params: Map[String, String] = Map.empty) extends japi.headers.ContentDisposition with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = { r ~~ dispositionType; params foreach { case (k, v) ⇒ r ~~ "; " ~~ k ~~ '=' ~~# v }; r }
   protected def companion = `Content-Disposition`
@@ -321,7 +321,7 @@ object `Content-Encoding` extends ModeledCompanion {
   def apply(encodings: HttpEncoding*): `Content-Encoding` = apply(immutable.Seq(encodings: _*))
   implicit val encodingsRenderer = Renderer.defaultSeqRenderer[HttpEncoding] // cache
 }
-final case class `Content-Encoding`(encodings: immutable.Seq[HttpEncoding]) extends japi.headers.Content_Encoding with ModeledHeader {
+final case class `Content-Encoding`(encodings: immutable.Seq[HttpEncoding]) extends japi.headers.ContentEncoding with ModeledHeader {
   import `Content-Encoding`.encodingsRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ encodings
   protected def companion = `Content-Encoding`
@@ -335,7 +335,7 @@ object `Content-Range` extends ModeledCompanion {
   def apply(byteContentRange: ByteContentRange): `Content-Range` = apply(RangeUnits.Bytes, byteContentRange)
 
 }
-final case class `Content-Range`(rangeUnit: RangeUnit, contentRange: ContentRange) extends japi.headers.Content_Range with ModeledHeader {
+final case class `Content-Range`(rangeUnit: RangeUnit, contentRange: ContentRange) extends japi.headers.ContentRange with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ rangeUnit ~~ ' ' ~~ contentRange
   protected def companion = `Content-Range`
@@ -343,7 +343,7 @@ final case class `Content-Range`(rangeUnit: RangeUnit, contentRange: ContentRang
 
 // http://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-26#section-3.1.1.5
 object `Content-Type` extends ModeledCompanion
-final case class `Content-Type`(contentType: ContentType) extends japi.headers.Content_Type with ModeledHeader {
+final case class `Content-Type`(contentType: ContentType) extends japi.headers.ContentType with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ contentType
   protected def companion = `Content-Type`
@@ -393,7 +393,7 @@ object `If-Match` extends ModeledCompanion {
     `If-Match`(EntityTagRange(first +: more: _*))
 
 }
-final case class `If-Match`(m: EntityTagRange) extends japi.headers.If_Match with ModeledHeader {
+final case class `If-Match`(m: EntityTagRange) extends japi.headers.IfMatch with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ m
   protected def companion = `If-Match`
@@ -401,7 +401,7 @@ final case class `If-Match`(m: EntityTagRange) extends japi.headers.If_Match wit
 
 // http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-3.3
 object `If-Modified-Since` extends ModeledCompanion
-final case class `If-Modified-Since`(date: DateTime) extends japi.headers.If_Modified_Since with ModeledHeader {
+final case class `If-Modified-Since`(date: DateTime) extends japi.headers.IfModifiedSince with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = date.renderRfc1123DateTimeString(r)
   protected def companion = `If-Modified-Since`
@@ -414,7 +414,7 @@ object `If-None-Match` extends ModeledCompanion {
     `If-None-Match`(EntityTagRange(first +: more: _*))
 
 }
-final case class `If-None-Match`(m: EntityTagRange) extends japi.headers.If_None_Match with ModeledHeader {
+final case class `If-None-Match`(m: EntityTagRange) extends japi.headers.IfNoneMatch with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ m
   protected def companion = `If-None-Match`
@@ -422,7 +422,7 @@ final case class `If-None-Match`(m: EntityTagRange) extends japi.headers.If_None
 
 // http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-3.4
 object `If-Unmodified-Since` extends ModeledCompanion
-final case class `If-Unmodified-Since`(date: DateTime) extends japi.headers.If_Unmodified_Since with ModeledHeader {
+final case class `If-Unmodified-Since`(date: DateTime) extends japi.headers.IfUnmodifiedSince with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = date.renderRfc1123DateTimeString(r)
   protected def companion = `If-Unmodified-Since`
@@ -430,7 +430,7 @@ final case class `If-Unmodified-Since`(date: DateTime) extends japi.headers.If_U
 
 // http://tools.ietf.org/html/draft-ietf-httpbis-p4-conditional-26#section-2.2
 object `Last-Modified` extends ModeledCompanion
-final case class `Last-Modified`(date: DateTime) extends japi.headers.Last_Modified with ModeledHeader {
+final case class `Last-Modified`(date: DateTime) extends japi.headers.LastModified with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = date.renderRfc1123DateTimeString(r)
   protected def companion = `Last-Modified`
@@ -481,7 +481,7 @@ object `Proxy-Authenticate` extends ModeledCompanion {
   def apply(challenges: HttpChallenge*): `Proxy-Authenticate` = apply(immutable.Seq(challenges: _*))
   implicit val challengesRenderer = Renderer.defaultSeqRenderer[HttpChallenge] // cache
 }
-final case class `Proxy-Authenticate`(challenges: immutable.Seq[HttpChallenge]) extends japi.headers.Proxy_Authenticate with ModeledHeader {
+final case class `Proxy-Authenticate`(challenges: immutable.Seq[HttpChallenge]) extends japi.headers.ProxyAuthenticate with ModeledHeader {
   import `Proxy-Authenticate`.challengesRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ challenges
   protected def companion = `Proxy-Authenticate`
@@ -492,7 +492,7 @@ final case class `Proxy-Authenticate`(challenges: immutable.Seq[HttpChallenge]) 
 
 // http://tools.ietf.org/html/draft-ietf-httpbis-p7-auth-26#section-4.4
 object `Proxy-Authorization` extends ModeledCompanion
-final case class `Proxy-Authorization`(credentials: HttpCredentials) extends japi.headers.Proxy_Authorization with ModeledHeader {
+final case class `Proxy-Authorization`(credentials: HttpCredentials) extends japi.headers.ProxyAuthorization with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ credentials
   protected def companion = `Proxy-Authorization`
@@ -515,14 +515,14 @@ final case class Range(rangeUnit: RangeUnit, ranges: immutable.Seq[ByteRange]) e
 }
 
 object `Raw-Request-URI` extends ModeledCompanion
-final case class `Raw-Request-URI`(uri: String) extends japi.headers.Raw_Request_URI with ModeledHeader {
+final case class `Raw-Request-URI`(uri: String) extends japi.headers.RawRequestURI with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ uri
   protected def companion = `Raw-Request-URI`
 }
 
 object `Remote-Address` extends ModeledCompanion
-final case class `Remote-Address`(address: RemoteAddress) extends japi.headers.Remote_Address with ModeledHeader {
+final case class `Remote-Address`(address: RemoteAddress) extends japi.headers.RemoteAddress with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ address
   protected def companion = `Remote-Address`
@@ -546,7 +546,7 @@ final case class Server(products: immutable.Seq[ProductVersion]) extends japi.he
 
 // https://tools.ietf.org/html/rfc6265
 object `Set-Cookie` extends ModeledCompanion
-final case class `Set-Cookie`(cookie: HttpCookie) extends japi.headers.Set_Cookie with ModeledHeader {
+final case class `Set-Cookie`(cookie: HttpCookie) extends japi.headers.SetCookie with ModeledHeader {
 
   def renderValue[R <: Rendering](r: R): r.type = r ~~ cookie
   protected def companion = `Set-Cookie`
@@ -557,7 +557,7 @@ object `Transfer-Encoding` extends ModeledCompanion {
   def apply(encodings: TransferEncoding*): `Transfer-Encoding` = apply(immutable.Seq(encodings: _*))
   implicit val encodingsRenderer = Renderer.defaultSeqRenderer[TransferEncoding] // cache
 }
-final case class `Transfer-Encoding`(encodings: immutable.Seq[TransferEncoding]) extends japi.headers.Transfer_Encoding with ModeledHeader {
+final case class `Transfer-Encoding`(encodings: immutable.Seq[TransferEncoding]) extends japi.headers.TransferEncoding with ModeledHeader {
   import `Transfer-Encoding`.encodingsRenderer
   def hasChunked: Boolean = encodings contains TransferEncodings.chunked
   def renderValue[R <: Rendering](r: R): r.type = r ~~ encodings
@@ -574,7 +574,7 @@ object `User-Agent` extends ModeledCompanion {
   def apply(products: ProductVersion*): `User-Agent` = apply(immutable.Seq(products: _*))
   implicit val productsRenderer = Renderer.seqRenderer[ProductVersion](separator = " ") // cache
 }
-final case class `User-Agent`(products: immutable.Seq[ProductVersion]) extends japi.headers.User_Agent with ModeledHeader {
+final case class `User-Agent`(products: immutable.Seq[ProductVersion]) extends japi.headers.UserAgent with ModeledHeader {
   import `User-Agent`.productsRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ products
   protected def companion = `User-Agent`
@@ -588,7 +588,7 @@ object `WWW-Authenticate` extends ModeledCompanion {
   def apply(challenges: HttpChallenge*): `WWW-Authenticate` = apply(immutable.Seq(challenges: _*))
   implicit val challengesRenderer = Renderer.defaultSeqRenderer[HttpChallenge] // cache
 }
-final case class `WWW-Authenticate`(challenges: immutable.Seq[HttpChallenge]) extends japi.headers.WWW_Authenticate with ModeledHeader {
+final case class `WWW-Authenticate`(challenges: immutable.Seq[HttpChallenge]) extends japi.headers.WWWAuthenticate with ModeledHeader {
   import `WWW-Authenticate`.challengesRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ challenges
   protected def companion = `WWW-Authenticate`
@@ -605,7 +605,7 @@ object `X-Forwarded-For` extends ModeledCompanion {
   def apply(addresses: RemoteAddress*): `X-Forwarded-For` = apply(immutable.Seq(addresses: _*))
   implicit val addressesRenderer = Renderer.defaultSeqRenderer[RemoteAddress] // cache
 }
-final case class `X-Forwarded-For`(addresses: immutable.Seq[RemoteAddress]) extends japi.headers.X_Forwarded_For with ModeledHeader {
+final case class `X-Forwarded-For`(addresses: immutable.Seq[RemoteAddress]) extends japi.headers.XForwardedFor with ModeledHeader {
   import `X-Forwarded-For`.addressesRenderer
   def renderValue[R <: Rendering](r: R): r.type = r ~~ addresses
   protected def companion = `X-Forwarded-For`
