@@ -12,14 +12,14 @@ import java.util.Map;
 public final class MediaRanges {
     private MediaRanges() {}
 
-    public static final MediaRange All = akka.http.model.MediaRanges.$times$div$times();
-    public static final MediaRange AllApplication = akka.http.model.MediaRanges.application$div$times();
-    public static final MediaRange AllAudio = akka.http.model.MediaRanges.audio$div$times();
-    public static final MediaRange AllImage = akka.http.model.MediaRanges.image$div$times();
-    public static final MediaRange AllMessage = akka.http.model.MediaRanges.message$div$times();
-    public static final MediaRange AllMultipart = akka.http.model.MediaRanges.multipart$div$times();
-    public static final MediaRange AllText = akka.http.model.MediaRanges.text$div$times();
-    public static final MediaRange AllVideo= akka.http.model.MediaRanges.video$div$times();
+    public static final MediaRange ALL             = akka.http.model.MediaRanges.$times$div$times();
+    public static final MediaRange ALL_APPLICATION = akka.http.model.MediaRanges.application$div$times();
+    public static final MediaRange ALL_AUDIO       = akka.http.model.MediaRanges.audio$div$times();
+    public static final MediaRange ALL_IMAGE       = akka.http.model.MediaRanges.image$div$times();
+    public static final MediaRange ALL_MESSAGE     = akka.http.model.MediaRanges.message$div$times();
+    public static final MediaRange ALL_MULTIPART   = akka.http.model.MediaRanges.multipart$div$times();
+    public static final MediaRange ALL_TEXT        = akka.http.model.MediaRanges.text$div$times();
+    public static final MediaRange ALL_VIDEO       = akka.http.model.MediaRanges.video$div$times();
 
     /**
      * Creates a custom universal media-range for a given main-type.
