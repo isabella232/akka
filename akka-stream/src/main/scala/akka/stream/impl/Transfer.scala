@@ -1,10 +1,8 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.stream.impl
 
-import org.reactivestreams.spi.{ Subscriber, Subscription }
-import java.util.Arrays
 import scala.util.control.NonFatal
 import akka.actor.{ Actor, ActorRefFactory }
 
@@ -66,6 +64,9 @@ private[akka] trait Outputs {
   def enqueueOutputElement(elem: Any): Unit
 
   def subreceive: SubReceive
+
+  // FIXME: This is completely unnecessary, refactor MapFutureProcessorImpl
+  def demandCount: Long = -1L
 
   def complete(): Unit
   def cancel(e: Throwable): Unit
@@ -140,7 +141,6 @@ private[akka] case class TransferPhase(precondition: TransferState)(val action: 
  * INTERNAL API
  */
 private[akka] trait Pump {
-  protected def pumpContext: ActorRefFactory
   private var transferState: TransferState = NotInitialized
   private var currentAction: () ⇒ Unit =
     () ⇒ throw new IllegalStateException("Pump has been not initialized with a phase")
@@ -160,7 +160,7 @@ private[akka] trait Pump {
   // Generate upstream requestMore for every Nth consumed input element
   final def pump(): Unit = {
     try while (transferState.isExecutable) {
-      ActorBasedFlowMaterializer.withCtx(pumpContext)(currentAction())
+      currentAction()
     } catch { case NonFatal(e) ⇒ pumpFailed(e) }
 
     if (isPumpFinished) pumpFinished()

@@ -14,7 +14,7 @@ import akka.http.model.parser.CharacterClasses
 import akka.http.model._
 import headers._
 import HttpProtocols._
-import org.reactivestreams.api.Producer
+import org.reactivestreams.Publisher
 import akka.stream.scaladsl.Flow
 
 /**
@@ -23,6 +23,7 @@ import akka.stream.scaladsl.Flow
 private[http] abstract class HttpMessageParser[Output >: ParserOutput.MessageOutput <: ParserOutput](val settings: ParserSettings,
                                                                                                      val headerParser: HttpHeaderParser)
   extends Transformer[ByteString, Output] {
+  import settings._
 
   sealed trait StateResult // phantom type for ensuring soundness of our parsing method setup
 
@@ -100,10 +101,10 @@ private[http] abstract class HttpMessageParser[Output >: ParserOutput.MessageOut
       case h: `Transfer-Encoding` ⇒
         parseHeaderLines(input, lineEnd, headers, headerCount + 1, ch, clh, cth, Some(h), hh)
 
-      case h if headerCount < settings.maxHeaderCount ⇒
+      case h if headerCount < maxHeaderCount ⇒
         parseHeaderLines(input, lineEnd, h :: headers, headerCount + 1, ch, clh, cth, teh, hh || h.isInstanceOf[Host])
 
-      case _ ⇒ fail(s"HTTP message contains more than the configured limit of ${settings.maxHeaderCount} headers")
+      case _ ⇒ fail(s"HTTP message contains more than the configured limit of $maxHeaderCount headers")
     }
   }
 
@@ -127,6 +128,7 @@ private[http] abstract class HttpMessageParser[Output >: ParserOutput.MessageOut
       } else {
         val offset = bodyStart + remainingBodyBytes.toInt
         emit(ParserOutput.EntityPart(input.slice(bodyStart, offset)))
+        emit(ParserOutput.MessageEnd)
         if (isLastMessage) terminate()
         else startNewMessage(input, offset)
       }
@@ -142,11 +144,12 @@ private[http] abstract class HttpMessageParser[Output >: ParserOutput.MessageOut
           val lastChunk =
             if (extension.isEmpty && headers.isEmpty) HttpEntity.LastChunk else HttpEntity.LastChunk(extension, headers)
           emit(ParserOutput.EntityChunk(lastChunk))
+          emit(ParserOutput.MessageEnd)
           if (isLastMessage) terminate()
           else startNewMessage(input, lineEnd)
-        case header if headerCount < settings.maxHeaderCount ⇒
+        case header if headerCount < maxHeaderCount ⇒
           parseTrailer(extension, lineEnd, header :: headers, headerCount + 1)
-        case _ ⇒ fail(s"Chunk trailer contains more than the configured limit of ${settings.maxHeaderCount} headers")
+        case _ ⇒ fail(s"Chunk trailer contains more than the configured limit of $maxHeaderCount headers")
       }
     }
 
@@ -165,24 +168,24 @@ private[http] abstract class HttpMessageParser[Output >: ParserOutput.MessageOut
       } else parseTrailer(extension, cursor)
 
     @tailrec def parseChunkExtensions(chunkSize: Int, cursor: Int)(startIx: Int = cursor): StateResult =
-      if (cursor - startIx <= settings.maxChunkExtLength) {
+      if (cursor - startIx <= maxChunkExtLength) {
         def extension = asciiString(input, startIx, cursor)
         byteChar(input, cursor) match {
           case '\r' if byteChar(input, cursor + 1) == '\n' ⇒ parseChunkBody(chunkSize, extension, cursor + 2)
           case '\n' ⇒ parseChunkBody(chunkSize, extension, cursor + 1)
           case _ ⇒ parseChunkExtensions(chunkSize, cursor + 1)(startIx)
         }
-      } else fail(s"HTTP chunk extension length exceeds configured limit of ${settings.maxChunkExtLength} characters")
+      } else fail(s"HTTP chunk extension length exceeds configured limit of $maxChunkExtLength characters")
 
     @tailrec def parseSize(cursor: Int, size: Long): StateResult =
-      if (size <= settings.maxChunkSize) {
+      if (size <= maxChunkSize) {
         byteChar(input, cursor) match {
           case c if CharacterClasses.HEXDIG(c) ⇒ parseSize(cursor + 1, size * 16 + CharUtils.hexValue(c))
           case ';' if cursor > offset ⇒ parseChunkExtensions(size.toInt, cursor + 1)()
           case '\r' if cursor > offset && byteChar(input, cursor + 1) == '\n' ⇒ parseChunkBody(size.toInt, "", cursor + 2)
           case c ⇒ fail(s"Illegal character '${escape(c)}' in chunk start")
         }
-      } else fail(s"HTTP chunk size exceeds the configured limit of ${settings.maxChunkSize} bytes")
+      } else fail(s"HTTP chunk size exceeds the configured limit of $maxChunkSize bytes")
 
     try parseSize(offset, 0)
     catch {
@@ -236,14 +239,14 @@ private[http] abstract class HttpMessageParser[Output >: ParserOutput.MessageOut
     HttpEntity.Strict(contentType(cth), input.slice(bodyStart, bodyStart + contentLength))
 
   def defaultEntity(cth: Option[`Content-Type`], contentLength: Long,
-                    materializer: FlowMaterializer)(entityParts: Producer[_ <: ParserOutput]): HttpEntity.Regular = {
-    val data = Flow(entityParts).collect { case ParserOutput.EntityPart(bytes) ⇒ bytes }.toProducer(materializer)
+                    materializer: FlowMaterializer)(entityParts: Publisher[_ <: ParserOutput]): HttpEntity.Regular = {
+    val data = Flow(entityParts).collect { case ParserOutput.EntityPart(bytes) ⇒ bytes }.toPublisher()(materializer)
     HttpEntity.Default(contentType(cth), contentLength, data)
   }
 
   def chunkedEntity(cth: Option[`Content-Type`],
-                    materializer: FlowMaterializer)(entityChunks: Producer[_ <: ParserOutput]): HttpEntity.Regular = {
-    val chunks = Flow(entityChunks).collect { case ParserOutput.EntityChunk(chunk) ⇒ chunk }.toProducer(materializer)
+                    materializer: FlowMaterializer)(entityChunks: Publisher[_ <: ParserOutput]): HttpEntity.Regular = {
+    val chunks = Flow(entityChunks).collect { case ParserOutput.EntityChunk(chunk) ⇒ chunk }.toPublisher()(materializer)
     HttpEntity.Chunked(contentType(cth), chunks)
   }
 }

@@ -4,14 +4,14 @@
 package akka.stream.testkit
 
 import akka.actor.ActorSystem
-import scala.annotation.tailrec
-import scala.collection.immutable
-import scala.concurrent.forkjoin.ThreadLocalRandom
-import scala.concurrent.duration._
-import scala.util.control.NonFatal
-import akka.stream.scaladsl.Flow
 import akka.stream.MaterializerSettings
+import akka.stream.scaladsl.Flow
+import akka.stream.testkit.StreamTestKit._
 import org.scalatest.Matchers
+
+import scala.annotation.tailrec
+import scala.concurrent.duration._
+import scala.concurrent.forkjoin.ThreadLocalRandom
 
 trait ScriptedTest extends Matchers {
 
@@ -89,11 +89,11 @@ trait ScriptedTest extends Matchers {
     var currentScript = script
     var remainingDemand = script.expectedOutputs.size + ThreadLocalRandom.current().nextInt(1, maximumOverrun)
     debugLog(s"starting with remainingDemand=$remainingDemand")
-    var pendingRequests = 0
-    var outstandingDemand = 0
+    var pendingRequests: Long = 0
+    var outstandingDemand: Long = 0
     var completed = false
 
-    def getNextDemand(): Int = {
+    def getNextDemand(): Long = {
       val max = Math.min(remainingDemand, maximumRequest)
       if (max == 1) {
         remainingDemand = 0
@@ -107,9 +107,9 @@ trait ScriptedTest extends Matchers {
 
     def debugLog(msg: String): Unit = _debugLog :+= msg
 
-    def requestMore(demand: Int): Unit = {
+    def request(demand: Long): Unit = {
       debugLog(s"test environment requests $demand")
-      downstreamSubscription.requestMore(demand)
+      downstreamSubscription.request(demand)
       outstandingDemand += demand
     }
 
@@ -158,7 +158,7 @@ trait ScriptedTest extends Matchers {
             upstreamSubscription.sendNext(input)
             doRun(nextIdle)
           } else if (mayRequestMore && (!mayProvideInput || !tieBreak)) {
-            requestMore(getNextDemand())
+            request(getNextDemand())
             doRun(nextIdle)
           } else {
             if (currentScript.noInsPending && !completed) {
@@ -174,7 +174,7 @@ trait ScriptedTest extends Matchers {
 
       try {
         debugLog(s"running $script")
-        requestMore(getNextDemand())
+        request(getNextDemand())
         doRun(0)
       } catch {
         case e: Throwable ⇒

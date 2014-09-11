@@ -3,26 +3,21 @@
  */
 package akka.stream.extra
 
-import akka.stream.testkit.{ AkkaConsumerProbe, StreamTestKit, ScriptedTest, AkkaSpec }
-import akka.stream.{ FlowMaterializer, MaterializerSettings }
+import akka.stream.{ MaterializerSettings, FlowMaterializer }
+import akka.stream.scaladsl.{ Duct, Flow }
+import akka.stream.testkit.{ AkkaSpec, ScriptedTest, StreamTestKit }
 import akka.testkit.TestProbe
-import akka.stream.scaladsl.{ Flow, Duct }
-import org.reactivestreams.api.{ Producer, Consumer }
+import org.reactivestreams.{ Publisher, Subscriber }
 
 class FlowTimedSpec extends AkkaSpec with ScriptedTest {
 
   import scala.concurrent.duration._
 
-  val settings = MaterializerSettings(
-    initialInputBufferSize = 2,
-    maximumInputBufferSize = 16,
-    initialFanOutBufferSize = 1,
-    maxFanOutBufferSize = 16,
-    dispatcher = "akka.test.stream-dispatcher")
+  val settings = MaterializerSettings(system)
+    .withInputBuffer(initialSize = 2, maxSize = 16)
+    .withFanOutBuffer(initialSize = 1, maxSize = 16)
 
-  lazy val metricsConfig = system.settings.config
-
-  val materializer = FlowMaterializer(settings)
+  implicit val materializer = FlowMaterializer(settings)
 
   "Timed Flow" must {
 
@@ -82,14 +77,14 @@ class FlowTimedSpec extends AkkaSpec with ScriptedTest {
 
       val duct: Duct[Int, Long] = Duct[Int].map(_.toLong).timedIntervalBetween(in ⇒ in % 2 == 1, d ⇒ probe.ref ! d)
 
-      val c1 = StreamTestKit.consumerProbe[Long]()
-      val c2: Consumer[Int] = duct.produceTo(materializer, c1)
+      val c1 = StreamTestKit.SubscriberProbe[Long]()
+      val c2: Subscriber[Int] = duct.produceTo(c1)
 
-      val p = Flow(List(1, 2, 3)).toProducer(materializer)
-      p.produceTo(c2)
+      val p = Flow(List(1, 2, 3)).toPublisher()
+      p.subscribe(c2)
 
       val s = c1.expectSubscription()
-      s.requestMore(100)
+      s.request(100)
       c1.expectNext(1L)
       c1.expectNext(2L)
       c1.expectNext(3L)
@@ -111,16 +106,16 @@ class FlowTimedSpec extends AkkaSpec with ScriptedTest {
             map(_.toString), duration ⇒ probe.ref ! duration).
           map { s: String ⇒ s + "!" }
 
-      val (ductIn: Consumer[Int], ductOut: Producer[String]) = duct.build(materializer)
+      val (ductIn: Subscriber[Int], ductOut: Publisher[String]) = duct.build()
 
-      val c1 = StreamTestKit.consumerProbe[String]()
-      val c2 = ductOut.produceTo(c1)
+      val c1 = StreamTestKit.SubscriberProbe[String]()
+      val c2 = ductOut.subscribe(c1)
 
-      val p = Flow(0 to 100).toProducer(materializer)
-      p.produceTo(ductIn)
+      val p = Flow(0 to 100).toPublisher()
+      p.subscribe(ductIn)
 
       val s = c1.expectSubscription()
-      s.requestMore(200)
+      s.request(200)
       0 to 100 foreach { i ⇒ c1.expectNext(i.toString + "!") }
       c1.expectComplete()
 

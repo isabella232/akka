@@ -3,26 +3,18 @@
  */
 package akka.stream.impl
 
+import java.util.concurrent.atomic.AtomicLong
+
+import akka.actor.{ Actor, ActorCell, ActorRef, ActorSystem, ExtendedActorSystem, Extension, ExtensionId, ExtensionIdProvider, LocalActorRef, Props, RepointableActorRef }
+import akka.pattern.ask
+import akka.stream._
+import org.reactivestreams.{ Processor, Publisher, Subscriber }
+
 import scala.annotation.tailrec
 import scala.collection.immutable
-import org.reactivestreams.api.{ Consumer, Processor, Producer }
-import org.reactivestreams.spi.Subscriber
-import akka.actor.ActorRefFactory
-import akka.stream.{ OverflowStrategy, MaterializerSettings, FlowMaterializer, Transformer }
-import scala.util.Try
-import scala.concurrent.Future
-import scala.util.Success
-import scala.util.Failure
-import java.util.concurrent.atomic.AtomicLong
-import akka.actor.ActorContext
-import akka.actor.ExtensionIdProvider
-import akka.actor.ExtensionId
-import akka.actor.ExtendedActorSystem
-import akka.actor.ActorSystem
-import akka.actor.Extension
-import akka.stream.actor.ActorConsumer
-import scala.concurrent.duration.FiniteDuration
-import akka.stream.TimerTransformer
+import scala.concurrent.{ Await, Future }
+import scala.concurrent.duration._
+import scala.util.{ Failure, Success }
 
 /**
  * INTERNAL API
@@ -32,9 +24,11 @@ private[akka] object Ast {
     def name: String
   }
 
-  case class Transform(transformer: Transformer[Any, Any]) extends AstNode {
-    override def name = transformer.name
+  case class FanoutBox(initialBufferSize: Int, maximumBufferSize: Int) extends AstNode {
+    override def name = "fanoutBox"
   }
+  case class Transform(name: String, mkTransformer: () ⇒ Transformer[Any, Any]) extends AstNode
+  case class TimerTransform(name: String, mkTransformer: () ⇒ TimerTransformer[Any, Any]) extends AstNode
   case class MapFuture(f: Any ⇒ Future[Any]) extends AstNode {
     override def name = "mapFuture"
   }
@@ -44,17 +38,17 @@ private[akka] object Ast {
   case class SplitWhen(p: Any ⇒ Boolean) extends AstNode {
     override def name = "splitWhen"
   }
-  case class Merge(other: Producer[Any]) extends AstNode {
+  case class Merge(other: Publisher[Any]) extends AstNode {
     override def name = "merge"
   }
-  case class Zip(other: Producer[Any]) extends AstNode {
+  case class Zip(other: Publisher[Any]) extends AstNode {
     override def name = "zip"
   }
-  case class Concat(next: Producer[Any]) extends AstNode {
+  case class Concat(next: Publisher[Any]) extends AstNode {
     override def name = "concat"
   }
-  case class Tee(other: Consumer[Any]) extends AstNode {
-    override def name = "tee"
+  case class Broadcast(other: Subscriber[Any]) extends AstNode {
+    override def name = "broadcast"
   }
   case class PrefixAndTail(n: Int) extends AstNode {
     override def name = "prefixAndTail"
@@ -75,47 +69,47 @@ private[akka] object Ast {
     override def name = "buffer"
   }
 
-  trait ProducerNode[I] {
-    private[akka] def createProducer(materializer: ActorBasedFlowMaterializer, flowName: String): Producer[I]
+  trait PublisherNode[I] {
+    private[akka] def createPublisher(materializer: ActorBasedFlowMaterializer, flowName: String): Publisher[I]
   }
 
-  final case class ExistingProducer[I](producer: Producer[I]) extends ProducerNode[I] {
-    def createProducer(materializer: ActorBasedFlowMaterializer, flowName: String) = producer
+  final case class ExistingPublisher[I](publisher: Publisher[I]) extends PublisherNode[I] {
+    def createPublisher(materializer: ActorBasedFlowMaterializer, flowName: String) = publisher
   }
 
-  final case class IteratorProducerNode[I](iterator: Iterator[I]) extends ProducerNode[I] {
-    final def createProducer(materializer: ActorBasedFlowMaterializer, flowName: String): Producer[I] =
-      if (iterator.isEmpty) EmptyProducer.asInstanceOf[Producer[I]]
-      else new ActorProducer[I](materializer.context.actorOf(IteratorProducer.props(iterator, materializer.settings),
+  final case class IteratorPublisherNode[I](iterator: Iterator[I]) extends PublisherNode[I] {
+    final def createPublisher(materializer: ActorBasedFlowMaterializer, flowName: String): Publisher[I] =
+      if (iterator.isEmpty) EmptyPublisher[I]
+      else ActorPublisher[I](materializer.actorOf(IteratorPublisher.props(iterator, materializer.settings),
         name = s"$flowName-0-iterator"))
   }
-  final case class IterableProducerNode[I](iterable: immutable.Iterable[I]) extends ProducerNode[I] {
-    def createProducer(materializer: ActorBasedFlowMaterializer, flowName: String): Producer[I] =
-      if (iterable.isEmpty) EmptyProducer.asInstanceOf[Producer[I]]
-      else new ActorProducer[I](materializer.context.actorOf(IterableProducer.props(iterable, materializer.settings),
+  final case class IterablePublisherNode[I](iterable: immutable.Iterable[I]) extends PublisherNode[I] {
+    def createPublisher(materializer: ActorBasedFlowMaterializer, flowName: String): Publisher[I] =
+      if (iterable.isEmpty) EmptyPublisher[I]
+      else ActorPublisher[I](materializer.actorOf(IterablePublisher.props(iterable, materializer.settings),
         name = s"$flowName-0-iterable"), Some(iterable))
   }
-  final case class ThunkProducerNode[I](f: () ⇒ I) extends ProducerNode[I] {
-    def createProducer(materializer: ActorBasedFlowMaterializer, flowName: String): Producer[I] =
-      new ActorProducer(materializer.context.actorOf(ActorProducer.props(materializer.settings, f),
+  final case class ThunkPublisherNode[I](f: () ⇒ I) extends PublisherNode[I] {
+    def createPublisher(materializer: ActorBasedFlowMaterializer, flowName: String): Publisher[I] =
+      ActorPublisher[I](materializer.actorOf(SimpleCallbackPublisher.props(materializer.settings, f),
         name = s"$flowName-0-thunk"))
   }
-  final case class FutureProducerNode[I](future: Future[I]) extends ProducerNode[I] {
-    def createProducer(materializer: ActorBasedFlowMaterializer, flowName: String): Producer[I] =
+  final case class FuturePublisherNode[I](future: Future[I]) extends PublisherNode[I] {
+    def createPublisher(materializer: ActorBasedFlowMaterializer, flowName: String): Publisher[I] =
       future.value match {
         case Some(Success(element)) ⇒
-          new ActorProducer[I](materializer.context.actorOf(IterableProducer.props(List(element), materializer.settings),
+          ActorPublisher[I](materializer.actorOf(IterablePublisher.props(List(element), materializer.settings),
             name = s"$flowName-0-future"), Some(future))
         case Some(Failure(t)) ⇒
-          ErrorProducer(t).asInstanceOf[Producer[I]]
+          ErrorPublisher(t).asInstanceOf[Publisher[I]]
         case None ⇒
-          new ActorProducer[I](materializer.context.actorOf(FutureProducer.props(future, materializer.settings),
+          ActorPublisher[I](materializer.actorOf(FuturePublisher.props(future, materializer.settings),
             name = s"$flowName-0-future"), Some(future))
       }
   }
-  final case class TickProducerNode[I](interval: FiniteDuration, tick: () ⇒ I) extends ProducerNode[I] {
-    def createProducer(materializer: ActorBasedFlowMaterializer, flowName: String): Producer[I] =
-      new ActorProducer(materializer.context.actorOf(TickProducer.props(interval, tick, materializer.settings),
+  final case class TickPublisherNode[I](initialDelay: FiniteDuration, interval: FiniteDuration, tick: () ⇒ I) extends PublisherNode[I] {
+    def createPublisher(materializer: ActorBasedFlowMaterializer, flowName: String): Publisher[I] =
+      ActorPublisher[I](materializer.actorOf(TickPublisher.props(initialDelay, interval, tick, materializer.settings),
         name = s"$flowName-0-tick"))
   }
 }
@@ -123,105 +117,73 @@ private[akka] object Ast {
 /**
  * INTERNAL API
  */
-private[akka] object ActorBasedFlowMaterializer {
-
-  val ctx = new ThreadLocal[ActorRefFactory]
-
-  def withCtx[T](arf: ActorRefFactory)(block: ⇒ T): T = {
-    val old = ctx.get()
-    ctx.set(arf)
-    try block
-    finally ctx.set(old)
-  }
-
-  def currentActorContext(): ActorContext =
-    ActorBasedFlowMaterializer.ctx.get() match {
-      case c: ActorContext ⇒ c
-      case _ ⇒
-        throw new IllegalStateException(s"Transformer [${getClass.getName}] is running without ActorContext")
-    }
-
-}
-
-/**
- * INTERNAL API
- */
-private[akka] class ActorBasedFlowMaterializer(
-  settings: MaterializerSettings,
-  _context: ActorRefFactory,
+private[akka] case class ActorBasedFlowMaterializer(
+  override val settings: MaterializerSettings,
+  supervisor: ActorRef,
+  flowNameCounter: AtomicLong,
   namePrefix: String)
   extends FlowMaterializer(settings) {
-  import Ast._
-  import ActorBasedFlowMaterializer._
+  import akka.stream.impl.Ast._
 
-  _context match {
-    case _: ActorSystem | _: ActorContext ⇒ // ok
-    case null                             ⇒ throw new IllegalArgumentException("ActorRefFactory context must be defined")
-    case _ ⇒ throw new IllegalArgumentException(s"ActorRefFactory context must be a ActorSystem or ActorContext, " +
-      "got [${_contex.getClass.getName}]")
-  }
+  def withNamePrefix(name: String): FlowMaterializer = this.copy(namePrefix = name)
 
-  def context = ctx.get() match {
-    case null ⇒ _context
-    case x    ⇒ x
-  }
-
-  def withNamePrefix(name: String): FlowMaterializer =
-    new ActorBasedFlowMaterializer(settings, _context, name)
-
-  private def system: ActorSystem = _context match {
-    case s: ExtendedActorSystem ⇒ s
-    case c: ActorContext        ⇒ c.system
-    case _ ⇒
-      throw new IllegalArgumentException(s"Unknown ActorRefFactory [${_context.getClass.getName}")
-  }
-
-  private def nextFlowNameCount(): Long = FlowNameCounter(system).counter.incrementAndGet()
+  private def nextFlowNameCount(): Long = flowNameCounter.incrementAndGet()
 
   private def createFlowName(): String = s"$namePrefix-${nextFlowNameCount()}"
 
-  @tailrec private def processorChain(topConsumer: Consumer[_], ops: immutable.Seq[AstNode],
-                                      flowName: String, n: Int): Consumer[_] = {
+  @tailrec private def processorChain(topSubscriber: Subscriber[_], ops: immutable.Seq[AstNode],
+                                      flowName: String, n: Int): Subscriber[_] = {
     ops match {
       case op :: tail ⇒
         val opProcessor: Processor[Any, Any] = processorForNode(op, flowName, n)
-        opProcessor.produceTo(topConsumer.asInstanceOf[Consumer[Any]])
+        opProcessor.subscribe(topSubscriber.asInstanceOf[Subscriber[Any]])
         processorChain(opProcessor, tail, flowName, n - 1)
-      case _ ⇒ topConsumer
+      case _ ⇒ topSubscriber
     }
   }
 
   // Ops come in reverse order
-  override def toProducer[I, O](producerNode: ProducerNode[I], ops: List[AstNode]): Producer[O] = {
+  override def toPublisher[I, O](publisherNode: PublisherNode[I], ops: List[AstNode]): Publisher[O] = {
     val flowName = createFlowName()
-    if (ops.isEmpty) producerNode.createProducer(this, flowName).asInstanceOf[Producer[O]]
+    if (ops.isEmpty) publisherNode.createPublisher(this, flowName).asInstanceOf[Publisher[O]]
     else {
       val opsSize = ops.size
       val opProcessor = processorForNode(ops.head, flowName, opsSize)
-      val topConsumer = processorChain(opProcessor, ops.tail, flowName, opsSize - 1)
-      producerNode.createProducer(this, flowName).produceTo(topConsumer.asInstanceOf[Consumer[I]])
-      opProcessor.asInstanceOf[Producer[O]]
+      val topSubscriber = processorChain(opProcessor, ops.tail, flowName, opsSize - 1)
+      publisherNode.createPublisher(this, flowName).subscribe(topSubscriber.asInstanceOf[Subscriber[I]])
+      opProcessor.asInstanceOf[Publisher[O]]
     }
   }
 
-  private val blackholeTransform = Transform(
-    new Transformer[Any, Any] {
-      override def onNext(element: Any) = Nil
-    })
-
-  private val identityTransform = Transform(
+  private val identityTransform = Transform("identity", () ⇒
     new Transformer[Any, Any] {
       override def onNext(element: Any) = List(element)
     })
 
-  def processorForNode(op: AstNode, flowName: String, n: Int): Processor[Any, Any] =
-    new ActorProcessor(context.actorOf(ActorProcessor.props(settings, op),
-      name = s"$flowName-$n-${op.name}"))
+  def processorForNode(op: AstNode, flowName: String, n: Int): Processor[Any, Any] = {
+    val impl = actorOf(ActorProcessor.props(settings, op), s"$flowName-$n-${op.name}")
+    ActorProcessor(impl)
+  }
 
-  override def ductProduceTo[In, Out](consumer: Consumer[Out], ops: List[Ast.AstNode]): Consumer[In] =
-    processorChain(consumer, ops, createFlowName(), ops.size).asInstanceOf[Consumer[In]]
+  def actorOf(props: Props, name: String): ActorRef = supervisor match {
+    case ref: LocalActorRef ⇒
+      ref.underlying.attachChild(props, name, systemService = false)
+    case ref: RepointableActorRef ⇒
+      if (ref.isStarted)
+        ref.underlying.asInstanceOf[ActorCell].attachChild(props, name, systemService = false)
+      else {
+        implicit val timeout = ref.system.settings.CreationTimeout
+        val f = (supervisor ? StreamSupervisor.Materialize(props, name)).mapTo[ActorRef]
+        Await.result(f, timeout.duration)
+      }
+    case _ ⇒
+      throw new IllegalStateException(s"Stream supervisor must be a local actor, was [${supervisor.getClass.getName}]")
+  }
 
-  override def ductBuild[In, Out](ops: List[Ast.AstNode]): (Consumer[In], Producer[Out]) = {
+  override def ductProduceTo[In, Out](subscriber: Subscriber[Out], ops: List[Ast.AstNode]): Subscriber[In] =
+    processorChain(subscriber, ops, createFlowName(), ops.size).asInstanceOf[Subscriber[In]]
+
+  override def ductBuild[In, Out](ops: List[Ast.AstNode]): (Subscriber[In], Publisher[Out]) = {
     val flowName = createFlowName()
     if (ops.isEmpty) {
       val identityProcessor: Processor[In, Out] = processorForNode(identityTransform, flowName, 1).asInstanceOf[Processor[In, Out]]
@@ -229,8 +191,8 @@ private[akka] class ActorBasedFlowMaterializer(
     } else {
       val opsSize = ops.size
       val outProcessor = processorForNode(ops.head, flowName, opsSize).asInstanceOf[Processor[In, Out]]
-      val topConsumer = processorChain(outProcessor, ops.tail, flowName, opsSize - 1).asInstanceOf[Processor[In, Out]]
-      (topConsumer, outProcessor)
+      val topSubscriber = processorChain(outProcessor, ops.tail, flowName, opsSize - 1).asInstanceOf[Processor[In, Out]]
+      (topSubscriber, outProcessor)
     }
   }
 
@@ -250,4 +212,23 @@ private[akka] object FlowNameCounter extends ExtensionId[FlowNameCounter] with E
  */
 private[akka] class FlowNameCounter extends Extension {
   val counter = new AtomicLong(0)
+}
+
+/**
+ * INTERNAL API
+ */
+private[akka] object StreamSupervisor {
+  def props(settings: MaterializerSettings): Props = Props(new StreamSupervisor(settings))
+
+  case class Materialize(props: Props, name: String)
+}
+
+private[akka] class StreamSupervisor(settings: MaterializerSettings) extends Actor {
+  import StreamSupervisor._
+
+  def receive = {
+    case Materialize(props, name) ⇒
+      val impl = context.actorOf(props, name)
+      sender() ! impl
+  }
 }

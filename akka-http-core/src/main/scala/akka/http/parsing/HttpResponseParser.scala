@@ -4,7 +4,7 @@
 
 package akka.http.parsing
 
-import org.reactivestreams.api.Producer
+import org.reactivestreams.Publisher
 import scala.annotation.tailrec
 import akka.http.model.parser.CharacterClasses
 import akka.stream.FlowMaterializer
@@ -21,6 +21,7 @@ private[http] class HttpResponseParser(_settings: ParserSettings,
                                        materializer: FlowMaterializer,
                                        dequeueRequestMethodForNextResponse: () ⇒ HttpMethod = () ⇒ NoMethod)(_headerParser: HttpHeaderParser = HttpHeaderParser(_settings))
   extends HttpMessageParser[ParserOutput.ResponseOutput](_settings, _headerParser) {
+  import settings._
 
   private[this] var requestMethodForCurrentResponse: HttpMethod = NoMethod
   private[this] var statusCode: StatusCode = StatusCodes.OK
@@ -65,17 +66,17 @@ private[http] class HttpResponseParser(_settings: ParserSettings,
   }
 
   @tailrec private def parseReason(input: ByteString, startIx: Int)(cursor: Int = startIx): Int =
-    if (cursor - startIx <= settings.maxResponseReasonLength)
+    if (cursor - startIx <= maxResponseReasonLength)
       if (byteChar(input, cursor) == '\r' && byteChar(input, cursor + 1) == '\n') cursor + 2
       else parseReason(input, startIx)(cursor + 1)
     else throw new ParsingException("Response reason phrase exceeds the configured limit of " +
-      settings.maxResponseReasonLength + " characters")
+      maxResponseReasonLength + " characters")
 
   // http://tools.ietf.org/html/rfc7230#section-3.3
   def parseEntity(headers: List[HttpHeader], protocol: HttpProtocol, input: ByteString, bodyStart: Int,
                   clh: Option[`Content-Length`], cth: Option[`Content-Type`], teh: Option[`Transfer-Encoding`],
                   hostHeaderPresent: Boolean, closeAfterResponseCompletion: Boolean): StateResult = {
-    def emitResponseStart(createEntity: Producer[ParserOutput.ResponseOutput] ⇒ HttpEntity) =
+    def emitResponseStart(createEntity: Publisher[ParserOutput.ResponseOutput] ⇒ HttpEntity) =
       emit(ParserOutput.ResponseStart(statusCode, protocol, headers, createEntity, closeAfterResponseCompletion))
     def finishEmptyResponse() = {
       emitResponseStart(emptyEntity(cth))
@@ -86,8 +87,8 @@ private[http] class HttpResponseParser(_settings: ParserSettings,
       teh match {
         case None ⇒ clh match {
           case Some(`Content-Length`(contentLength)) ⇒
-            if (contentLength > settings.maxContentLength)
-              fail(s"Response Content-Length $contentLength exceeds the configured limit of ${settings.maxContentLength}")
+            if (contentLength > maxContentLength)
+              fail(s"Response Content-Length $contentLength exceeds the configured limit of $maxContentLength")
             else if (contentLength == 0) finishEmptyResponse()
             else if (contentLength < input.size - bodyStart) {
               val cl = contentLength.toInt
@@ -99,7 +100,7 @@ private[http] class HttpResponseParser(_settings: ParserSettings,
             }
           case None ⇒
             emitResponseStart { entityParts ⇒
-              val data = Flow(entityParts).collect { case ParserOutput.EntityPart(bytes) ⇒ bytes }.toProducer(materializer)
+              val data = Flow(entityParts).collect { case ParserOutput.EntityPart(bytes) ⇒ bytes }.toPublisher()(materializer)
               HttpEntity.CloseDelimited(contentType(cth), data)
             }
             parseToCloseBody(input, bodyStart)
@@ -118,11 +119,9 @@ private[http] class HttpResponseParser(_settings: ParserSettings,
 
   // currently we do not check for `settings.maxContentLength` overflow
   def parseToCloseBody(input: ByteString, bodyStart: Int): StateResult = {
-    val remainingInputBytes = input.length - bodyStart
-    if (remainingInputBytes > 0) {
+    if (input.length > bodyStart)
       emit(ParserOutput.EntityPart(input drop bodyStart))
-      continue(parseToCloseBody)
-    } else continue(input, bodyStart)(parseToCloseBody)
+    continue(parseToCloseBody)
   }
 }
 

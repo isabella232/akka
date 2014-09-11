@@ -12,6 +12,8 @@ import scala.collection.immutable
 private[akka] class PrefixAndTailImpl(_settings: MaterializerSettings, val takeMax: Int)
   extends MultiStreamOutputProcessor(_settings) {
 
+  import MultiStreamOutputProcessor._
+
   var taken = immutable.Vector.empty[Any]
   var left = takeMax
 
@@ -28,7 +30,7 @@ private[akka] class PrefixAndTailImpl(_settings: MaterializerSettings, val takeM
     }
   }
 
-  def streamTailPhase(substream: SubstreamOutputs) = TransferPhase(primaryInputs.NeedsInput && substream.NeedsDemand) { () ⇒
+  def streamTailPhase(substream: SubstreamOutput) = TransferPhase(primaryInputs.NeedsInput && substream.NeedsDemand) { () ⇒
     substream.enqueueOutputElement(primaryInputs.dequeueInputElement())
   }
 
@@ -38,13 +40,13 @@ private[akka] class PrefixAndTailImpl(_settings: MaterializerSettings, val takeM
   }
 
   def emitEmptyTail(): Unit = {
-    primaryOutputs.enqueueOutputElement((taken, EmptyProducer))
+    primaryOutputs.enqueueOutputElement((taken, EmptyPublisher))
     nextPhase(completedPhase)
   }
 
   def emitNonEmptyTail(): Unit = {
-    val substreamOutput = newSubstream()
-    primaryOutputs.enqueueOutputElement((taken, substreamOutput.processor))
+    val substreamOutput = createSubstreamOutput()
+    primaryOutputs.enqueueOutputElement((taken, substreamOutput))
     primaryOutputs.complete()
     nextPhase(streamTailPhase(substreamOutput))
   }

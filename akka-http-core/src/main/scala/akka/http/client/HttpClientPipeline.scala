@@ -37,31 +37,31 @@ private[http] class HttpClientPipeline(effectiveSettings: ClientConnectionSettin
   def apply(tcpConn: StreamTcp.OutgoingTcpConnection): Http.OutgoingConnection = {
     val requestMethodByPass = new RequestMethodByPass(tcpConn.remoteAddress)
 
-    val (contextBypassConsumer, contextBypassProducer) =
-      Duct[(HttpRequest, Any)].map(_._2).build(materializer)
+    val (contextBypassSubscriber, contextBypassPublisher) =
+      Duct[(HttpRequest, Any)].map(_._2).build()(materializer)
 
-    val requestConsumer =
+    val requestSubscriber =
       Duct[(HttpRequest, Any)]
-        .tee(contextBypassConsumer)
+        .broadcast(contextBypassSubscriber)
         .map(requestMethodByPass)
-        .transform(responseRendererFactory.newRenderer)
+        .transform("renderer", () ⇒ responseRendererFactory.newRenderer)
         .flatten(FlattenStrategy.concat)
-        .transform(errorLogger(log, "Outgoing request stream error"))
-        .produceTo(materializer, tcpConn.outputStream)
+        .transform("errorLogger", () ⇒ errorLogger(log, "Outgoing request stream error"))
+        .produceTo(tcpConn.outputStream)(materializer)
 
-    val responseProducer =
+    val responsePublisher =
       Flow(tcpConn.inputStream)
-        .transform(rootParser.copyWith(warnOnIllegalHeader, requestMethodByPass))
+        .transform("rootParser", () ⇒ rootParser.copyWith(warnOnIllegalHeader, requestMethodByPass))
         .splitWhen(_.isInstanceOf[MessageStart])
         .headAndTail(materializer)
         .collect {
           case (ResponseStart(statusCode, protocol, headers, createEntity, _), entityParts) ⇒
             HttpResponse(statusCode, headers, createEntity(entityParts), protocol)
         }
-        .zip(contextBypassProducer)
-        .toProducer(materializer)
+        .zip(contextBypassPublisher)
+        .toPublisher()(materializer)
 
-    val processor = HttpClientProcessor(requestConsumer.getSubscriber, responseProducer.getPublisher)
+    val processor = HttpClientProcessor(requestSubscriber, responsePublisher)
     Http.OutgoingConnection(tcpConn.remoteAddress, tcpConn.localAddress, processor)
   }
 

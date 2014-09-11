@@ -3,15 +3,15 @@
  */
 package akka.stream.io
 
-import scala.util.control.NoStackTrace
 import akka.actor._
-import akka.stream.impl._
-import akka.io.{ IO, Tcp }
 import akka.io.Tcp._
-import akka.util.ByteString
-import org.reactivestreams.api.{ Consumer, Producer }
-import org.reactivestreams.spi.Publisher
+import akka.io.{ IO, Tcp }
 import akka.stream.MaterializerSettings
+import akka.stream.impl._
+import akka.util.ByteString
+import org.reactivestreams.Publisher
+
+import scala.util.control.NoStackTrace
 
 /**
  * INTERNAL API
@@ -19,30 +19,21 @@ import akka.stream.MaterializerSettings
 private[akka] object TcpListenStreamActor {
   class TcpListenStreamException(msg: String) extends RuntimeException(msg) with NoStackTrace
 
-  def props(bindCmd: Tcp.Bind, requester: ActorRef, settings: MaterializerSettings): Props =
-    Props(new TcpListenStreamActor(bindCmd, requester, settings)).withDispatcher(settings.dispatcher)
-
-  case class ConnectionProducer(getPublisher: Publisher[StreamTcp.IncomingTcpConnection])
-    extends Producer[StreamTcp.IncomingTcpConnection] {
-
-    def produceTo(consumer: Consumer[StreamTcp.IncomingTcpConnection]): Unit =
-      getPublisher.subscribe(consumer.getSubscriber)
+  def props(bindCmd: Tcp.Bind, requester: ActorRef, settings: MaterializerSettings): Props = {
+    Props(new TcpListenStreamActor(bindCmd, requester, settings))
   }
+
 }
 
 /**
  * INTERNAL API
  */
-private[akka] class TcpListenStreamActor(bindCmd: Tcp.Bind, requester: ActorRef, val settings: MaterializerSettings) extends Actor
-  with Pump {
-  import TcpListenStreamActor._
+private[akka] class TcpListenStreamActor(bindCmd: Tcp.Bind, requester: ActorRef, settings: MaterializerSettings) extends Actor
+  with Pump with Stash {
+  import akka.stream.io.TcpListenStreamActor._
   import context.system
 
-  object primaryOutputs extends FanoutOutputs(settings.maxFanOutBufferSize, settings.initialFanOutBufferSize, self, pump = this) {
-    override def afterShutdown(): Unit = {
-      incomingConnections.cancel()
-      context.stop(self)
-    }
+  object primaryOutputs extends SimpleOutputs(self, pump = this) {
 
     override def waitingExposedPublisher: Actor.Receive = {
       case ExposedPublisher(publisher) ⇒
@@ -56,9 +47,12 @@ private[akka] class TcpListenStreamActor(bindCmd: Tcp.Bind, requester: ActorRef,
     def getExposedPublisher = exposedPublisher
   }
 
-  override protected def pumpFinished(): Unit = incomingConnections.cancel()
+  override protected def pumpFinished(): Unit = {
+    incomingConnections.cancel()
+    context.stop(self)
+  }
+
   override protected def pumpFailed(e: Throwable): Unit = fail(e)
-  override protected def pumpContext: ActorRefFactory = context
 
   val incomingConnections: Inputs = new DefaultInputTransferStates {
     var listener: ActorRef = _
@@ -72,7 +66,7 @@ private[akka] class TcpListenStreamActor(bindCmd: Tcp.Bind, requester: ActorRef,
         listener ! ResumeAccepting(1)
         requester ! StreamTcp.TcpServerBinding(
           localAddress,
-          ConnectionProducer(primaryOutputs.getExposedPublisher.asInstanceOf[Publisher[StreamTcp.IncomingTcpConnection]]))
+          primaryOutputs.getExposedPublisher.asInstanceOf[Publisher[StreamTcp.IncomingTcpConnection]])
         subreceive.become(running)
       case f: CommandFailed ⇒
         val ex = new TcpListenStreamException("Bind failed")
@@ -107,12 +101,21 @@ private[akka] class TcpListenStreamActor(bindCmd: Tcp.Bind, requester: ActorRef,
 
   }
 
-  override def receive: Actor.Receive = primaryOutputs.subreceive orElse incomingConnections.subreceive
+  final override def receive = {
+    // FIXME using Stash mailbox is not the best for performance, we probably want a better solution to this
+    case ep: ExposedPublisher ⇒
+      primaryOutputs.subreceive(ep)
+      context become activeReceive
+      unstashAll()
+    case _ ⇒ stash()
+  }
+
+  def activeReceive: Actor.Receive = primaryOutputs.subreceive orElse incomingConnections.subreceive
 
   def runningPhase = TransferPhase(primaryOutputs.NeedsDemand && incomingConnections.NeedsInput) { () ⇒
     val (connected: Connected, connection: ActorRef) = incomingConnections.dequeueInputElement()
     val tcpStreamActor = context.actorOf(TcpStreamActor.inboundProps(connection, settings))
-    val processor = new ActorProcessor[ByteString, ByteString](tcpStreamActor)
+    val processor = ActorProcessor[ByteString, ByteString](tcpStreamActor)
     primaryOutputs.enqueueOutputElement(StreamTcp.IncomingTcpConnection(connected.remoteAddress, processor, processor))
   }
 

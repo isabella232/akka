@@ -3,22 +3,18 @@
  */
 package akka.stream
 
-import akka.stream.testkit.AkkaSpec
-import akka.stream.testkit.{ StreamTestKit, ScriptedTest }
-import scala.concurrent.forkjoin.ThreadLocalRandom.{ current ⇒ random }
 import akka.stream.scaladsl.Flow
-import akka.stream.impl.ActorBasedFlowMaterializer
+import akka.stream.testkit.{ AkkaSpec, ScriptedTest, StreamTestKit }
+
+import scala.concurrent.forkjoin.ThreadLocalRandom.{ current ⇒ random }
 
 class FlowMapSpec extends AkkaSpec with ScriptedTest {
 
-  val settings = MaterializerSettings(
-    initialInputBufferSize = 2,
-    maximumInputBufferSize = 16,
-    initialFanOutBufferSize = 1,
-    maxFanOutBufferSize = 16,
-    dispatcher = "akka.test.stream-dispatcher")
+  val settings = MaterializerSettings(system)
+    .withInputBuffer(initialSize = 2, maxSize = 16)
+    .withFanOutBuffer(initialSize = 1, maxSize = 16)
 
-  val gen = FlowMaterializer(settings)
+  implicit val materializer = FlowMaterializer(settings)
 
   "A Map" must {
 
@@ -28,14 +24,14 @@ class FlowMapSpec extends AkkaSpec with ScriptedTest {
     }
 
     "not blow up with high request counts" in {
-      val probe = StreamTestKit.consumerProbe[Int]
+      val probe = StreamTestKit.SubscriberProbe[Int]()
       Flow(List(1).iterator).
         map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1).map(_ + 1).
-        toProducer(gen).produceTo(probe)
+        toPublisher().subscribe(probe)
 
       val subscription = probe.expectSubscription()
       for (_ ← 1 to 10000) {
-        subscription.requestMore(Int.MaxValue)
+        subscription.request(Int.MaxValue)
       }
 
       probe.expectNext(6)

@@ -3,17 +3,13 @@
  */
 package akka.stream.impl
 
-import org.reactivestreams.api.Processor
-import org.reactivestreams.spi.Subscriber
+import akka.stream.ReactiveStreamsConstants
+import org.reactivestreams.{ Publisher, Subscriber, Subscription, Processor }
 import akka.actor._
 import akka.stream.MaterializerSettings
-import akka.event.LoggingReceive
+import akka.stream.actor.ActorSubscriber.OnSubscribe
+import akka.stream.actor.ActorSubscriberMessage.{ OnNext, OnComplete, OnError }
 import java.util.Arrays
-import scala.util.control.NonFatal
-import org.reactivestreams.api.Consumer
-import akka.stream.actor.ActorSubscriber
-import akka.stream.actor.ActorConsumer.{ OnNext, OnError, OnComplete, OnSubscribe }
-import org.reactivestreams.spi.Subscription
 import akka.stream.TimerTransformer
 
 /**
@@ -24,15 +20,15 @@ private[akka] object ActorProcessor {
   import Ast._
   def props(settings: MaterializerSettings, op: AstNode): Props =
     (op match {
-      case Transform(transformer: TimerTransformer[_, _]) ⇒
-        Props(new TimerTransformerProcessorsImpl(settings, transformer))
-      case t: Transform      ⇒ Props(new TransformProcessorImpl(settings, t.transformer))
+      case fb: FanoutBox     ⇒ Props(new FanoutProcessorImpl(settings, fb.initialBufferSize, fb.maximumBufferSize))
+      case t: TimerTransform ⇒ Props(new TimerTransformerProcessorsImpl(settings, t.mkTransformer()))
+      case t: Transform      ⇒ Props(new TransformProcessorImpl(settings, t.mkTransformer()))
       case s: SplitWhen      ⇒ Props(new SplitWhenProcessorImpl(settings, s.p))
       case g: GroupBy        ⇒ Props(new GroupByProcessorImpl(settings, g.f))
       case m: Merge          ⇒ Props(new MergeImpl(settings, m.other))
       case z: Zip            ⇒ Props(new ZipImpl(settings, z.other))
       case c: Concat         ⇒ Props(new ConcatImpl(settings, c.next))
-      case t: Tee            ⇒ Props(new TeeImpl(settings, t.other))
+      case b: Broadcast      ⇒ Props(new BroadcastImpl(settings, b.other))
       case cf: Conflate      ⇒ Props(new ConflateImpl(settings, cf.seed, cf.aggregate))
       case ex: Expand        ⇒ Props(new ExpandImpl(settings, ex.seed, ex.extrapolate))
       case bf: Buffer        ⇒ Props(new BufferImpl(settings, bf.size, bf.overflowStrategy))
@@ -40,13 +36,23 @@ private[akka] object ActorProcessor {
       case ConcatAll         ⇒ Props(new ConcatAllImpl(settings))
       case m: MapFuture      ⇒ Props(new MapFutureProcessorImpl(settings, m.f))
     }).withDispatcher(settings.dispatcher)
+
+  def apply[I, O](impl: ActorRef): ActorProcessor[I, O] = {
+    val p = new ActorProcessor[I, O](impl)
+    impl ! ExposedPublisher(p.asInstanceOf[ActorPublisher[Any]])
+    p
+  }
 }
 
 /**
  * INTERNAL API
  */
-private[akka] class ActorProcessor[I, O]( final val impl: ActorRef) extends Processor[I, O] with Consumer[I] with ActorProducerLike[O] {
-  override val getSubscriber: Subscriber[I] = new ActorSubscriber[I](impl)
+private[akka] class ActorProcessor[I, O](impl: ActorRef) extends ActorPublisher[O](impl, None)
+  with Processor[I, O] {
+  override def onSubscribe(s: Subscription): Unit = impl ! OnSubscribe(s)
+  override def onError(t: Throwable): Unit = impl ! OnError(t)
+  override def onComplete(): Unit = impl ! OnComplete
+  override def onNext(t: I): Unit = impl ! OnNext(t)
 }
 
 /**
@@ -74,7 +80,7 @@ private[akka] abstract class BatchingInputBuffer(val size: Int, val pump: Pump) 
 
     batchRemaining -= 1
     if (batchRemaining == 0 && !upstreamCompleted) {
-      upstream.requestMore(requestBatchSize)
+      upstream.request(requestBatchSize)
       batchRemaining = requestBatchSize
     }
 
@@ -120,7 +126,7 @@ private[akka] abstract class BatchingInputBuffer(val size: Int, val pump: Pump) 
     assert(subscription != null)
     upstream = subscription
     // Prefetch
-    upstream.requestMore(inputBuffer.length)
+    upstream.request(inputBuffer.length)
     subreceive.become(upstreamRunning)
   }
 
@@ -137,9 +143,10 @@ private[akka] abstract class BatchingInputBuffer(val size: Int, val pump: Pump) 
   }
 
   protected def upstreamRunning: Actor.Receive = {
-    case OnNext(element) ⇒ enqueueInputElement(element)
-    case OnComplete      ⇒ onComplete()
-    case OnError(cause)  ⇒ onError(cause)
+    case OnNext(element)           ⇒ enqueueInputElement(element)
+    case OnComplete                ⇒ onComplete()
+    case OnError(cause)            ⇒ onError(cause)
+    case OnSubscribe(subscription) ⇒ subscription.cancel() // spec rule 2.5
   }
 
   protected def completed: Actor.Receive = {
@@ -155,61 +162,49 @@ private[akka] abstract class BatchingInputBuffer(val size: Int, val pump: Pump) 
 /**
  * INTERNAL API
  */
-private[akka] abstract class FanoutOutputs(val maxBufferSize: Int, val initialBufferSize: Int, self: ActorRef, val pump: Pump)
-  extends DefaultOutputTransferStates
-  with SubscriberManagement[Any] {
+private[akka] class SimpleOutputs(self: ActorRef, val pump: Pump) extends DefaultOutputTransferStates {
 
-  override type S = ActorSubscription[Any]
-  override def createSubscription(subscriber: Subscriber[Any]): S =
-    new ActorSubscription(self, subscriber)
   protected var exposedPublisher: ActorPublisher[Any] = _
 
-  private var downstreamBufferSpace = 0
-  private var downstreamCompleted = false
-  override def demandAvailable = downstreamBufferSpace > 0
-  def demandCount: Int = downstreamBufferSpace
+  protected var subscriber: Subscriber[Any] = _
+  protected var downstreamDemand: Long = 0L
+  protected var downstreamCompleted = false
+  override def demandAvailable = downstreamDemand > 0
+  override def demandCount: Long = downstreamDemand
 
-  override val subreceive = new SubReceive(waitingExposedPublisher)
+  override def subreceive = _subreceive
+  private val _subreceive = new SubReceive(waitingExposedPublisher)
 
   def enqueueOutputElement(elem: Any): Unit = {
-    downstreamBufferSpace -= 1
-    pushToDownstream(elem)
+    downstreamDemand -= 1
+    subscriber.onNext(elem)
   }
 
-  def complete(): Unit =
+  def complete(): Unit = {
     if (!downstreamCompleted) {
       downstreamCompleted = true
-      completeDownstream()
+      if (subscriber ne null) subscriber.onComplete()
+      if (exposedPublisher ne null) exposedPublisher.shutdown(None)
     }
+  }
 
   def cancel(e: Throwable): Unit = {
     if (!downstreamCompleted) {
       downstreamCompleted = true
-      abortDownstream(e)
+      if (subscriber ne null) subscriber.onError(e)
+      if (exposedPublisher ne null) exposedPublisher.shutdown(Some(e))
     }
-    if (exposedPublisher ne null) exposedPublisher.shutdown(Some(e))
   }
 
   def isClosed: Boolean = downstreamCompleted
 
-  def afterShutdown(): Unit
-
-  override protected def requestFromUpstream(elements: Int): Unit = downstreamBufferSpace += elements
-
-  private def subscribePending(): Unit =
-    exposedPublisher.takePendingSubscribers() foreach registerSubscriber
-
-  override protected def shutdown(completed: Boolean): Unit = {
-    if (exposedPublisher ne null) {
-      if (completed) exposedPublisher.shutdown(None)
-      else exposedPublisher.shutdown(Some(new IllegalStateException("Cannot subscribe to shutdown publisher")))
+  private def subscribePending(subscribers: Seq[Subscriber[Any]]): Unit =
+    subscribers foreach { sub ⇒
+      if (subscriber eq null) {
+        subscriber = sub
+        subscriber.onSubscribe(new ActorSubscription(self, subscriber))
+      } else sub.onError(new IllegalStateException(s"${getClass.getSimpleName} ${ReactiveStreamsConstants.SupportsOnlyASingleSubscriber}"))
     }
-    afterShutdown()
-  }
-
-  override protected def cancelUpstream(): Unit = {
-    downstreamCompleted = true
-  }
 
   protected def waitingExposedPublisher: Actor.Receive = {
     case ExposedPublisher(publisher) ⇒
@@ -221,12 +216,22 @@ private[akka] abstract class FanoutOutputs(val maxBufferSize: Int, val initialBu
 
   protected def downstreamRunning: Actor.Receive = {
     case SubscribePending ⇒
-      subscribePending()
+      subscribePending(exposedPublisher.takePendingSubscribers())
     case RequestMore(subscription, elements) ⇒
-      moreRequested(subscription.asInstanceOf[ActorSubscription[Any]], elements)
+
+      // TODO centralize overflow protection
+      downstreamDemand += elements
+      if (downstreamDemand < 0) {
+        // Long has overflown
+        val demandOverflowException = new IllegalStateException(ReactiveStreamsConstants.TotalPendingDemandMustNotExceedLongMaxValue)
+        subscriber.onError(demandOverflowException)
+        cancel(demandOverflowException)
+      }
+
       pump.pump()
     case Cancel(subscription) ⇒
-      unregisterSubscription(subscription.asInstanceOf[ActorSubscription[Any]])
+      downstreamCompleted = true
+      exposedPublisher.shutdown(Some(new ActorPublisher.NormalShutdownException))
       pump.pump()
   }
 
@@ -238,23 +243,29 @@ private[akka] abstract class FanoutOutputs(val maxBufferSize: Int, val initialBu
 private[akka] abstract class ActorProcessorImpl(val settings: MaterializerSettings)
   extends Actor
   with ActorLogging
-  with SoftShutdown
-  with Pump {
+  with Pump
+  with Stash {
 
   // FIXME: make pump a member
   protected val primaryInputs: Inputs = new BatchingInputBuffer(settings.initialInputBufferSize, this) {
     override def inputOnError(e: Throwable): Unit = ActorProcessorImpl.this.onError(e)
   }
 
-  protected val primaryOutputs: FanoutOutputs =
-    new FanoutOutputs(settings.maxFanOutBufferSize, settings.initialFanOutBufferSize, self, this) {
-      override def afterShutdown(): Unit = {
-        primaryOutputsShutdown = true
-        shutdownHooks()
-      }
-    }
+  protected val primaryOutputs: Outputs = new SimpleOutputs(self, this)
 
-  override def receive = primaryInputs.subreceive orElse primaryOutputs.subreceive
+  /**
+   * Subclass may override [[#activeReceive]]
+   */
+  final override def receive = {
+    // FIXME using Stash mailbox is not the best for performance, we probably want a better solution to this
+    case ep: ExposedPublisher ⇒
+      primaryOutputs.subreceive(ep)
+      context become activeReceive
+      unstashAll()
+    case _ ⇒ stash()
+  }
+
+  def activeReceive: Receive = primaryInputs.subreceive orElse primaryOutputs.subreceive
 
   protected def onError(e: Throwable): Unit = fail(e)
 
@@ -262,29 +273,20 @@ private[akka] abstract class ActorProcessorImpl(val settings: MaterializerSettin
     log.error(e, "failure during processing") // FIXME: escalate to supervisor instead
     primaryInputs.cancel()
     primaryOutputs.cancel(e)
-    primaryOutputsShutdown = true
-    softShutdown()
+    context.stop(self)
   }
-
-  override val pumpContext = context
 
   override def pumpFinished(): Unit = {
-    if (primaryInputs.isOpen) primaryInputs.cancel()
+    primaryInputs.cancel()
     primaryOutputs.complete()
+    context.stop(self)
   }
+
   override def pumpFailed(e: Throwable): Unit = fail(e)
 
-  protected def shutdownHooks(): Unit = {
-    primaryInputs.cancel()
-    softShutdown()
-  }
-
-  var primaryOutputsShutdown = false
-
   override def postStop(): Unit = {
-    // Non-gracefully stopped, do our best here
-    if (!primaryOutputsShutdown)
-      primaryOutputs.cancel(new IllegalStateException("Processor actor terminated abruptly"))
+    primaryInputs.cancel()
+    primaryOutputs.cancel(new IllegalStateException("Processor actor terminated abruptly"))
   }
 
   override def preRestart(reason: Throwable, message: Option[Any]): Unit = {

@@ -3,41 +3,39 @@
  */
 package akka.stream
 
-import akka.stream.testkit.AkkaSpec
-import akka.stream.testkit.ScriptedTest
-import scala.concurrent.forkjoin.ThreadLocalRandom.{ current ⇒ random }
-import akka.stream.testkit.StreamTestKit
+import akka.stream.scaladsl.Flow
+import akka.stream.testkit.{ AkkaSpec, ScriptedTest, StreamTestKit }
+
 import scala.concurrent.Await
 import scala.concurrent.duration._
+import scala.concurrent.forkjoin.ThreadLocalRandom.{ current ⇒ random }
 import scala.util.Failure
-import akka.stream.scaladsl.Flow
 
 class FlowToFutureSpec extends AkkaSpec with ScriptedTest {
 
-  val materializer = FlowMaterializer(MaterializerSettings(
-    initialInputBufferSize = 2,
-    maximumInputBufferSize = 16,
-    initialFanOutBufferSize = 1,
-    maxFanOutBufferSize = 16,
-    dispatcher = "akka.test.stream-dispatcher"))
+  val settings = MaterializerSettings(system)
+    .withInputBuffer(initialSize = 2, maxSize = 16)
+    .withFanOutBuffer(initialSize = 1, maxSize = 16)
+
+  implicit val materializer = FlowMaterializer(settings)
 
   "A Flow with toFuture" must {
 
     "yield the first value" in {
-      val p = StreamTestKit.producerProbe[Int]
-      val f = Flow(p).toFuture(materializer)
+      val p = StreamTestKit.PublisherProbe[Int]()
+      val f = Flow(p).toFuture()
       val proc = p.expectSubscription
-      proc.expectRequestMore()
+      proc.expectRequest()
       proc.sendNext(42)
       Await.result(f, 100.millis) should be(42)
       proc.expectCancellation()
     }
 
     "yield the first error" in {
-      val p = StreamTestKit.producerProbe[Int]
-      val f = Flow(p).toFuture(materializer)
+      val p = StreamTestKit.PublisherProbe[Int]()
+      val f = Flow(p).toFuture()
       val proc = p.expectSubscription
-      proc.expectRequestMore()
+      proc.expectRequest()
       val ex = new RuntimeException("ex")
       proc.sendError(ex)
       Await.ready(f, 100.millis)
@@ -45,10 +43,10 @@ class FlowToFutureSpec extends AkkaSpec with ScriptedTest {
     }
 
     "yield NoSuchElementExcption for empty stream" in {
-      val p = StreamTestKit.producerProbe[Int]
-      val f = Flow(p).toFuture(materializer)
+      val p = StreamTestKit.PublisherProbe[Int]()
+      val f = Flow(p).toFuture()
       val proc = p.expectSubscription
-      proc.expectRequestMore()
+      proc.expectRequest()
       proc.sendComplete()
       Await.ready(f, 100.millis)
       f.value.get match {

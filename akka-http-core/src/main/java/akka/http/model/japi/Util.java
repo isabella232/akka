@@ -7,7 +7,7 @@ package akka.http.model.japi;
 import akka.http.model.*;
 import akka.http.util.ObjectRegistry;
 import akka.japi.Option;
-import org.reactivestreams.api.Producer;
+import org.reactivestreams.Publisher;
 import scala.None;
 import scala.None$;
 import scala.NotImplementedError;
@@ -22,20 +22,24 @@ import java.util.Map;
  */
 public abstract class Util {
     @SuppressWarnings("unchecked") // no support for covariance of option in Java
+    // needed to provide covariant conversions that the Java interfaces don't provide automatically.
+    // The alternative would be having to cast around everywhere instead of doing it here in a central place.
     public static <U, T extends U> Option<U> convertOption(scala.Option<T> o) {
         return (Option<U>)(Option) akka.japi.Option.fromScalaOption(o);
     }
-    @SuppressWarnings("unchecked") // no support for covariance of Producer in Java
-    public static <U, T extends U> Producer<U> convertProducer(Producer<T> p) {
-        return (Producer<U>)(Producer) p;
+    @SuppressWarnings("unchecked") // no support for covariance of Publisher in Java
+    // needed to provide covariant conversions that the Java interfaces don't provide automatically.
+    // The alternative would be having to cast around everywhere instead of doing it here in a central place.
+    public static <U, T extends U> Publisher<U> convertPublisher(Publisher<T> p) {
+        return (Publisher<U>)(Publisher) p;
     }
     @SuppressWarnings("unchecked")
-    public static <T, U extends T> Producer<U> upcastProducer(Producer<T> p) {
-        return (Producer<U>)(Producer) p;
+    public static <T, U extends T> Publisher<U> upcastPublisher(Publisher<T> p) {
+        return (Publisher<U>)(Publisher) p;
     }
     @SuppressWarnings("unchecked")
     public static scala.collection.immutable.Map<String, String> convertMapToScala(Map<String, String> map) {
-        return Map$.MODULE$.apply(scala.collection.JavaConverters.asScalaMapConverter(map).asScala().toSeq());
+        return Map$.MODULE$.apply(scala.collection.JavaConverters.mapAsScalaMapConverter(map).asScala().toSeq());
     }
     @SuppressWarnings("unchecked") // contains an upcast
     public static <T, U extends T> scala.Option<U> convertOptionToScala(Option<T> o) {
@@ -53,7 +57,7 @@ public abstract class Util {
 
     @SuppressWarnings("unchecked")
     public static <T, U extends T> Seq<U> convertIterable(Iterable<T> els) {
-        return scala.collection.JavaConverters.asScalaIterableConverter((Iterable<U>)els).asScala().toVector();
+        return scala.collection.JavaConverters.iterableAsScalaIterableConverter((Iterable<U>)els).asScala().toVector();
     }
     @SuppressWarnings("unchecked")
     public static <T, U extends T> Seq<U> convertArray(T[] els) {

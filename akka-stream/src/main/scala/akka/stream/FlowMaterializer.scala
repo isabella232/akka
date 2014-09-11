@@ -3,16 +3,32 @@
  */
 package akka.stream
 
-import scala.concurrent.duration.FiniteDuration
-import akka.actor.ActorRefFactory
-import akka.stream.impl.ActorBasedFlowMaterializer
-import akka.stream.impl.Ast
-import org.reactivestreams.api.Producer
-import scala.concurrent.duration._
-import org.reactivestreams.api.Consumer
-import akka.actor.Deploy
+import akka.actor._
+import akka.stream.impl.{ ActorBasedFlowMaterializer, Ast, FlowNameCounter, StreamSupervisor }
+import com.typesafe.config.Config
+import org.reactivestreams.{ Publisher, Subscriber }
 
 object FlowMaterializer {
+
+  /**
+   * Scala API: Creates a FlowMaterializer which will execute every step of a transformation
+   * pipeline within its own [[akka.actor.Actor]]. The required [[akka.actor.ActorRefFactory]]
+   * (which can be either an [[akka.actor.ActorSystem]] or an [[akka.actor.ActorContext]])
+   * will be used to create one actor that in turn creates actors for the transformation steps.
+   *
+   * The materializer's [[akka.stream.MaterializerSettings]] will be obtained from the
+   * configuration of the `context`'s underlying [[akka.actor.ActorSystem]].
+   *
+   * The `namePrefix` is used as the first part of the names of the actors running
+   * the processing steps. The default `namePrefix` is `"flow"`. The actor names are built up of
+   * `namePrefix-flowNumber-flowStepNumber-stepName`.
+   */
+  def apply(materializerSettings: Option[MaterializerSettings] = None, namePrefix: Option[String] = None)(implicit context: ActorRefFactory): FlowMaterializer = {
+    val system = actorSystemOf(context)
+
+    val settings = materializerSettings getOrElse MaterializerSettings(system)
+    apply(settings, namePrefix.getOrElse("flow"))(context)
+  }
 
   /**
    * Scala API: Creates a FlowMaterializer which will execute every step of a transformation
@@ -25,8 +41,29 @@ object FlowMaterializer {
    * the processing steps. The default `namePrefix` is `"flow"`. The actor names are built up of
    * `namePrefix-flowNumber-flowStepNumber-stepName`.
    */
-  def apply(settings: MaterializerSettings, namePrefix: Option[String] = None)(implicit context: ActorRefFactory): FlowMaterializer =
-    new ActorBasedFlowMaterializer(settings, context, namePrefix.getOrElse("flow"))
+  def apply(materializerSettings: MaterializerSettings, namePrefix: String)(implicit context: ActorRefFactory): FlowMaterializer = {
+    val system = actorSystemOf(context)
+
+    new ActorBasedFlowMaterializer(
+      materializerSettings,
+      context.actorOf(StreamSupervisor.props(materializerSettings).withDispatcher(materializerSettings.dispatcher)),
+      FlowNameCounter(system).counter,
+      namePrefix)
+  }
+
+  /**
+   * Scala API: Creates a FlowMaterializer which will execute every step of a transformation
+   * pipeline within its own [[akka.actor.Actor]]. The required [[akka.actor.ActorRefFactory]]
+   * (which can be either an [[akka.actor.ActorSystem]] or an [[akka.actor.ActorContext]])
+   * will be used to create these actors, therefore it is *forbidden* to pass this object
+   * to another actor if the factory is an ActorContext.
+   *
+   * The `namePrefix` is used as the first part of the names of the actors running
+   * the processing steps. The default `namePrefix` is `"flow"`. The actor names are built up of
+   * `namePrefix-flowNumber-flowStepNumber-stepName`.
+   */
+  def apply(materializerSettings: MaterializerSettings)(implicit context: ActorRefFactory): FlowMaterializer =
+    apply(Some(materializerSettings), None)
 
   /**
    * Java API: Creates a FlowMaterializer which will execute every step of a transformation
@@ -34,15 +71,53 @@ object FlowMaterializer {
    * (which can be either an [[akka.actor.ActorSystem]] or an [[akka.actor.ActorContext]])
    * will be used to create these actors, therefore it is *forbidden* to pass this object
    * to another actor if the factory is an ActorContext.
+   *
+   * Defaults the actor name prefix used to name actors running the processing steps to `"flow"`.
+   * The actor names are built up of `namePrefix-flowNumber-flowStepNumber-stepName`.
+   */
+  def create(context: ActorRefFactory): FlowMaterializer =
+    apply()(context)
+
+  /**
+   * Java API: Creates a FlowMaterializer which will execute every step of a transformation
+   * pipeline within its own [[akka.actor.Actor]]. The required [[akka.actor.ActorRefFactory]]
+   * (which can be either an [[akka.actor.ActorSystem]] or an [[akka.actor.ActorContext]])
+   * will be used to create one actor that in turn creates actors for the transformation steps.
    */
   def create(settings: MaterializerSettings, context: ActorRefFactory): FlowMaterializer =
-    apply(settings)(context)
+    apply(Option(settings), None)(context)
+
+  /**
+   * Java API: Creates a FlowMaterializer which will execute every step of a transformation
+   * pipeline within its own [[akka.actor.Actor]]. The required [[akka.actor.ActorRefFactory]]
+   * (which can be either an [[akka.actor.ActorSystem]] or an [[akka.actor.ActorContext]])
+   * will be used to create these actors, therefore it is *forbidden* to pass this object
+   * to another actor if the factory is an ActorContext.
+   *
+   * The `namePrefix` is used as the first part of the names of the actors running
+   * the processing steps. The default `namePrefix` is `"flow"`. The actor names are built up of
+   * `namePrefix-flowNumber-flowStepNumber-stepName`.
+   */
+  def create(settings: MaterializerSettings, context: ActorRefFactory, namePrefix: String): FlowMaterializer =
+    apply(Option(settings), Option(namePrefix))(context)
+
+  private def actorSystemOf(context: ActorRefFactory): ActorSystem = {
+    val system = context match {
+      case s: ExtendedActorSystem ⇒ s
+      case c: ActorContext        ⇒ c.system
+      case null                   ⇒ throw new IllegalArgumentException("ActorRefFactory context must be defined")
+      case _ ⇒
+        throw new IllegalArgumentException(s"ActorRefFactory context must be a ActorSystem or ActorContext, got [${context.getClass.getName}]")
+    }
+    system
+  }
+
 }
 
 /**
  * A FlowMaterializer takes the list of transformations comprising a
  * [[akka.stream.scaladsl.Flow]] and materializes them in the form of
- * [[org.reactivestreams.api.Processor]] instances. How transformation
+ * [[org.reactivestreams.Processor]] instances. How transformation
  * steps are split up into asynchronous regions is implementation
  * dependent.
  */
@@ -58,28 +133,61 @@ abstract class FlowMaterializer(val settings: MaterializerSettings) {
    * INTERNAL API
    * ops are stored in reverse order
    */
-  private[akka] def toProducer[I, O](producerNode: Ast.ProducerNode[I], ops: List[Ast.AstNode]): Producer[O]
+  private[akka] def toPublisher[I, O](publisherNode: Ast.PublisherNode[I], ops: List[Ast.AstNode]): Publisher[O]
 
   /**
    * INTERNAL API
    */
-  private[akka] def ductProduceTo[In, Out](consumer: Consumer[Out], ops: List[Ast.AstNode]): Consumer[In]
+  private[akka] def ductProduceTo[In, Out](subscriber: Subscriber[Out], ops: List[Ast.AstNode]): Subscriber[In]
 
   /**
    * INTERNAL API
    */
-  private[akka] def ductBuild[In, Out](ops: List[Ast.AstNode]): (Consumer[In], Producer[Out])
+  private[akka] def ductBuild[In, Out](ops: List[Ast.AstNode]): (Subscriber[In], Publisher[Out])
 
 }
 
 object MaterializerSettings {
-  private val defaultSettings = new MaterializerSettings
   /**
-   * Java API: Default settings.
-   * Refine the settings using [[MaterializerSettings#withBuffer]],
+   * Create [[MaterializerSettings]].
+   *
+   * You can refine the configuration based settings using [[MaterializerSettings#withBuffer]],
    * [[MaterializerSettings#withFanOut]], [[MaterializerSettings#withSubscriptionTimeout]]
    */
-  def create(): MaterializerSettings = defaultSettings
+  def apply(system: ActorSystem): MaterializerSettings =
+    apply(system.settings.config.getConfig("akka.stream.materializer"))
+
+  /**
+   * Create [[MaterializerSettings]].
+   *
+   * You can refine the configuration based settings using [[MaterializerSettings#withBuffer]],
+   * [[MaterializerSettings#withFanOut]], [[MaterializerSettings#withSubscriptionTimeout]]
+   */
+  def apply(config: Config): MaterializerSettings =
+    MaterializerSettings(
+      config.getInt("initial-input-buffer-size"),
+      config.getInt("max-input-buffer-size"),
+      config.getInt("initial-fan-out-buffer-size"),
+      config.getInt("max-fan-out-buffer-size"),
+      config.getString("dispatcher"))
+
+  /**
+   * Java API
+   *
+   * You can refine the configuration based settings using [[MaterializerSettings#withBuffer]],
+   * [[MaterializerSettings#withFanOut]], [[MaterializerSettings#withSubscriptionTimeout]]
+   */
+  def create(system: ActorSystem): MaterializerSettings =
+    apply(system)
+
+  /**
+   * Java API
+   *
+   * You can refine the configuration based settings using [[MaterializerSettings#withBuffer]],
+   * [[MaterializerSettings#withFanOut]], [[MaterializerSettings#withSubscriptionTimeout]]
+   */
+  def create(config: Config): MaterializerSettings =
+    apply(config)
 }
 
 /**
@@ -88,43 +196,33 @@ object MaterializerSettings {
  *
  * This will likely be replaced in the future by auto-tuning these values at runtime.
  */
-case class MaterializerSettings(
-  initialFanOutBufferSize: Int = 4,
-  maxFanOutBufferSize: Int = 16,
-  initialInputBufferSize: Int = 4,
-  maximumInputBufferSize: Int = 16,
-  upstreamSubscriptionTimeout: FiniteDuration = 3.seconds,
-  downstreamSubscriptionTimeout: FiniteDuration = 3.seconds,
-  dispatcher: String = Deploy.NoDispatcherGiven) {
-
-  private def isPowerOfTwo(n: Integer): Boolean = (n & (n - 1)) == 0
-  require(initialFanOutBufferSize > 0, "initialFanOutBufferSize must be > 0")
-  require(maxFanOutBufferSize > 0, "maxFanOutBufferSize must be > 0")
-  require(initialFanOutBufferSize <= maxFanOutBufferSize,
-    s"initialFanOutBufferSize($initialFanOutBufferSize) must be <= maxFanOutBufferSize($maxFanOutBufferSize)")
+final case class MaterializerSettings(
+  initialInputBufferSize: Int,
+  maxInputBufferSize: Int,
+  initialFanOutBufferSize: Int,
+  maxFanOutBufferSize: Int,
+  dispatcher: String) {
 
   require(initialInputBufferSize > 0, "initialInputBufferSize must be > 0")
-  require(isPowerOfTwo(initialInputBufferSize), "initialInputBufferSize must be a power of two")
-  require(maximumInputBufferSize > 0, "maximumInputBufferSize must be > 0")
-  require(isPowerOfTwo(maximumInputBufferSize), "initialInputBufferSize must be a power of two")
-  require(initialInputBufferSize <= maximumInputBufferSize,
-    s"initialInputBufferSize($initialInputBufferSize) must be <= maximumInputBufferSize($maximumInputBufferSize)")
 
-  def withBuffer(initialInputBufferSize: Int, maximumInputBufferSize: Int): MaterializerSettings =
-    copy(initialInputBufferSize = initialInputBufferSize, maximumInputBufferSize = maximumInputBufferSize)
+  require(maxInputBufferSize > 0, "maxInputBufferSize must be > 0")
+  require(isPowerOfTwo(maxInputBufferSize), "maxInputBufferSize must be a power of two")
+  require(initialInputBufferSize <= maxInputBufferSize, s"initialInputBufferSize($initialInputBufferSize) must be <= maxInputBufferSize($maxInputBufferSize)")
 
-  def withFanOut(initialFanOutBufferSize: Int, maxFanOutBufferSize: Int): MaterializerSettings =
-    copy(initialFanOutBufferSize = initialFanOutBufferSize, maxFanOutBufferSize = maxFanOutBufferSize)
+  require(initialFanOutBufferSize > 0, "initialFanOutBufferSize must be > 0")
 
-  def withSubscriptionTimeout(timeout: FiniteDuration): MaterializerSettings =
-    copy(upstreamSubscriptionTimeout = timeout, downstreamSubscriptionTimeout = timeout)
+  require(maxFanOutBufferSize > 0, "maxFanOutBufferSize must be > 0")
+  require(isPowerOfTwo(maxFanOutBufferSize), "maxFanOutBufferSize must be a power of two")
+  require(initialFanOutBufferSize <= maxFanOutBufferSize, s"initialFanOutBufferSize($initialFanOutBufferSize) must be <= maxFanOutBufferSize($maxFanOutBufferSize)")
 
-  def withSubscriptionTimeout(upstreamSubscriptionTimeout: FiniteDuration,
-                              downstreamSubscriptionTimeout: FiniteDuration): MaterializerSettings =
-    copy(upstreamSubscriptionTimeout = upstreamSubscriptionTimeout,
-      downstreamSubscriptionTimeout = downstreamSubscriptionTimeout)
+  def withInputBuffer(initialSize: Int, maxSize: Int): MaterializerSettings =
+    copy(initialInputBufferSize = initialSize, maxInputBufferSize = maxSize)
 
-  def withDispatcher(dispatcher: String): MaterializerSettings = copy(dispatcher = dispatcher)
+  def withFanOutBuffer(initialSize: Int, maxSize: Int): MaterializerSettings =
+    copy(initialFanOutBufferSize = initialSize, maxFanOutBufferSize = maxSize)
 
+  def withDispatcher(dispatcher: String): MaterializerSettings =
+    copy(dispatcher = dispatcher)
+
+  private def isPowerOfTwo(n: Integer): Boolean = (n & (n - 1)) == 0
 }
-

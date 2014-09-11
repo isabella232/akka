@@ -3,7 +3,7 @@
  */
 package akka.stream.impl
 
-import org.reactivestreams.spi.Subscription
+import org.reactivestreams.Subscription
 
 /**
  * INTERNAL API
@@ -12,7 +12,7 @@ private[akka] case object SubscribePending
 /**
  * INTERNAL API
  */
-private[akka] case class RequestMore(subscription: ActorSubscription[_], demand: Int)
+private[akka] case class RequestMore(subscription: ActorSubscription[_], demand: Long)
 /**
  * INTERNAL API
  */

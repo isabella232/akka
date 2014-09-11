@@ -4,8 +4,8 @@ import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import org.junit.ClassRule;
 import org.junit.Test;
-import org.reactivestreams.api.Consumer;
-import org.reactivestreams.api.Producer;
+import org.reactivestreams.Publisher;
+import org.reactivestreams.Subscriber;
 import scala.concurrent.duration.FiniteDuration;
 import scala.concurrent.Future;
 import akka.actor.ActorRef;
@@ -29,7 +29,7 @@ public class DuctTest {
 
   final ActorSystem system = actorSystemResource.getSystem();
 
-  final MaterializerSettings settings = MaterializerSettings.create().withDispatcher("akka.test.stream-dispatcher");
+  final MaterializerSettings settings = MaterializerSettings.create(system.settings().config()).withDispatcher("akka.test.stream-dispatcher");
   final FlowMaterializer materializer = FlowMaterializer.create(settings, system);
 
   @Test
@@ -37,71 +37,73 @@ public class DuctTest {
     final JavaTestKit probe = new JavaTestKit(system);
     final String[] lookup = { "a", "b", "c", "d", "e", "f" };
 
-    Consumer<Integer> inputConsumer = Duct.create(Integer.class).drop(2).take(3).map(new Function<Integer, String>() {
-      public String apply(Integer elem) {
-        return lookup[elem];
-      }
-    }).filter(new Predicate<String>() {
-      public boolean test(String elem) {
-        return !elem.equals("c");
-      }
-    }).grouped(2).mapConcat(new Function<java.util.List<String>, java.util.List<String>>() {
-      public java.util.List<String> apply(java.util.List<String> elem) {
-        return elem;
-      }
-    }).fold("", new Function2<String, String, String>() {
-      public String apply(String acc, String elem) {
-        return acc + elem;
-      }
-    }).foreach(new Procedure<String>() {
-      public void apply(String elem) {
-        probe.getRef().tell(elem, ActorRef.noSender());
-      }
-    }).consume(materializer);
+    Pair<Subscriber<Integer>, Future<Void>> foreachPair = Duct.create(Integer.class).drop(2).take(3)
+        .map(new Function<Integer, String>() {
+          public String apply(Integer elem) {
+            return lookup[elem];
+          }
+        }).filter(new Predicate<String>() {
+          public boolean test(String elem) {
+            return !elem.equals("c");
+          }
+        }).grouped(2).mapConcat(new Function<java.util.List<String>, java.util.List<String>>() {
+          public java.util.List<String> apply(java.util.List<String> elem) {
+            return elem;
+          }
+        }).fold("", new Function2<String, String, String>() {
+          public String apply(String acc, String elem) {
+            return acc + elem;
+          }
+        }).foreach(new Procedure<String>() {
+          public void apply(String elem) {
+            probe.getRef().tell(elem, ActorRef.noSender());
+          }
+        }, materializer);
 
+    Subscriber<Integer> inputSubscriber = foreachPair.first();
     final java.util.Iterator<Integer> input = Arrays.asList(0, 1, 2, 3, 4, 5).iterator();
-    Producer<Integer> producer = Flow.create(input).toProducer(materializer);
+    Publisher<Integer> publisher = Flow.create(input).toPublisher(materializer);
 
-    producer.produceTo(inputConsumer);
+    publisher.subscribe(inputSubscriber);
 
     probe.expectMsgEquals("de");
   }
 
   @Test
-  public void mustMaterializeIntoProducerConsumer() {
+  public void mustMaterializeIntoPublisherSubscriber() {
     final JavaTestKit probe = new JavaTestKit(system);
-    Pair<Consumer<String>, Producer<String>> inOutPair = Duct.create(String.class).build(materializer);
+    Pair<Subscriber<String>, Publisher<String>> inOutPair = Duct.create(String.class).build(materializer);
 
     Flow.create(inOutPair.second()).foreach(new Procedure<String>() {
       public void apply(String elem) {
         probe.getRef().tell(elem, ActorRef.noSender());
       }
-    }).consume(materializer);
+    }, materializer);
     probe.expectNoMsg(FiniteDuration.create(200, TimeUnit.MILLISECONDS));
 
-    Producer<String> producer = Flow.create(Arrays.asList("a", "b", "c")).toProducer(materializer);
-    producer.produceTo(inOutPair.first());
+    Publisher<String> publisher = Flow.create(Arrays.asList("a", "b", "c")).toPublisher(materializer);
+    publisher.subscribe(inOutPair.first());
     probe.expectMsgEquals("a");
     probe.expectMsgEquals("b");
     probe.expectMsgEquals("c");
   }
 
   @Test
-  public void mustProduceToConsumer() {
+  public void mustProduceToSubscriber() {
     final JavaTestKit probe = new JavaTestKit(system);
 
-    Consumer<String> consumer = Duct.create(String.class).foreach(new Procedure<String>() {
+    Subscriber<String> subscriber = Duct.create(String.class).foreach(new Procedure<String>() {
       public void apply(String elem) {
         probe.getRef().tell(elem, ActorRef.noSender());
       }
-    }).consume(materializer);
+    }, materializer).first();
 
-    Consumer<String> inConsumer = Duct.create(String.class).produceTo(materializer, consumer);
+    Subscriber<String> inSubscriber = Duct.create(String.class).produceTo(subscriber, materializer);
 
     probe.expectNoMsg(FiniteDuration.create(200, TimeUnit.MILLISECONDS));
 
-    Producer<String> producer = Flow.create(Arrays.asList("a", "b", "c")).toProducer(materializer);
-    producer.produceTo(inConsumer);
+    Publisher<String> publisher = Flow.create(Arrays.asList("a", "b", "c")).toPublisher(materializer);
+    publisher.subscribe(inSubscriber);
     probe.expectMsgEquals("a");
     probe.expectMsgEquals("b");
     probe.expectMsgEquals("c");
@@ -111,13 +113,9 @@ public class DuctTest {
   public void mustBeAppendableToFlow() {
     final JavaTestKit probe = new JavaTestKit(system);
 
-    Duct<String, Void> duct = Duct.create(String.class).map(new Function<String, String>() {
+    Duct<String, String> duct = Duct.create(String.class).map(new Function<String, String>() {
       public String apply(String elem) {
         return elem.toLowerCase();
-      }
-    }).foreach(new Procedure<String>() {
-      public void apply(String elem) {
-        probe.getRef().tell(elem, ActorRef.noSender());
       }
     });
 
@@ -129,7 +127,11 @@ public class DuctTest {
       }
     });
 
-    flow.append(duct).consume(materializer);
+    flow.append(duct).foreach(new Procedure<String>() {
+      public void apply(String elem) {
+        probe.getRef().tell(elem, ActorRef.noSender());
+      }
+    }, materializer);
 
     probe.expectMsgEquals("a");
     probe.expectMsgEquals("b");
@@ -140,27 +142,27 @@ public class DuctTest {
   public void mustBeAppendableToDuct() {
     final JavaTestKit probe = new JavaTestKit(system);
 
-    Duct<Integer, Integer> duct1 = Duct.create(Integer.class).map(new Function<Integer, Integer>() {
-      public Integer apply(Integer elem) {
-        return elem + 10;
+    Duct<String, Integer> duct1 = Duct.create(String.class).map(new Function<String, Integer>() {
+      public Integer apply(String elem) {
+        return Integer.parseInt(elem);
       }
     });
 
-    Consumer<Integer> ductInConsumer = Duct.create(Integer.class).map(new Function<Integer, Integer>() {
-      public Integer apply(Integer elem) {
-        return elem * 2;
+    Subscriber<Integer> ductInSubscriber = Duct.create(Integer.class).map(new Function<Integer, String>() {
+      public String apply(Integer elem) {
+        return Integer.toString(elem * 2);
       }
     }).append(duct1).map(new Function<Integer, String>() {
       public String apply(Integer elem) {
-        return "elem-" + elem;
+        return "elem-" + (elem + 10);
       }
     }).foreach(new Procedure<String>() {
       public void apply(String elem) {
         probe.getRef().tell(elem, ActorRef.noSender());
       }
-    }).consume(materializer);
+    }, materializer).first();
 
-    Flow.create(Arrays.asList(1, 2, 3)).produceTo(materializer, ductInConsumer);
+    Flow.create(Arrays.asList(1, 2, 3)).produceTo(ductInSubscriber, materializer);
 
     probe.expectMsgEquals("elem-12");
     probe.expectMsgEquals("elem-14");
@@ -171,11 +173,11 @@ public class DuctTest {
   public void mustCallOnCompleteCallbackWhenDone() {
     final JavaTestKit probe = new JavaTestKit(system);
 
-    Consumer<Integer> inConsumer = Duct.create(Integer.class).map(new Function<Integer, String>() {
+    Subscriber<Integer> inSubscriber = Duct.create(Integer.class).map(new Function<Integer, String>() {
       public String apply(Integer elem) {
         return elem.toString();
       }
-    }).onComplete(materializer, new OnCompleteCallback() {
+    }).onComplete(new OnCompleteCallback() {
       @Override
       public void onComplete(Throwable e) {
         if (e == null)
@@ -183,17 +185,17 @@ public class DuctTest {
         else
           probe.getRef().tell(e, ActorRef.noSender());
       }
-    });
+    }, materializer);
 
-    Producer<Integer> producer = Flow.create(Arrays.asList(1, 2, 3)).toProducer(materializer);
-    producer.produceTo(inConsumer);
+    Publisher<Integer> publisher = Flow.create(Arrays.asList(1, 2, 3)).toPublisher(materializer);
+    publisher.subscribe(inSubscriber);
     probe.expectMsgEquals("done");
   }
 
   @Test
   public void mustBeAbleToUseMapFuture() throws Exception {
     final JavaTestKit probe = new JavaTestKit(system);
-    Consumer<String> c = Duct.create(String.class).mapFuture(new Function<String, Future<String>>() {
+    Subscriber<String> c = Duct.create(String.class).mapFuture(new Function<String, Future<String>>() {
       public Future<String> apply(String elem) {
         return Futures.successful(elem.toUpperCase());
       }
@@ -201,10 +203,10 @@ public class DuctTest {
       public void apply(String elem) {
         probe.getRef().tell(elem, ActorRef.noSender());
       }
-    }).consume(materializer);
+    }, materializer).first();
 
     final java.lang.Iterable<String> input = Arrays.asList("a", "b", "c");
-    Flow.create(input).produceTo(materializer, c);
+    Flow.create(input).produceTo(c, materializer);
     probe.expectMsgEquals("A");
     probe.expectMsgEquals("B");
     probe.expectMsgEquals("C");

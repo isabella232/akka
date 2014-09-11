@@ -4,12 +4,11 @@
 
 package akka.http.rendering
 
-import org.reactivestreams.api.Producer
-import scala.collection.immutable
+import org.reactivestreams.Publisher
 import akka.parboiled2.CharUtils
 import akka.util.ByteString
 import akka.event.LoggingAdapter
-import akka.stream.impl.SynchronousProducerFromIterable
+import akka.stream.impl.SynchronousPublisherFromIterable
 import akka.stream.scaladsl.Flow
 import akka.stream.{ FlowMaterializer, Transformer }
 import akka.http.model._
@@ -19,11 +18,11 @@ import akka.http.util._
  * INTERNAL API
  */
 private object RenderSupport {
-  val DefaultStatusLine = "HTTP/1.1 200 OK\r\n".getAsciiBytes
-  val StatusLineStart = "HTTP/1.1 ".getAsciiBytes
-  val Chunked = "chunked".getAsciiBytes
-  val KeepAlive = "Keep-Alive".getAsciiBytes
-  val Close = "close".getAsciiBytes
+  val DefaultStatusLineBytes = "HTTP/1.1 200 OK\r\n".asciiBytes
+  val StatusLineStartBytes = "HTTP/1.1 ".asciiBytes
+  val ChunkedBytes = "chunked".asciiBytes
+  val KeepAliveBytes = "Keep-Alive".asciiBytes
+  val CloseBytes = "close".asciiBytes
 
   def CrLf = Rendering.CrLf
 
@@ -35,18 +34,18 @@ private object RenderSupport {
     if (entity.contentType != ContentTypes.NoContentType)
       r ~~ headers.`Content-Type` ~~ entity.contentType ~~ CrLf
 
-  def renderByteStrings(r: ByteStringRendering, entityBytes: ⇒ Producer[ByteString], materializer: FlowMaterializer,
-                        skipEntity: Boolean = false): immutable.Seq[Producer[ByteString]] = {
-    val messageStart = SynchronousProducerFromIterable(r.get :: Nil)
+  def renderByteStrings(r: ByteStringRendering, entityBytes: ⇒ Publisher[ByteString], materializer: FlowMaterializer,
+                        skipEntity: Boolean = false): List[Publisher[ByteString]] = {
+    val messageStart = SynchronousPublisherFromIterable(r.get :: Nil)
     val messageBytes =
-      if (!skipEntity) Flow(messageStart).concat(entityBytes).toProducer(materializer)
+      if (!skipEntity) Flow(messageStart).concat(entityBytes).toPublisher()(materializer)
       else messageStart
     messageBytes :: Nil
   }
 
   class ChunkTransformer extends Transformer[HttpEntity.ChunkStreamPart, ByteString] {
     var lastChunkSeen = false
-    def onNext(chunk: HttpEntity.ChunkStreamPart): immutable.Seq[ByteString] = {
+    def onNext(chunk: HttpEntity.ChunkStreamPart): List[ByteString] = {
       if (chunk.isLastChunk) lastChunkSeen = true
       renderChunk(chunk) :: Nil
     }
@@ -56,14 +55,14 @@ private object RenderSupport {
 
   class CheckContentLengthTransformer(length: Long) extends Transformer[ByteString, ByteString] {
     var sent = 0L
-    def onNext(elem: ByteString): immutable.Seq[ByteString] = {
+    def onNext(elem: ByteString): List[ByteString] = {
       sent += elem.length
       if (sent > length)
         throw new InvalidContentLengthException(s"HTTP message had declared Content-Length $length but entity chunk stream amounts to more bytes")
       elem :: Nil
     }
 
-    override def onTermination(e: Option[Throwable]): immutable.Seq[ByteString] = {
+    override def onTermination(e: Option[Throwable]): List[ByteString] = {
       if (sent < length)
         throw new InvalidContentLengthException(s"HTTP message had declared Content-Length $length but entity chunk stream amounts to ${length - sent} bytes less")
       Nil

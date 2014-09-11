@@ -30,17 +30,17 @@ object TestServer extends App {
     case _: HttpRequest                                ⇒ HttpResponse(404, entity = "Unknown resource!")
   }
 
-  val materializer = FlowMaterializer(MaterializerSettings())
+  implicit val materializer = FlowMaterializer()
 
   implicit val askTimeout: Timeout = 500.millis
   val bindingFuture = IO(Http) ? Http.Bind(interface = "localhost", port = 8080)
   bindingFuture foreach {
     case Http.ServerBinding(localAddress, connectionStream) ⇒
       Flow(connectionStream).foreach {
-        case Http.IncomingConnection(remoteAddress, requestProducer, responseConsumer) ⇒
+        case Http.IncomingConnection(remoteAddress, requestPublisher, responseSubscriber) ⇒
           println("Accepted new connection from " + remoteAddress)
-          Flow(requestProducer).map(requestHandler).produceTo(materializer, responseConsumer)
-      }.consume(materializer)
+          Flow(requestPublisher).map(requestHandler).produceTo(responseSubscriber)
+      }
   }
 
   println(s"Server online at http://localhost:8080/\nPress RETURN to stop...")
@@ -52,14 +52,14 @@ object TestServer extends App {
 
   lazy val index = HttpResponse(
     entity = HttpEntity(MediaTypes.`text/html`,
-      <html>
-        <body>
-          <h1>Say hello to <i>akka-http-core</i>!</h1>
-          <p>Defined resources:</p>
-          <ul>
-            <li><a href="/ping">/ping</a></li>
-            <li><a href="/crash">/crash</a></li>
-          </ul>
-        </body>
-      </html>.toString()))
+      """|<html>
+         | <body>
+         |    <h1>Say hello to <i>akka-http-core</i>!</h1>
+         |    <p>Defined resources:</p>
+         |    <ul>
+         |      <li><a href="/ping">/ping</a></li>
+         |      <li><a href="/crash">/crash</a></li>
+         |    </ul>
+         |  </body>
+         |</html>""".stripMargin))
 }

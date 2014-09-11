@@ -5,14 +5,13 @@
 package akka.http.rendering
 
 import java.net.InetSocketAddress
-import org.reactivestreams.api.Producer
+import org.reactivestreams.Publisher
 import scala.annotation.tailrec
-import scala.collection.immutable
 import akka.event.LoggingAdapter
 import akka.util.ByteString
 import akka.stream.scaladsl.Flow
 import akka.stream.{ FlowMaterializer, Transformer }
-import akka.stream.impl.SynchronousProducerFromIterable
+import akka.stream.impl.SynchronousPublisherFromIterable
 import akka.http.model._
 import akka.http.util._
 import RenderSupport._
@@ -28,9 +27,9 @@ private[http] class HttpRequestRendererFactory(userAgentHeader: Option[headers.`
 
   def newRenderer: HttpRequestRenderer = new HttpRequestRenderer
 
-  final class HttpRequestRenderer extends Transformer[RequestRenderingContext, Producer[ByteString]] {
+  final class HttpRequestRenderer extends Transformer[RequestRenderingContext, Publisher[ByteString]] {
 
-    def onNext(ctx: RequestRenderingContext): immutable.Seq[Producer[ByteString]] = {
+    def onNext(ctx: RequestRenderingContext): List[Publisher[ByteString]] = {
       val r = new ByteStringRendering(requestHeaderSizeHint)
       import ctx.request._
 
@@ -74,11 +73,8 @@ private[http] class HttpRequestRendererFactory(userAgentHeader: Option[headers.`
             case x: `Raw-Request-URI` ⇒ // we never render this header
               renderHeaders(tail, hostHeaderSeen, userAgentSeen)
 
-            case x: RawHeader if x.lowercaseName == "content-type" ||
-              x.lowercaseName == "content-length" ||
-              x.lowercaseName == "transfer-encoding" ||
-              x.lowercaseName == "host" ||
-              x.lowercaseName == "user-agent" ⇒
+            case x: RawHeader if (x is "content-type") || (x is "content-length") || (x is "transfer-encoding") ||
+              (x is "host") || (x is "user-agent") ⇒
               suppressionWarning(log, x, "illegal RawHeader")
               renderHeaders(tail, hostHeaderSeen, userAgentSeen)
 
@@ -97,30 +93,31 @@ private[http] class HttpRequestRendererFactory(userAgentHeader: Option[headers.`
         r ~~ CrLf
       }
 
-      def completeRequestRendering(): immutable.Seq[Producer[ByteString]] =
+      def completeRequestRendering(): List[Publisher[ByteString]] =
         entity match {
-          case HttpEntity.Strict(contentType, data) ⇒
-            renderContentLength(data.length)
-            SynchronousProducerFromIterable(r.get :: data :: Nil) :: Nil
+          case x if x.isKnownEmpty ⇒
+            renderContentLength(0)
+            SynchronousPublisherFromIterable(r.get :: Nil) :: Nil
 
-          case HttpEntity.Default(contentType, contentLength, data) ⇒
+          case HttpEntity.Strict(_, data) ⇒
+            renderContentLength(data.length)
+            SynchronousPublisherFromIterable(r.get :: data :: Nil) :: Nil
+
+          case HttpEntity.Default(_, contentLength, data) ⇒
             renderContentLength(contentLength)
             renderByteStrings(r,
-              Flow(data).transform(new CheckContentLengthTransformer(contentLength)).toProducer(materializer),
+              Flow(data).transform("checkContentLenght", () ⇒ new CheckContentLengthTransformer(contentLength)).toPublisher()(materializer),
               materializer)
 
-          case HttpEntity.Chunked(contentType, chunks) ⇒
-            r ~~ `Transfer-Encoding` ~~ Chunked ~~ CrLf ~~ CrLf
-            renderByteStrings(r, Flow(chunks).transform(new ChunkTransformer).toProducer(materializer), materializer)
+          case HttpEntity.Chunked(_, chunks) ⇒
+            r ~~ `Transfer-Encoding` ~~ ChunkedBytes ~~ CrLf ~~ CrLf
+            renderByteStrings(r, Flow(chunks).transform("chunkTransform", () ⇒ new ChunkTransformer).toPublisher()(materializer), materializer)
         }
 
       renderRequestLine()
       renderHeaders(headers.toList)
       renderEntityContentType(r, entity)
-      if (entity.isKnownEmpty) {
-        renderContentLength(0)
-        SynchronousProducerFromIterable(r.get :: Nil) :: Nil
-      } else completeRequestRendering()
+      completeRequestRendering()
     }
   }
 }

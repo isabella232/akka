@@ -13,6 +13,7 @@ import scala.concurrent.duration.FiniteDuration
 import akka.stream.FlowMaterializer
 import scala.concurrent.{ ExecutionContext, Future }
 import akka.util.ByteString
+import akka.http.util._
 
 /**
  * Common base class of HttpRequest and HttpResponse.
@@ -81,8 +82,10 @@ sealed trait HttpMessage extends japi.HttpMessage {
   def connectionCloseExpected: Boolean = HttpMessage.connectionCloseExpected(protocol, header[Connection])
 
   def addHeader(header: japi.HttpHeader): Self = mapHeaders(_ :+ header.asInstanceOf[HttpHeader])
+
+  /** Removes the header with the given name (case-insensitive) */
   def removeHeader(headerName: String): Self = {
-    val lowerHeaderName = headerName.toLowerCase()
+    val lowerHeaderName = headerName.toRootLowerCase
     mapHeaders(_.filterNot(_.is(lowerHeaderName)))
   }
 
@@ -101,7 +104,7 @@ sealed trait HttpMessage extends japi.HttpMessage {
   def getHeader[T <: japi.HttpHeader](headerClass: Class[T]): akka.japi.Option[T] = header(ClassTag(headerClass))
   /** Java API */
   def getHeader(headerName: String): akka.japi.Option[japi.HttpHeader] = {
-    val lowerCased = headerName.toLowerCase
+    val lowerCased = headerName.toRootLowerCase
     headers.find(_.is(lowerCased))
   }
   /** Java API */
@@ -220,40 +223,6 @@ final case class HttpRequest(method: HttpMethod = HttpMethods.GET,
       case Nil ⇒ 1.0f // http://tools.ietf.org/html/rfc7231#section-5.3.1
       case x   ⇒ x collectFirst { case r if r matches encoding ⇒ r.qValue } getOrElse 0f
     }
-
-  /**
-   * Determines whether one of the given content-types is accepted by the client.
-   * If a given ContentType does not define a charset an accepted charset is selected, i.e. the method guarantees
-   * that, if a ContentType instance is returned within the option, it will contain a defined charset.
-   */
-  def acceptableContentType(contentTypes: IndexedSeq[ContentType]): Option[ContentType] = {
-    val mediaRanges = acceptedMediaRanges // cache for performance
-    val charsetRanges = acceptedCharsetRanges // cache for performance
-
-    @tailrec def findBest(ix: Int = 0, result: ContentType = null, maxQ: Float = 0f): Option[ContentType] =
-      if (ix < contentTypes.size) {
-        val ct = contentTypes(ix)
-        val q = qValueForMediaType(ct.mediaType, mediaRanges)
-        if (q > maxQ && (ct.noCharsetDefined || isCharsetAccepted(ct.charset, charsetRanges))) findBest(ix + 1, ct, q)
-        else findBest(ix + 1, result, maxQ)
-      } else Option(result)
-
-    findBest() flatMap { ct ⇒
-      def withCharset(cs: HttpCharset) = Some(ContentType(ct.mediaType, cs))
-
-      // logic for choosing the charset adapted from http://tools.ietf.org/html/rfc7231#section-5.3.3
-      if (ct.isCharsetDefined) Some(ct) // if there is already an acceptable charset chosen we are done
-      else if (qValueForCharset(`UTF-8`, charsetRanges) == 1f) withCharset(`UTF-8`) // prefer UTF-8 if fully accepted
-      else charsetRanges match { // ranges are sorted by descending q-value,
-        case (HttpCharsetRange.One(cs, qValue)) :: _ ⇒ // so we only need to look at the first one
-          if (qValue == 1f) withCharset(cs) // if the client has high preference for this charset, pick it
-          else if (qValueForCharset(`ISO-8859-1`, charsetRanges) == 1f) withCharset(`ISO-8859-1`) // give some more preference to `ISO-8859-1`
-          else if (qValue > 0f) withCharset(cs) // ok, simply choose the first one if the client doesn't reject it
-          else None
-        case _ ⇒ None
-      }
-    }
-  }
 
   /**
    * Determines whether this request can be safely retried, which is the case only of the request method is idempotent.

@@ -10,7 +10,8 @@ import akka.stream.impl._
 import akka.util.ByteString
 import akka.io.Tcp._
 import akka.stream.MaterializerSettings
-import org.reactivestreams.api.Processor
+import org.reactivestreams.Processor
+import akka.actor.Stash
 
 /**
  * INTERNAL API
@@ -28,7 +29,7 @@ private[akka] object TcpStreamActor {
 /**
  * INTERNAL API
  */
-private[akka] abstract class TcpStreamActor(val settings: MaterializerSettings) extends Actor {
+private[akka] abstract class TcpStreamActor(val settings: MaterializerSettings) extends Actor with Stash {
 
   import TcpStreamActor._
 
@@ -36,13 +37,7 @@ private[akka] abstract class TcpStreamActor(val settings: MaterializerSettings) 
     override def inputOnError(e: Throwable): Unit = fail(e)
   }
 
-  val primaryOutputs: Outputs =
-    new FanoutOutputs(settings.maxFanOutBufferSize, settings.initialFanOutBufferSize, self, readPump) {
-      override def afterShutdown(): Unit = {
-        tcpInputs.cancel()
-        TcpStreamActor.this.tryShutdown()
-      }
-    }
+  val primaryOutputs: Outputs = new SimpleOutputs(self, readPump)
 
   object tcpInputs extends DefaultInputTransferStates {
     private var closed: Boolean = false
@@ -102,6 +97,8 @@ private[akka] abstract class TcpStreamActor(val settings: MaterializerSettings) 
     private var pendingDemand = true
     private var connection: ActorRef = _
 
+    private def initialized: Boolean = connection ne null
+
     def setConnection(c: ActorRef): Unit = {
       connection = c
       writePump.pump()
@@ -119,11 +116,11 @@ private[akka] abstract class TcpStreamActor(val settings: MaterializerSettings) 
 
     override def isClosed: Boolean = closed
     override def cancel(e: Throwable): Unit = {
-      if (!closed) connection ! Abort
+      if (!closed && initialized) connection ! Abort
       closed = true
     }
     override def complete(): Unit = {
-      if (!closed) connection ! ConfirmedClose
+      if (!closed && initialized) connection ! ConfirmedClose
       closed = true
     }
     override def enqueueOutputElement(elem: Any): Unit = {
@@ -147,7 +144,6 @@ private[akka] abstract class TcpStreamActor(val settings: MaterializerSettings) 
       tryShutdown()
     }
     override protected def pumpFailed(e: Throwable): Unit = fail(e)
-    override protected def pumpContext: ActorRefFactory = context
   }
 
   object readPump extends Pump {
@@ -157,14 +153,23 @@ private[akka] abstract class TcpStreamActor(val settings: MaterializerSettings) 
     }
 
     override protected def pumpFinished(): Unit = {
+      tcpInputs.cancel()
       primaryOutputs.complete()
       tryShutdown()
     }
     override protected def pumpFailed(e: Throwable): Unit = fail(e)
-    override protected def pumpContext: ActorRefFactory = context
   }
 
-  override def receive =
+  final override def receive = {
+    // FIXME using Stash mailbox is not the best for performance, we probably want a better solution to this
+    case ep: ExposedPublisher ⇒
+      primaryOutputs.subreceive(ep)
+      context become activeReceive
+      unstashAll()
+    case _ ⇒ stash()
+  }
+
+  def activeReceive =
     primaryInputs.subreceive orElse primaryOutputs.subreceive orElse tcpInputs.subreceive orElse tcpOutputs.subreceive
 
   readPump.nextPhase(readPump.running)
@@ -203,7 +208,7 @@ private[akka] class OutboundTcpStreamActor(val connectCmd: Connect, val requeste
 
   val initSteps = new SubReceive(waitingExposedProcessor)
 
-  override def receive = initSteps orElse super.receive
+  override def activeReceive = initSteps orElse super.activeReceive
 
   def waitingExposedProcessor: Receive = {
     case StreamTcpManager.ExposedProcessor(processor) ⇒

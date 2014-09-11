@@ -3,28 +3,22 @@
  */
 package akka.stream
 
-import scala.concurrent.duration._
-import akka.stream.testkit.StreamTestKit
-import akka.stream.testkit.AkkaSpec
-import akka.testkit.EventFilter
-import com.typesafe.config.ConfigFactory
 import akka.stream.scaladsl.Flow
-import akka.testkit.TestProbe
+import akka.stream.testkit.{ AkkaSpec, StreamTestKit }
+
+import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
-import scala.collection.immutable
 
 @org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class FlowTimerTransformerSpec extends AkkaSpec {
 
-  import system.dispatcher
-
-  val materializer = FlowMaterializer(MaterializerSettings(dispatcher = "akka.test.stream-dispatcher"))
+  implicit val materializer = FlowMaterializer()
 
   "A Flow with TimerTransformer operations" must {
     "produce scheduled ticks as expected" in {
-      val p = StreamTestKit.producerProbe[Int]
+      val p = StreamTestKit.PublisherProbe[Int]()
       val p2 = Flow(p).
-        transform(new TimerTransformer[Int, Int] {
+        timerTransform("timer", () ⇒ new TimerTransformer[Int, Int] {
           schedulePeriodically("tick", 100.millis)
           var tickCount = 0
           override def onNext(elem: Int) = List(elem)
@@ -35,21 +29,21 @@ class FlowTimerTransformerSpec extends AkkaSpec {
           }
           override def isComplete: Boolean = !isTimerActive("tick")
         }).
-        toProducer(materializer)
-      val consumer = StreamTestKit.consumerProbe[Int]
-      p2.produceTo(consumer)
-      val subscription = consumer.expectSubscription()
-      subscription.requestMore(5)
-      consumer.expectNext(1)
-      consumer.expectNext(2)
-      consumer.expectNext(3)
-      consumer.expectComplete()
+        toPublisher()
+      val subscriber = StreamTestKit.SubscriberProbe[Int]()
+      p2.subscribe(subscriber)
+      val subscription = subscriber.expectSubscription()
+      subscription.request(5)
+      subscriber.expectNext(1)
+      subscriber.expectNext(2)
+      subscriber.expectNext(3)
+      subscriber.expectComplete()
     }
 
     "schedule ticks when last transformation step (consume)" in {
-      val p = StreamTestKit.producerProbe[Int]
+      val p = StreamTestKit.PublisherProbe[Int]()
       val p2 = Flow(p).
-        transform(new TimerTransformer[Int, Int] {
+        timerTransform("timer", () ⇒ new TimerTransformer[Int, Int] {
           schedulePeriodically("tick", 100.millis)
           var tickCount = 0
           override def onNext(elem: Int) = List(elem)
@@ -61,8 +55,8 @@ class FlowTimerTransformerSpec extends AkkaSpec {
           }
           override def isComplete: Boolean = !isTimerActive("tick")
         }).
-        consume(materializer)
-      val pSub = p.expectSubscription
+        consume()
+      val pSub = p.expectSubscription()
       expectMsg("tick-1")
       expectMsg("tick-2")
       expectMsg("tick-3")
@@ -71,21 +65,21 @@ class FlowTimerTransformerSpec extends AkkaSpec {
 
     "propagate error if onTimer throws an exception" in {
       val exception = new Exception("Expected exception to the rule") with NoStackTrace
-      val p = StreamTestKit.producerProbe[Int]
+      val p = StreamTestKit.PublisherProbe[Int]()
       val p2 = Flow(p).
-        transform(new TimerTransformer[Int, Int] {
+        timerTransform("timer", () ⇒ new TimerTransformer[Int, Int] {
           scheduleOnce("tick", 100.millis)
 
           def onNext(element: Int) = Nil
           override def onTimer(timerKey: Any) =
             throw exception
-        }).toProducer(materializer)
+        }).toPublisher()
 
-      val consumer = StreamTestKit.consumerProbe[Int]
-      p2.produceTo(consumer)
-      val subscription = consumer.expectSubscription()
-      subscription.requestMore(5)
-      consumer.expectError(exception)
+      val subscriber = StreamTestKit.SubscriberProbe[Int]()
+      p2.subscribe(subscriber)
+      val subscription = subscriber.expectSubscription()
+      subscription.request(5)
+      subscriber.expectError(exception)
     }
   }
 }
