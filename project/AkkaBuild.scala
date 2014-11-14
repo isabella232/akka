@@ -79,9 +79,9 @@ object AkkaBuild extends Build {
       },
       validatePullRequest <<= (SphinxSupport.generate in Sphinx in docsDev,
         test in Test in stream, test in Test in streamTestkit, test in Test in streamTests, test in Test in streamTck,
-        test in Test in httpCore, test in Test in http, test in Test in httpTestkit, test in Test in httpTests,
+        test in Test in httpCore, test in Test in http, test in Test in httpJavaTests, test in Test in httpTestkit, test in Test in httpTests,
         test in Test in docsDev) map {
-        (_, _, _, _, _, _, _, _, _, _) =>
+        (_, _, _, _, _, _, _, _, _, _, _) =>
       },
       aggregate in publishM2 := false // REMOVE DURING MERGE INTO release-2.3
     ),
@@ -333,7 +333,7 @@ object AkkaBuild extends Build {
       generatedEpub in Sphinx <<= generatedEpub in Sphinx in LocalProject(docsDev.id) map identity,
       publishArtifact in packageSite := false
     ),
-    aggregate = Seq(parsing, stream, streamTestkit, streamTests, streamTck, http, httpMarshallers, httpCore, httpTestkit, httpTests, docsDev)
+    aggregate = Seq(parsing, stream, streamTestkit, streamTests, streamTck, http, httpMarshallers, httpCore, httpJava, httpJavaMarshallers, httpJavaTests, httpTestkit, httpTests, docsDev)
   )
 
   lazy val httpCore = Project(
@@ -428,6 +428,50 @@ object AkkaBuild extends Build {
       dependencies = Seq(http),
       settings = defaultSettings ++ formatSettings
     )
+
+  lazy val httpJava = Project(
+    id = "akka-http-java-experimental",
+    base = file("akka-http-java"),
+    dependencies = Seq(http),
+    settings =
+      defaultSettings ++ formatSettings ++ scaladocSettings ++
+        javadocSettings ++ OSGi.http ++ spray.boilerplate.BoilerplatePlugin.Boilerplate.settings ++
+        Seq(
+          version := streamAndHttpVersion,
+          Dependencies.httpJava,
+          // FIXME include mima when akka-http-2.3.x is released
+          //previousArtifact := akkaPreviousArtifact("akka-http")
+          previousArtifact := None,
+          scalacOptions in Compile += "-language:_"
+        )
+  )
+
+  lazy val httpJavaMarshallers = Project(
+    id = "akka-http-java-marshallers-experimental",
+    base = file("akka-http-java-marshallers"),
+    settings = parentSettings
+  ).aggregate()
+
+  def httpJavaMarshallerSubproject(name: String) =
+    Project(
+      id = s"akka-http-java-$name-experimental",
+      base = file(s"akka-http-java-marshallers/akka-http-java-$name"),
+      dependencies = Seq(httpJava),
+      settings = defaultSettings ++ formatSettings
+    )
+
+  lazy val httpJavaTests = Project(
+    id = "akka-http-java-tests-experimental",
+    base = file("akka-http-java-tests"),
+    dependencies = Seq(httpJava),
+    settings =
+      defaultSettings ++ formatSettings ++
+        Seq(
+          version := streamAndHttpVersion,
+          publishArtifact := false,
+          Dependencies.httpJavaTests
+        )
+  )
 
   val macroParadise = Seq(
     libraryDependencies <++= scalaVersion { v =>
@@ -1497,6 +1541,10 @@ object Dependencies {
   val httpXml = deps(scalaXml)
 
   val httpSprayJson = deps(sprayJson)
+
+  val httpJava = deps()
+
+  val httpJavaTests = deps(Test.junit)
 
   val stream = Seq(
     // FIXME use project dependency when akka-stream-experimental-2.3.x is released
