@@ -450,7 +450,13 @@ object AkkaBuild extends Build {
     id = "akka-http-java-marshallers-experimental",
     base = file("akka-http-java-marshallers"),
     settings = parentSettings
-  ).aggregate()
+  ).aggregate(httpJavaJackson)
+
+  lazy val httpJavaJackson =
+    httpJavaMarshallerSubproject("jackson")
+      .settings(
+        Dependencies.httpJavaJackson
+      )
 
   def httpJavaMarshallerSubproject(name: String) =
     Project(
@@ -463,7 +469,7 @@ object AkkaBuild extends Build {
   lazy val httpJavaTests = Project(
     id = "akka-http-java-tests-experimental",
     base = file("akka-http-java-tests"),
-    dependencies = Seq(httpJava),
+    dependencies = Seq(httpJava, httpJavaJackson),
     settings =
       defaultSettings ++ formatSettings ++
         Seq(
@@ -1460,7 +1466,10 @@ object Dependencies {
     val sigar       = "org.fusesource"                % "sigar"                        % "1.6.4"       // ApacheV2
 
     // For akka-http spray-json support
-    val sprayJson     = "io.spray"                   %% "spray-json"                   % "1.3.1"       // ApacheV2
+    val sprayJson   = "io.spray"                     %% "spray-json"                   % "1.3.1"       // ApacheV2
+
+    // For akka-http-java json support
+    val jackson     = "com.fasterxml.jackson.core"    % "jackson-databind"             % "2.4.3"       // ApacheV2
 
     // Compiler plugins
     val genjavadoc    = compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % genJavaDocVersion cross CrossVersion.full) // ApacheV2
@@ -1543,6 +1552,8 @@ object Dependencies {
   val httpSprayJson = deps(sprayJson)
 
   val httpJava = deps()
+
+  val httpJavaJackson = deps(jackson)
 
   val httpJavaTests = deps(Test.junit)
 
