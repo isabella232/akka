@@ -6,6 +6,7 @@ package akka
 
 import sbt._
 import sbt.Keys._
+import scala.util.Try
 import com.typesafe.sbt.SbtMultiJvm
 import com.typesafe.sbt.SbtMultiJvm.MultiJvmKeys.{ MultiJvm, extraOptions, jvmOptions, scalatestOptions, multiNodeExecuteTests, multiNodeJavaName, multiNodeHostsFileName, multiNodeTargetDirName, multiTestOptions }
 import com.typesafe.sbt.SbtScalariform
@@ -77,12 +78,10 @@ object AkkaBuild extends Build {
         val archivesPathFinder = (downloads * ("*" + v + ".zip")) +++ (downloads * ("*" + v + ".tgz"))
         archivesPathFinder.get.map(file => (file -> ("akka/" + file.getName)))
       },
-      validatePullRequest <<= (SphinxSupport.generate in Sphinx in docsDev,
+      validatePullRequest <<= Seq(SphinxSupport.generate in Sphinx in docsDev,
         test in Test in stream, test in Test in streamTestkit, test in Test in streamTests, test in Test in streamTck,
-        test in Test in httpCore, test in Test in http, test in Test in httpJavaTests, test in Test in httpTestkit, test in Test in httpTests,
-        test in Test in docsDev) map {
-        (_, _, _, _, _, _, _, _, _, _, _) =>
-      },
+        test in Test in httpCore, test in Test in http, test in Test in httpJavaTests, test in Test in httpJava8Tests,
+        test in Test in httpTestkit, test in Test in httpTests, test in Test in docsDev).dependOn,
       aggregate in publishM2 := false // REMOVE DURING MERGE INTO release-2.3
     ),
     aggregate = Seq(streamAndHttp) // FIXME DURING MERGE INTO release-2.3
@@ -333,7 +332,8 @@ object AkkaBuild extends Build {
       generatedEpub in Sphinx <<= generatedEpub in Sphinx in LocalProject(docsDev.id) map identity,
       publishArtifact in packageSite := false
     ),
-    aggregate = Seq(parsing, stream, streamTestkit, streamTests, streamTck, http, httpMarshallers, httpCore, httpJava, httpJavaMarshallers, httpJavaTests, httpTestkit, httpTests, docsDev)
+    aggregate = Seq(parsing, stream, streamTestkit, streamTests, streamTck,
+      http, httpMarshallers, httpCore, httpJava, httpJavaMarshallers, httpJavaTests, httpJava8Tests, httpTestkit, httpTests, docsDev)
   )
 
   lazy val httpCore = Project(
@@ -476,6 +476,41 @@ object AkkaBuild extends Build {
           version := streamAndHttpVersion,
           publishArtifact := false,
           Dependencies.httpJavaTests
+        )
+  )
+
+  val java8Home = SettingKey[Option[File]]("java8-home")
+  lazy val httpJava8Tests = Project(
+    id = "akka-http-java8-tests-experimental",
+    base = file("akka-http-java8-tests"),
+    dependencies = Seq(httpJava, httpJavaJackson),
+    settings =
+      defaultSettings ++ formatSettings ++
+        Seq(
+          version := streamAndHttpVersion,
+          publishArtifact := false,
+          Dependencies.httpJava8Tests,
+          fork in run := true,
+          connectInput := true,
+          javacOptions in compile := Seq("-source", "8"),
+          javaHome <<= java8Home,
+          // only run if java8Home is set
+          skip in compile <<= java8Home.map(_.isEmpty),
+          skip in test <<= java8Home.map(_.isEmpty),
+          fork in Test := true,
+          // test discovery is broken when sbt isn't run with a Java 8 compatible JVM, so we define a single
+          // Suite where all tests need to be registered
+          definedTests in Test := {
+            def pseudoJUnitRunWithFingerprint =
+              // we emulate a junit-interface fingerprint here which cannot be accessed statically
+              new sbt.testing.AnnotatedFingerprint {
+                def annotationName = "org.junit.runner.RunWith"
+                def isModule = false
+              }
+            Seq(new TestDefinition("AllJavaTests", pseudoJUnitRunWithFingerprint, false, Array.empty))
+          },
+          // don't ignore Suites which is the default for the junit-interface
+          testOptions += Tests.Argument(TestFrameworks.JUnit, "--ignore-runners=")
         )
   )
 
@@ -1074,6 +1109,22 @@ object AkkaBuild extends Build {
     // don't save test output to a file
     testListeners in (Test, test) := Seq(TestLogger(streams.value.log, {_ => streams.value.log }, logBuffered.value)),
 
+    java8Home in GlobalScope := {
+      def isJavaHome(dirName: String) = (dirName != null) && {
+        val dir = file(dirName)
+        dir.exists && dir.isDirectory && new File(dir, "bin/javac").exists
+      }
+      (Seq(
+        System.getenv("AKKA_BUILD_JAVA8_HOME"), // see extra-build-steps.sh
+        "/usr/local/share/java/jdk8",           // default of extra-build-steps.sh
+        "/usr/lib/jvm/java-8-openjdk",          // debian / ubuntu
+        "/usr/lib/jvm/java-8-oracle") ++
+        Try("/usr/libexec/java_home -v 1.8".!!).toOption.toSeq // OS/X method
+        )
+        .find(isJavaHome)
+        .map(file(_))
+    },
+
     validatePullRequestTask
     // add reportBinaryIssues to validatePullRequest on minor version maintenance branch
     //validatePullRequest <<= validatePullRequest.dependsOn(reportBinaryIssues)
@@ -1555,7 +1606,9 @@ object Dependencies {
 
   val httpJavaJackson = deps(jackson)
 
-  val httpJavaTests = deps(Test.junit)
+  val httpJavaTests = deps(Test.junit, Test.junitIntf)
+
+  val httpJava8Tests = deps(Test.junit, Test.junitIntf)
 
   val stream = Seq(
     // FIXME use project dependency when akka-stream-experimental-2.3.x is released
