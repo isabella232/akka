@@ -523,7 +523,8 @@ object AkkaBuild extends Build {
             Seq(new TestDefinition("AllJavaTests", pseudoJUnitRunWithFingerprint, false, Array.empty))
           },
           // don't ignore Suites which is the default for the junit-interface
-          testOptions += Tests.Argument(TestFrameworks.JUnit, "--ignore-runners=")
+          testOptions += Tests.Argument(TestFrameworks.JUnit, "--ignore-runners="),
+          mainClass in run in Test := Some("akka.http.server.japi.SimpleServerApp")
         )
   )
 
