@@ -24,8 +24,7 @@ import scala.util.control.NonFatal
 /**
  * INTERNAL API
  */
-private[http] class HttpServerPipeline(settings: ServerSettings,
-                                       log: LoggingAdapter)(implicit fm: FlowMaterializer)
+private[http] class HttpServerPipeline(settings: ServerSettings, log: LoggingAdapter)
   extends (StreamTcp.IncomingTcpConnection ⇒ Http.IncomingConnection) {
   import settings.parserSettings
 
@@ -43,16 +42,19 @@ private[http] class HttpServerPipeline(settings: ServerSettings,
   def apply(tcpConn: StreamTcp.IncomingTcpConnection): Http.IncomingConnection = {
     import FlowGraphImplicits._
 
-    val networkIn = Source(tcpConn.inputStream)
-    val networkOut = Sink(tcpConn.outputStream)
+    val userIn = UndefinedSink[HttpRequest]
+    val userOut = UndefinedSource[HttpResponse]
 
-    val userIn = Sink.publisher[HttpRequest]
-    val userOut = Source.subscriber[HttpResponse]
-
-    val oneHundredContinueSource = Source[OneHundredContinue.type](Props[OneHundredContinueSourceActor])
     @volatile var oneHundredContinueRef: Option[ActorRef] = None // FIXME: unnecessary after fixing #16168
+    val oneHundredContinueSource = Source[OneHundredContinue.type] {
+      Props {
+        val actor = new OneHundredContinueSourceActor
+        oneHundredContinueRef = Some(actor.context.self)
+        actor
+      }
+    }
 
-    val pipeline = FlowGraph { implicit b ⇒
+    val pipeline = Flow() { implicit b ⇒
       val bypassFanout = Broadcast[RequestOutput]("bypassFanout")
       val bypassMerge = new BypassMerge
 
@@ -80,15 +82,16 @@ private[http] class HttpServerPipeline(settings: ServerSettings,
           .transform("errorLogger", () ⇒ errorLogger(log, "Outgoing response stream error"))
 
       //FIXME: the graph is unnecessary after fixing #15957
-      networkIn ~> requestParsing ~> bypassFanout ~> requestPreparation ~> userIn
+      userOut ~> bypassMerge.applicationInput ~> rendererPipeline ~> tcpConn.stream ~> requestParsing ~> bypassFanout ~> requestPreparation ~> userIn
       bypassFanout ~> bypassMerge.bypassInput
-      userOut ~> bypassMerge.applicationInput ~> rendererPipeline ~> networkOut
       oneHundredContinueSource ~> bypassMerge.oneHundredContinueInput
 
-    }.run()
-    oneHundredContinueRef = Some(pipeline.get(oneHundredContinueSource))
+      b.allowCycles()
 
-    Http.IncomingConnection(tcpConn.remoteAddress, pipeline.get(userIn), pipeline.get(userOut))
+      userOut -> userIn
+    }
+
+    Http.IncomingConnection(tcpConn.remoteAddress, pipeline)
   }
 
   class BypassMerge extends FlexiMerge[ResponseRenderingContext]("BypassMerge") {
