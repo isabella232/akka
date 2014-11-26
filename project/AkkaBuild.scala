@@ -333,7 +333,7 @@ object AkkaBuild extends Build {
       publishArtifact in packageSite := false
     ),
     aggregate = Seq(parsing, stream, streamTestkit, streamTests, streamTck,
-      http, httpMarshallers, httpCore, httpJava, httpJavaMarshallers, httpJavaTests, httpJava8Tests, httpTestkit, httpTests, docsDev)
+      http, httpMarshallers, httpCore, httpJava, httpJavaMarshallers, httpJavaTestkit, httpJavaTests, httpJava8Tests, httpTestkit, httpTests, docsDev)
   )
 
   lazy val httpCore = Project(
@@ -466,10 +466,23 @@ object AkkaBuild extends Build {
       settings = defaultSettings ++ formatSettings
     )
 
+  lazy val httpJavaTestkit = Project(
+    id = "akka-http-java-testkit-experimental",
+    base = file("akka-http-java-testkit"),
+    dependencies = Seq(httpJava, httpJavaJackson),
+    settings =
+      defaultSettings ++ formatSettings ++
+        Seq(
+          version := streamAndHttpVersion,
+          publishArtifact := false,
+          Dependencies.httpJavaTestkit
+        )
+  )
+
   lazy val httpJavaTests = Project(
     id = "akka-http-java-tests-experimental",
     base = file("akka-http-java-tests"),
-    dependencies = Seq(httpJava, httpJavaJackson),
+    dependencies = Seq(httpJava, httpJavaJackson, httpJavaTestkit % "test"),
     settings =
       defaultSettings ++ formatSettings ++
         Seq(
@@ -483,7 +496,7 @@ object AkkaBuild extends Build {
   lazy val httpJava8Tests = Project(
     id = "akka-http-java8-tests-experimental",
     base = file("akka-http-java8-tests"),
-    dependencies = Seq(httpJava, httpJavaJackson),
+    dependencies = Seq(httpJava, httpJavaJackson, httpJavaTestkit % "test"),
     settings =
       defaultSettings ++ formatSettings ++
         Seq(
@@ -1522,6 +1535,9 @@ object Dependencies {
     // For akka-http-java json support
     val jackson     = "com.fasterxml.jackson.core"    % "jackson-databind"             % "2.4.3"       // ApacheV2
 
+    // For akka-http-java-testkit
+    val junit       = "junit"                         % "junit"                        % "4.11"        // Common Public License 1.0
+
     // Compiler plugins
     val genjavadoc    = compilerPlugin("com.typesafe.genjavadoc" %% "genjavadoc-plugin" % genJavaDocVersion cross CrossVersion.full) // ApacheV2
 
@@ -1531,7 +1547,7 @@ object Dependencies {
       val commonsMath  = "org.apache.commons"          % "commons-math"                 % "2.1"              % "test" // ApacheV2
       val commonsIo    = "commons-io"                  % "commons-io"                   % "2.4"              % "test" // ApacheV2
       val commonsCodec = "commons-codec"               % "commons-codec"                % "1.7"              % "test" // ApacheV2
-      val junit        = "junit"                       % "junit"                        % "4.11"             % "test" // Common Public License 1.0
+      val junit        = Compile.junit % "test"
       val logback      = "ch.qos.logback"              % "logback-classic"              % "1.0.13"           % "test" // EPL 1.0 / LGPL 2.1
       val mockito      = "org.mockito"                 % "mockito-all"                  % "1.8.1"            % "test" // MIT
       // changing the scalatest dependency must be reflected in akka-docs/rst/dev/multi-jvm-testing.rst
@@ -1605,6 +1621,8 @@ object Dependencies {
   val httpJava = deps()
 
   val httpJavaJackson = deps(jackson)
+
+  val httpJavaTestkit = deps(Compile.junit % "provided", Test.junitIntf)
 
   val httpJavaTests = deps(Test.junit, Test.junitIntf)
 
