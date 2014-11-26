@@ -44,9 +44,30 @@ public abstract class HttpRequest implements HttpMessage, HttpMessage.MessageTra
     public abstract HttpRequest withEntity(RequestEntity entity);
 
     /**
-     * Returns a default request to be changed using the `withX` methods.
+     * Returns a default request to be modified using the `withX` methods.
      */
     public static HttpRequest create() {
         return Accessors$.MODULE$.HttpRequest();
     }
+
+    /**
+     * A default GET request to be modified using the `withX` methods.
+     */
+    public static HttpRequest GET = create();
+    /**
+     * A default POST request to be modified using the `withX` methods.
+     */
+    public static HttpRequest POST = create().withMethod(HttpMethods.POST);
+    /**
+     * A default PUT request to be modified using the `withX` methods.
+     */
+    public static HttpRequest PUT = create().withMethod(HttpMethods.PUT);
+    /**
+     * A default DELETE request to be modified using the `withX` methods.
+     */
+    public static HttpRequest DELETE = create().withMethod(HttpMethods.DELETE);
+    /**
+     * A default HEAD request to be modified using the `withX` methods.
+     */
+    public static HttpRequest HEAD = create().withMethod(HttpMethods.HEAD);
 }
