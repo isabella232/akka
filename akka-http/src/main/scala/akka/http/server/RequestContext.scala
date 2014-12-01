@@ -4,7 +4,9 @@
 
 package akka.http.server
 
-import akka.stream.FlowMaterializer
+import akka.http.Http.{ IncomingConnection, ServerBinding }
+import akka.stream.{ scaladsl, FlowMaterializer }
+import akka.stream.scaladsl.{ ForeachSink, Source, MaterializedMap }
 
 import scala.concurrent.{ Future, ExecutionContext }
 import akka.event.LoggingAdapter
@@ -113,4 +115,23 @@ trait RequestContext {
    * Removes a potentially existing Accept header from the request headers.
    */
   def withContentNegotiationDisabled: RequestContext
+}
+
+object RequestContext {
+  implicit class WithHandleConnections(val route: Route) extends AnyVal {
+    def handleConnectionsOf(binding: ServerBinding)(implicit setup: RoutingSetup): MaterializedMap = {
+      import setup._
+      binding.handleWithAsync(routeRunner)
+    }
+    def handleConnectionsOf(binding: Source[IncomingConnection])(implicit setup: RoutingSetup): MaterializedMap = {
+      import setup._
+      binding.to(ForeachSink(_.handleWithAsync(routeRunner))).run()
+    }
+    def handle(connection: IncomingConnection)(implicit setup: RoutingSetup): MaterializedMap = {
+      import setup._
+      connection.handleWithAsync(routeRunner)
+    }
+
+    private def routeRunner(implicit setup: RoutingSetup) = Routing.runner(route, setup)
+  }
 }

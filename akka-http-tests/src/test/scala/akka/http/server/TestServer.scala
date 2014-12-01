@@ -14,7 +14,7 @@ import akka.util.Timeout
 import akka.http.Http
 import akka.http.model._
 
-object TestServer extends App {
+object TestServer extends App with Directives {
   val testConf: Config = ConfigFactory.parseString("""
     akka.loglevel = INFO
     akka.log-dead-letters = off""")
@@ -22,7 +22,6 @@ object TestServer extends App {
   import system.dispatcher
   implicit val materializer = FlowMaterializer()
 
-  import ScalaRoutingDSL._
   import ScalaXmlSupport._
 
   def auth =
@@ -33,25 +32,25 @@ object TestServer extends App {
 
   val binding = Http().bind(interface = "localhost", port = 8080)
 
-  val materializedMap =
-    handleConnections(binding) withRoute {
-      get {
-        path("") {
-          complete(index)
-        } ~
-          path("secure") {
-            HttpBasicAuthentication("My very secure site")(auth) { user ⇒
-              complete(<html><body>Hello <b>{ user }</b>. Access has been granted!</body></html>)
-            }
-          } ~
-          path("ping") {
-            complete("PONG!")
-          } ~
-          path("crash") {
-            complete(sys.error("BOOM!"))
+  val route =
+    get {
+      path("") {
+        complete(index)
+      } ~
+        path("secure") {
+          HttpBasicAuthentication("My very secure site")(auth) { user ⇒
+            complete(<html><body>Hello <b>{ user }</b>. Access has been granted!</body></html>)
           }
-      }
+        } ~
+        path("ping") {
+          complete("PONG!")
+        } ~
+        path("crash") {
+          complete(sys.error("BOOM!"))
+        }
     }
+
+  val materializedMap = route handleConnectionsOf binding
 
   println(s"Server online at http://localhost:8080/\nPress RETURN to stop...")
   Console.readLine()

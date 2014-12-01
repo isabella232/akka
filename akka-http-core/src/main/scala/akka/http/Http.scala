@@ -40,9 +40,20 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
           def remoteAddress = tcpConn.remoteAddress
           def handleWith(handler: Flow[HttpRequest, HttpResponse])(implicit fm: FlowMaterializer) =
             tcpConn.handleWith(HttpServer.serverFlowToTransport(handler, effectiveSettings, log))
+          def handleWith(handler: HttpRequest ⇒ HttpResponse)(implicit fm: FlowMaterializer): MaterializedMap =
+            handleWith(Flow[HttpRequest].map(handler))
+          def handleWithAsync(handler: HttpRequest ⇒ Future[HttpResponse])(implicit fm: FlowMaterializer): MaterializedMap =
+            handleWith(Flow[HttpRequest].mapAsync(handler))
         }
       }
       def unbind(mm: MaterializedMap): Future[Unit] = tcpBinding.unbind(mm)
+
+      def handleWith(handler: Flow[HttpRequest, HttpResponse])(implicit fm: FlowMaterializer) =
+        connections.to(ForeachSink(_.handleWith(handler))).run()
+      def handleWith(handler: HttpRequest ⇒ HttpResponse)(implicit fm: FlowMaterializer) =
+        handleWith(Flow[HttpRequest].map(handler))
+      def handleWithAsync(handler: HttpRequest ⇒ Future[HttpResponse])(implicit fm: FlowMaterializer) =
+        handleWith(Flow[HttpRequest].mapAsync(handler))
     }
   }
 
@@ -115,6 +126,10 @@ object Http extends ExtensionId[HttpExt] with ExtensionIdProvider {
      * The produced [[Future]] is fulfilled when the unbinding has been completed.
      */
     def unbind(materializedMap: MaterializedMap): Future[Unit]
+
+    def handleWith(handler: Flow[HttpRequest, HttpResponse])(implicit materializer: FlowMaterializer): MaterializedMap
+    def handleWith(handler: HttpRequest ⇒ HttpResponse)(implicit fm: FlowMaterializer): MaterializedMap
+    def handleWithAsync(handler: HttpRequest ⇒ Future[HttpResponse])(implicit fm: FlowMaterializer): MaterializedMap
   }
 
   /**
@@ -136,6 +151,8 @@ object Http extends ExtensionId[HttpExt] with ExtensionIdProvider {
      * and the respective [[MaterializedMap]] returned.
      */
     def handleWith(handler: Flow[HttpRequest, HttpResponse])(implicit materializer: FlowMaterializer): MaterializedMap
+    def handleWith(handler: HttpRequest ⇒ HttpResponse)(implicit fm: FlowMaterializer): MaterializedMap
+    def handleWithAsync(handler: HttpRequest ⇒ Future[HttpResponse])(implicit fm: FlowMaterializer): MaterializedMap
   }
 
   /**

@@ -138,7 +138,7 @@ class BasicRouteSpecs extends RoutingSpec {
   case object MyException extends RuntimeException
   "Route sealing" should {
     "catch route execution exceptions" in {
-      Get("/abc") ~> ScalaRoutingDSL.sealRoute {
+      Get("/abc") ~> sealRoute {
         get { ctx ⇒
           throw MyException
         }
@@ -147,7 +147,7 @@ class BasicRouteSpecs extends RoutingSpec {
       }
     }
     "catch route building exceptions" in {
-      Get("/abc") ~> ScalaRoutingDSL.sealRoute {
+      Get("/abc") ~> sealRoute {
         get {
           throw MyException
         }
@@ -157,7 +157,7 @@ class BasicRouteSpecs extends RoutingSpec {
     }
     "convert all rejections to responses" in {
       object MyRejection extends Rejection
-      Get("/abc") ~> ScalaRoutingDSL.sealRoute {
+      Get("/abc") ~> sealRoute {
         get {
           reject(MyRejection)
         }
