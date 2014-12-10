@@ -18,19 +18,26 @@ object TestServer extends App {
   val testConf: Config = ConfigFactory.parseString("""
     akka.loglevel = INFO
     akka.log-dead-letters = off
+    akka.actor.default-dispatcher.fork-join-executor.parallelism-max = 6
+
+    akka.actor {
+        serialize-creators = off
+        serialize-messages = off
+        default-dispatcher.throughput = 5
+    }
     """)
   implicit val system = ActorSystem("ServerTest", testConf)
   implicit val fm = ActorMaterializer()
 
   try {
     val binding = Http().bindAndHandleSync({
+      case HttpRequest(GET, Uri.Path("/ping"), _, _, _) ⇒ HttpResponse(entity = "PONG!")
       case req @ HttpRequest(GET, Uri.Path("/"), _, _, _) if req.header[UpgradeToWebsocket].isDefined ⇒
         req.header[UpgradeToWebsocket] match {
           case Some(upgrade) ⇒ upgrade.handleMessages(echoWebsocketService) // needed for running the autobahn test suite
           case None          ⇒ HttpResponse(400, entity = "Not a valid websocket request!")
         }
       case HttpRequest(GET, Uri.Path("/"), _, _, _)      ⇒ index
-      case HttpRequest(GET, Uri.Path("/ping"), _, _, _)  ⇒ HttpResponse(entity = "PONG!")
       case HttpRequest(GET, Uri.Path("/crash"), _, _, _) ⇒ sys.error("BOOM!")
       case req @ HttpRequest(GET, Uri.Path("/ws-greeter"), _, _, _) ⇒
         req.header[UpgradeToWebsocket] match {
