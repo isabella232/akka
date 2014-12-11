@@ -350,7 +350,7 @@ object AkkaBuild extends Build {
   lazy val httpCore = Project(
     id = "akka-http-core-experimental",
     base = file("akka-http-core"),
-    dependencies = Seq(parsing, streamTestkit % "test->test", stream),
+    dependencies = Seq(parsing, stream, streamTestkit % "test->test", testkit % "test->test"),
     // FIXME enable javadoc generation when genjavadoc is fixed (++ javadocSettings)
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ OSGi.httpCore ++ Seq(
       version := streamAndHttpVersion,
@@ -386,7 +386,7 @@ object AkkaBuild extends Build {
   lazy val httpTestkit = Project(
     id = "akka-http-testkit-experimental",
     base = file("akka-http-testkit"),
-    dependencies = Seq(http),
+    dependencies = Seq(http, testkit),
     settings =
       defaultSettings ++ formatSettings ++ scaladocSettings ++
         javadocSettings ++ OSGi.httpTestKit ++
@@ -528,6 +528,7 @@ object AkkaBuild extends Build {
   lazy val stream = Project(
     id = "akka-stream-experimental",
     base = file("akka-stream"),
+    dependencies = Seq(actor, persistence, testkit % "test->test"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ experimentalSettings ++ javadocSettings ++ OSGi.stream ++
       spray.boilerplate.BoilerplatePlugin.Boilerplate.settings ++ Seq(
       version := streamAndHttpVersion,
@@ -541,7 +542,7 @@ object AkkaBuild extends Build {
   lazy val streamTestkit = Project(
     id = "akka-stream-testkit-experimental",
     base = file("akka-stream-testkit"),
-    dependencies = Seq(stream),
+    dependencies = Seq(stream, testkit % "compile; test->test"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ experimentalSettings ++ javadocSettings ++ OSGi.streamTestkit ++ Seq(
       version := streamAndHttpVersion,
       libraryDependencies ++= Dependencies.streamTestkit,
@@ -1616,16 +1617,12 @@ object Dependencies {
   val persistence = deps(levelDB, levelDBNative, protobuf, Test.scalatest, Test.junit, Test.commonsIo, Test.scalaXml)
 
   val httpCore = deps(
-    // FIXME switch back to project dependency
-    "com.typesafe.akka" %% "akka-testkit" % Versions.publishedAkkaVersion % "test",
     Dependencies.Compile.quasiquotes % "provided", // needed to depend on akka-parsing
     Test.junitIntf, Test.junit, Test.scalatest)
 
   val http = deps()
 
-  val httpTestkit = Seq(
-    "com.typesafe.akka" %% "akka-testkit" % Versions.publishedAkkaVersion,
-    Test.junit, Test.junitIntf, Compile.junit % "provided", Test.scalatest.copy(configurations = Some("provided; test")))
+  val httpTestkit = Seq(Test.junit, Test.junitIntf, Compile.junit % "provided", Test.scalatest.copy(configurations = Some("provided; test")))
 
   val httpTests = Seq(Test.junit, Test.scalatest, Test.junitIntf)
   val httpTestsJava8 = deps(Test.junit, Test.junitIntf)
@@ -1638,17 +1635,9 @@ object Dependencies {
 
   val persistenceTck = Seq(Test.scalatest.copy(configurations = Some("compile")), Test.junit.copy(configurations = Some("compile")))
 
-  val stream = Seq(
-    // FIXME use project dependency when akka-stream-experimental-2.3.x is released
-    "com.typesafe.akka" %% "akka-actor" % Versions.publishedAkkaVersion,
-    reactiveStreams,
-    Test.junitIntf,
-    Test.scalatest)
+  val stream = Seq(reactiveStreams, Test.junitIntf, Test.scalatest)
 
-  val streamTestkit = Seq(
-    // FIXME use project dependency when akka-stream-experimental-2.3.x is released
-    "com.typesafe.akka" %% "akka-testkit" % Versions.publishedAkkaVersion,
-    Test.scalatest, Test.scalacheck, Test.junit)
+  val streamTestkit = Seq(Test.scalatest, Test.scalacheck, Test.junit)
 
   val streamTest = Seq(Test.scalatest, Test.scalacheck, Test.junit, Test.junitIntf, Test.commonsIo)
 
