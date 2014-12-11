@@ -90,7 +90,27 @@ object ProcessorPerfSpec {
     }
   }
 
-  class EventsourcedTestProcessor(name: String) extends PerformanceTestProcessor(name) with EventsourcedProcessor {
+  class CommandsourcedTestPersistentActor(name: String) extends PerformanceTestProcessor(name) with PersistentActor {
+
+    override val controlBehavior: Receive = {
+      case StartMeasure       ⇒ startMeasure()
+      case StopMeasure        ⇒ defer(StopMeasure)(_ ⇒ stopMeasure())
+      case FailAt(sequenceNr) ⇒ failAt = sequenceNr
+    }
+
+    val receiveRecover: Receive = {
+      case _ ⇒ if (lastSequenceNr % 1000 == 0) print("r")
+    }
+
+    val receiveCommand: Receive = controlBehavior orElse {
+      case cmd ⇒ persistAsync(cmd) { _ ⇒
+        if (lastSequenceNr % 1000 == 0) print(".")
+        if (lastSequenceNr == failAt) throw new TestException("boom")
+      }
+    }
+  }
+
+  class EventsourcedTestProcessor(name: String) extends PerformanceTestProcessor(name) with PersistentActor {
     val receiveRecover: Receive = {
       case _ ⇒ if (lastSequenceNr % 1000 == 0) print("r")
     }
@@ -103,7 +123,7 @@ object ProcessorPerfSpec {
     }
   }
 
-  class StashingEventsourcedTestProcessor(name: String) extends PerformanceTestProcessor(name) with EventsourcedProcessor {
+  class StashingEventsourcedTestProcessor(name: String) extends PerformanceTestProcessor(name) with PersistentActor {
     val receiveRecover: Receive = {
       case _ ⇒ if (lastSequenceNr % 1000 == 0) print("r")
     }
@@ -150,13 +170,23 @@ class ProcessorPerfSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "Perf
     processor ! StopMeasure
 
     expectMsgPF(100 seconds) {
-      case throughput: Double ⇒ opsPerSecGauge.add(throughput.toLong)
+      case throughput: Double ⇒ println(f"\nthroughput = $throughput%.2f persistent processor commands per second")
     }
   }
 
-  def stressEventsourcedProcessor(failAt: Option[Long]): Unit = {
-    val opsPerSecGauge = averageGauge(EventsourcedProcessorKey / "persistent-events-per-second")
+  def stressCommandsourcedPersistentActor(failAt: Option[Long]): Unit = {
+    val processor = namedProcessor[CommandsourcedTestPersistentActor]
+    failAt foreach { processor ! FailAt(_) }
+    1 to warmupCycles foreach { i ⇒ processor ! s"msg${i}" }
+    processor ! StartMeasure
+    1 to loadCycles foreach { i ⇒ processor ! s"msg${i}" }
+    processor ! StopMeasure
+    expectMsgPF(100 seconds) {
+      case throughput: Double ⇒ println(f"\nthroughput = $throughput%.2f persistent actor commands per second")
+    }
+  }
 
+  def stressPersistentActor(failAt: Option[Long]): Unit = {
     val processor = namedProcessor[EventsourcedTestProcessor]
     failAt foreach { processor ! FailAt(_) }
     1 to warmupCycles foreach { i ⇒ processor ! s"msg${i}" }
@@ -169,9 +199,7 @@ class ProcessorPerfSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "Perf
     }
   }
 
-  def stressStashingEventsourcedProcessor(): Unit = {
-    val opsPerSecGauge = averageGauge(EventsourcedProcessorKey / "stashing-persistent-events-per-second")
-
+  def stressStashingPersistentActor(): Unit = {
     val processor = namedProcessor[StashingEventsourcedTestProcessor]
     1 to warmupCycles foreach { i ⇒ processor ! "b" }
     processor ! StartMeasure
@@ -190,9 +218,9 @@ class ProcessorPerfSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "Perf
 
     val channel = system.actorOf(PersistentChannel.props())
     val destination = system.actorOf(Props[PerformanceTestDestination])
-    1 to warmupCycles foreach { i ⇒ channel ! Deliver(PersistentRepr(s"msg${i}", processorId = "test"), destination.path) }
+    1 to warmupCycles foreach { i ⇒ channel ! Deliver(PersistentRepr(s"msg${i}", persistenceId = "test"), destination.path) }
     channel ! Deliver(Persistent(StartMeasure), destination.path)
-    1 to loadCycles foreach { i ⇒ channel ! Deliver(PersistentRepr(s"msg${i}", processorId = "test"), destination.path) }
+    1 to loadCycles foreach { i ⇒ channel ! Deliver(PersistentRepr(s"msg${i}", persistenceId = "test"), destination.path) }
     channel ! Deliver(Persistent(StopMeasure), destination.path)
 
     expectMsgPF(100 seconds) {
@@ -218,18 +246,21 @@ class ProcessorPerfSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "Perf
     }
   }
 
-  "An event sourced processor" should {
-    "have some reasonable throughput" taggedAs PerformanceTest in {
-      stressEventsourcedProcessor(None)
-      reportAndClearMetrics()
+  "A command sourced persistent actor" should {
+    "have some reasonable throughput" in {
+      stressCommandsourcedPersistentActor(None)
     }
-    "have some reasonable throughput under failure conditions" taggedAs PerformanceTest in {
-      stressEventsourcedProcessor(Some(warmupCycles + loadCycles / 10))
-      reportAndClearMetrics()
+  }
+
+  "An event sourced persistent actor" should {
+    "have some reasonable throughput" in {
+      stressPersistentActor(None)
     }
-    "have some reasonable throughput with stashing and unstashing every 3rd command" taggedAs PerformanceTest in {
-      stressStashingEventsourcedProcessor()
-      reportAndClearMetrics()
+    "have some reasonable throughput under failure conditions" in {
+      stressPersistentActor(Some(warmupCycles + loadCycles / 10))
+    }
+    "have some reasonable throughput with stashing and unstashing every 3rd command" in {
+      stressStashingPersistentActor()
     }
   }
 

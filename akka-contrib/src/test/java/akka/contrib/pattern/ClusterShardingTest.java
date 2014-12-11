@@ -4,7 +4,6 @@
 
 package akka.contrib.pattern;
 
-import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
 import scala.concurrent.duration.Duration;
@@ -14,7 +13,7 @@ import akka.actor.PoisonPill;
 import akka.actor.Props;
 import akka.actor.ReceiveTimeout;
 import akka.japi.Procedure;
-import akka.persistence.UntypedEventsourcedProcessor;
+import akka.persistence.UntypedPersistentActor;
 
 // Doc code, compile only
 public class ClusterShardingTest {
@@ -64,8 +63,8 @@ public class ClusterShardingTest {
     //#counter-extractor
 
     //#counter-start
-    ClusterSharding.get(system).start("Counter", Props.create(Counter.class),
-        messageExtractor);
+    ActorRef startedCounterRegion = ClusterSharding.get(system).start("Counter", Props.create(Counter.class),
+              messageExtractor);
     //#counter-start
 
     //#counter-usage
@@ -79,7 +78,7 @@ public class ClusterShardingTest {
   }
 
   static//#counter-actor
-  public class Counter extends UntypedEventsourcedProcessor {
+  public class Counter extends UntypedPersistentActor {
 
     public static enum CounterOp {
       INCREMENT, DECREMENT
@@ -112,6 +111,13 @@ public class ClusterShardingTest {
     }
 
     int count = 0;
+    
+    // getSelf().path().parent().name() is the type name (utf-8 URL-encoded) 
+    // getSelf().path().name() is the entry identifier (utf-8 URL-encoded)
+    @Override
+    public String persistenceId() {
+      return getSelf().path().parent().name() + "-" + getSelf().path().name();
+    }
 
     @Override
     public void preStart() throws Exception {

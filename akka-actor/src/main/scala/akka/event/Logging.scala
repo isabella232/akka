@@ -16,6 +16,7 @@ import scala.concurrent.duration._
 import scala.concurrent.Await
 import scala.util.control.NoStackTrace
 import scala.util.control.NonFatal
+import java.util.Locale
 
 /**
  * This trait brings log level handling to the EventStream: it reads the log
@@ -32,14 +33,14 @@ trait LoggingBus extends ActorEventBus {
 
   import Logging._
 
-  private val guard = new ReentrantGuard //Switch to ReentrantReadWrite
+  private val guard = new ReentrantGuard
   private var loggers = Seq.empty[ActorRef]
-  private var _logLevel: LogLevel = _
+  @volatile private var _logLevel: LogLevel = _
 
   /**
    * Query currently set log level. See object Logging for more information.
    */
-  def logLevel = guard.withGuard { _logLevel }
+  def logLevel = _logLevel
 
   /**
    * Change log level: default loggers (i.e. from configuration file) are
@@ -52,16 +53,17 @@ trait LoggingBus extends ActorEventBus {
    * subscriptions!
    */
   def setLogLevel(level: LogLevel): Unit = guard.withGuard {
+    val logLvl = _logLevel // saves (2 * AllLogLevel.size - 1) volatile reads (because of the loops below)
     for {
       l ← AllLogLevels
       // subscribe if previously ignored and now requested
-      if l > _logLevel && l <= level
+      if l > logLvl && l <= level
       log ← loggers
     } subscribe(log, classFor(l))
     for {
       l ← AllLogLevels
       // unsubscribe if previously registered and now ignored
-      if l <= _logLevel && l > level
+      if l <= logLvl && l > level
       log ← loggers
     } unsubscribe(log, classFor(l))
     _logLevel = level
@@ -200,7 +202,7 @@ trait LoggingBus extends ActorEventBus {
  *   def name: String
  * }
  *
- * implicit val myLogSourceType: LogSource[MyType] = new LogSource {
+ * implicit val myLogSourceType: LogSource[MyType] = new LogSource[MyType] {
  *   def genString(a: MyType) = a.name
  * }
  *
@@ -216,7 +218,7 @@ trait LoggingBus extends ActorEventBus {
  *   def name: String
  * }
  *
- * implicit val myLogSourceType: LogSource[MyType] = new LogSource {
+ * implicit val myLogSourceType: LogSource[MyType] = new LogSource[MyType] {
  *   def genString(a: MyType) = a.name
  *   def genString(a: MyType, s: ActorSystem) = a.name + "," + s
  * }
@@ -439,7 +441,7 @@ object Logging {
    * valid inputs are upper or lowercase (not mixed) versions of:
    * "error", "warning", "info" and "debug"
    */
-  def levelFor(s: String): Option[LogLevel] = s.toLowerCase match {
+  def levelFor(s: String): Option[LogLevel] = s.toLowerCase(Locale.ROOT) match {
     case "off"     ⇒ Some(OffLevel)
     case "error"   ⇒ Some(ErrorLevel)
     case "warning" ⇒ Some(WarningLevel)

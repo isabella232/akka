@@ -29,13 +29,15 @@ This is how an entry actor may look like:
 
 .. includecode:: @contribSrc@/src/test/java/akka/contrib/pattern/ClusterShardingTest.java#counter-actor
 
-The above actor uses event sourcing and the support provided in ``UntypedEventsourcedProcessor`` to store its state.
-It does not have to be a processor, but in case of failure or migration of entries between nodes it must be able to recover
+The above actor uses event sourcing and the support provided in ``UntypedPersistentActor`` to store its state.
+It does not have to be a persistent actor, but in case of failure or migration of entries between nodes it must be able to recover
 its state if it is valuable.
+
+Note how the ``persistenceId`` is defined. You may define it another way, but it must be unique.
 
 When using the sharding extension you are first, typically at system startup on each node
 in the cluster, supposed to register the supported entry types with the ``ClusterSharding.start``
-method.
+method. ``ClusterSharding.start`` gives you the reference which you can pass along.
 
 .. includecode:: @contribSrc@/src/test/java/akka/contrib/pattern/ClusterShardingTest.java#counter-start
 
@@ -73,13 +75,15 @@ This is how an entry actor may look like:
 
 .. includecode:: @contribSrc@/src/multi-jvm/scala/akka/contrib/pattern/ClusterShardingSpec.scala#counter-actor
 
-The above actor uses event sourcing and the support provided in ``EventsourcedProcessor`` to store its state.
-It does not have to be a processor, but in case of failure or migration of entries between nodes it must be able to recover
+The above actor uses event sourcing and the support provided in ``PersistentActor`` to store its state.
+It does not have to be a persistent actor, but in case of failure or migration of entries between nodes it must be able to recover
 its state if it is valuable.
+
+Note how the ``persistenceId`` is defined. You may define it another way, but it must be unique.
 
 When using the sharding extension you are first, typically at system startup on each node
 in the cluster, supposed to register the supported entry types with the ``ClusterSharding.start``
-method.
+method. ``ClusterSharding.start`` gives you the reference which you can pass along.
 
 .. includecode:: @contribSrc@/src/multi-jvm/scala/akka/contrib/pattern/ClusterShardingSpec.scala#counter-start
 

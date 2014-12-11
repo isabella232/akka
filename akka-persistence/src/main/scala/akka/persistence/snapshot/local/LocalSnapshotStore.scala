@@ -33,7 +33,7 @@ private[persistence] class LocalSnapshotStore extends SnapshotStore with ActorLo
   private val serializationExtension = SerializationExtension(context.system)
   private var saving = immutable.Set.empty[SnapshotMetadata] // saving in progress
 
-  def loadAsync(processorId: String, criteria: SnapshotSelectionCriteria): Future[Option[SelectedSnapshot]] = {
+  def loadAsync(persistenceId: String, criteria: SnapshotSelectionCriteria): Future[Option[SelectedSnapshot]] = {
     //
     // Heuristics:
     //
@@ -44,7 +44,7 @@ private[persistence] class LocalSnapshotStore extends SnapshotStore with ActorLo
     //
     // TODO: make number of loading attempts configurable
     //
-    val metadata = snapshotMetadata(processorId, criteria).sorted.takeRight(3)
+    val metadata = snapshotMetadata(persistenceId, criteria).sorted.takeRight(3)
     Future(load(metadata))(streamDispatcher)
   }
 
@@ -62,8 +62,8 @@ private[persistence] class LocalSnapshotStore extends SnapshotStore with ActorLo
     snapshotFile(metadata).delete()
   }
 
-  def delete(processorId: String, criteria: SnapshotSelectionCriteria) = {
-    snapshotMetadata(processorId, criteria).foreach(delete)
+  def delete(persistenceId: String, criteria: SnapshotSelectionCriteria) = {
+    snapshotMetadata(persistenceId, criteria).foreach(delete)
   }
 
   @scala.annotation.tailrec
@@ -73,13 +73,15 @@ private[persistence] class LocalSnapshotStore extends SnapshotStore with ActorLo
       Try(withInputStream(md)(deserialize)) match {
         case Success(s) ⇒ Some(SelectedSnapshot(md, s.data))
         case Failure(e) ⇒
-          log.error(e, s"error loading snapshot ${md}")
+          log.error(e, s"Error loading snapshot [${md}]")
           load(metadata.init) // try older snapshot
       }
   }
 
-  private def save(metadata: SnapshotMetadata, snapshot: Any): Unit =
-    withOutputStream(metadata)(serialize(_, Snapshot(snapshot)))
+  protected def save(metadata: SnapshotMetadata, snapshot: Any): Unit = {
+    val tmpFile = withOutputStream(metadata)(serialize(_, Snapshot(snapshot)))
+    tmpFile.renameTo(snapshotFile(metadata))
+  }
 
   protected def deserialize(inputStream: InputStream): Snapshot =
     serializationExtension.deserialize(streamToBytes(inputStream), classOf[Snapshot]).get
@@ -87,8 +89,11 @@ private[persistence] class LocalSnapshotStore extends SnapshotStore with ActorLo
   protected def serialize(outputStream: OutputStream, snapshot: Snapshot): Unit =
     outputStream.write(serializationExtension.findSerializerFor(snapshot).toBinary(snapshot))
 
-  private def withOutputStream(metadata: SnapshotMetadata)(p: (OutputStream) ⇒ Unit): Unit =
-    withStream(new BufferedOutputStream(new FileOutputStream(snapshotFile(metadata))), p)
+  protected def withOutputStream(metadata: SnapshotMetadata)(p: (OutputStream) ⇒ Unit): File = {
+    val tmpFile = snapshotFile(metadata, extension = "tmp")
+    withStream(new BufferedOutputStream(new FileOutputStream(tmpFile)), p)
+    tmpFile
+  }
 
   private def withInputStream[T](metadata: SnapshotMetadata)(p: (InputStream) ⇒ T): T =
     withStream(new BufferedInputStream(new FileInputStream(snapshotFile(metadata))), p)
@@ -96,20 +101,29 @@ private[persistence] class LocalSnapshotStore extends SnapshotStore with ActorLo
   private def withStream[A <: Closeable, B](stream: A, p: A ⇒ B): B =
     try { p(stream) } finally { stream.close() }
 
-  private def snapshotFile(metadata: SnapshotMetadata): File =
-    new File(snapshotDir, s"snapshot-${URLEncoder.encode(metadata.processorId, "UTF-8")}-${metadata.sequenceNr}-${metadata.timestamp}")
+  private def snapshotFile(metadata: SnapshotMetadata, extension: String = ""): File =
+    new File(snapshotDir, s"snapshot-${URLEncoder.encode(metadata.persistenceId, "UTF-8")}-${metadata.sequenceNr}-${metadata.timestamp}${extension}")
 
-  private def snapshotMetadata(processorId: String, criteria: SnapshotSelectionCriteria): immutable.Seq[SnapshotMetadata] =
-    snapshotDir.listFiles(new SnapshotFilenameFilter(processorId)).map(_.getName).collect {
+  private def snapshotMetadata(persistenceId: String, criteria: SnapshotSelectionCriteria): immutable.Seq[SnapshotMetadata] =
+    snapshotDir.listFiles(new SnapshotFilenameFilter(persistenceId)).map(_.getName).collect {
       case FilenamePattern(pid, snr, tms) ⇒ SnapshotMetadata(URLDecoder.decode(pid, "UTF-8"), snr.toLong, tms.toLong)
     }.filter(md ⇒ criteria.matches(md) && !saving.contains(md)).toVector
 
   override def preStart() {
-    if (!snapshotDir.exists) snapshotDir.mkdirs()
+    if (!snapshotDir.isDirectory) {
+      // try to create the directory, on failure double check if someone else beat us to it
+      if (!snapshotDir.mkdirs() && !snapshotDir.isDirectory) {
+        throw new IOException(s"Failed to create snapshot directory [${snapshotDir.getCanonicalPath}]")
+      }
+    }
     super.preStart()
   }
 
-  private class SnapshotFilenameFilter(processorId: String) extends FilenameFilter {
-    def accept(dir: File, name: String): Boolean = name.startsWith(s"snapshot-${URLEncoder.encode(processorId, "UTF-8")}")
+  private class SnapshotFilenameFilter(persistenceId: String) extends FilenameFilter {
+    def accept(dir: File, name: String): Boolean =
+      name match {
+        case FilenamePattern(pid, snr, tms) ⇒ pid.equals(URLEncoder.encode(persistenceId))
+        case _                              ⇒ false
+      }
   }
 }

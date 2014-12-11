@@ -46,6 +46,19 @@ trait Effect {
 }
 
 /**
+ * Java API: Defines a criteria and determines whether the parameter meets this criteria.
+ */
+trait Predicate[T] {
+  def test(param: T): Boolean
+}
+
+/**
+ * Java API: Represents a tuple of two elements.
+ */
+@SerialVersionUID(1L)
+case class Pair[A, B](first: A, second: B)
+
+/**
  * A constructor/factory, takes no parameters but creates a new value of type T every call.
  */
 @SerialVersionUID(1L)
@@ -117,6 +130,11 @@ abstract class JavaPartialFunction[A, B] extends AbstractPartialFunction[A, B] {
  */
 sealed abstract class Option[A] extends java.lang.Iterable[A] {
   def get: A
+  /**
+   * Returns <code>a</code> if this is <code>some(a)</code> or <code>defaultValue</code> if
+   * this is <code>none</code>.
+   */
+  def getOrElse[B >: A](defaultValue: B): B
   def isEmpty: Boolean
   def isDefined: Boolean = !isEmpty
   def asScala: scala.Option[A]
@@ -154,6 +172,7 @@ object Option {
    */
   final case class Some[A](v: A) extends Option[A] {
     def get: A = v
+    def getOrElse[B >: A](defaultValue: B): B = v
     def isEmpty: Boolean = false
     def asScala: scala.Some[A] = scala.Some(v)
   }
@@ -163,6 +182,7 @@ object Option {
    */
   private case object None extends Option[Nothing] {
     def get: Nothing = throw new NoSuchElementException("None.get")
+    def getOrElse[B](defaultValue: B): B = defaultValue
     def isEmpty: Boolean = true
     def asScala: scala.None.type = scala.None
   }

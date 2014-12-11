@@ -22,7 +22,6 @@ object NumberProcessorSpec {
   case object GetNumber
 
   class NumberProcessorWithPersistentChannel(name: String) extends NamedProcessor(name) {
-    override def processorId = name
     var num = 0
 
     val channel = context.actorOf(PersistentChannel.props(channelId = "stable_id",

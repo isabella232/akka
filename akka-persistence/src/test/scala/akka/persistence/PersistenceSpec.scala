@@ -46,8 +46,10 @@ trait PersistenceSpec extends BeforeAndAfterEach with Cleanup { this: AkkaSpec �
 }
 
 object PersistenceSpec {
-  def config(plugin: String, test: String, serialization: String = "on") = ConfigFactory.parseString(
-    s"""
+  def config(plugin: String, test: String, serialization: String = "on", extraConfig: Option[String] = None) =
+    extraConfig.map(ConfigFactory.parseString(_)).getOrElse(ConfigFactory.empty()).withFallback(
+      ConfigFactory.parseString(
+        s"""
       akka.actor.serialize-creators = ${serialization}
       akka.actor.serialize-messages = ${serialization}
       akka.persistence.publish-confirmations = on
@@ -56,7 +58,7 @@ object PersistenceSpec {
       akka.persistence.journal.leveldb.dir = "target/journal-${test}"
       akka.persistence.snapshot-store.local.dir = "target/snapshots-${test}/"
       akka.test.single-expect-default = 10s
-    """)
+    """))
 }
 
 trait Cleanup { this: AkkaSpec ⇒
@@ -74,8 +76,13 @@ trait Cleanup { this: AkkaSpec ⇒
   }
 }
 
+@deprecated("Use NamedPersistentActor instead.", since = "2.3.4")
 abstract class NamedProcessor(name: String) extends Processor {
-  override def processorId: String = name
+  override def persistenceId: String = name
+}
+
+abstract class NamedPersistentActor(name: String) extends PersistentActor {
+  override def persistenceId: String = name
 }
 
 trait TurnOffRecoverOnStart { this: Processor ⇒

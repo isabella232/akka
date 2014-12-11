@@ -82,22 +82,22 @@ otherwise it can take up to the configured ``seed-node-timeout`` until the nodes
 can join.
 
 Once more than two seed nodes have been started it is no problem to shut down the first
-seed node. If the first seed node is restarted it will first try join the other 
+seed node. If the first seed node is restarted, it will first try to join the other
 seed nodes in the existing cluster.
 
-If you don't configure the seed nodes you need to join manually, using :ref:`cluster_jmx_java`
-or :ref:`cluster_command_line_java`. You can join to any node in the cluster. It doesn't 
-have to be configured as a seed node.
+If you don't configure seed nodes you need to join the cluster programmatically or manually.
 
-Joining can also be performed programatically with ``Cluster.get(system).join``. Note that
-you can only join to an existing cluster member, which means that for bootstrapping some
+Manual joining can be performed by using ref:`cluster_jmx_java` or :ref:`cluster_command_line_java`.
+Joining programatically can be performed with ``Cluster.get(system).join``.
+
+You can join to any node in the cluster. It does not have to be configured as a seed node.
+Note that you can only join to an existing cluster member, which means that for bootstrapping some
 node must join itself.
 
-You may also use ``Cluster.get(system).joinSeedNodes``, which is attractive when dynamically 
-discovering other nodes at startup by using some external tool or API. When using 
-``joinSeedNodes`` you should not include the node itself except for the node that is 
-supposed to be the first seed node, and that should be placed first in parameter to 
-``joinSeedNodes``.
+You may also use ``Cluster.get(system).joinSeedNodes`` to join programmatically,
+which is attractive when dynamically discovering other nodes at startup by using some external tool or API.
+When using ``joinSeedNodes`` you should not include the node itself except for the node that is
+supposed to be the first seed node, and that should be placed first in parameter to ``joinSeedNodes``.
 
 Unsuccessful join attempts are automatically retried after the time period defined in 
 configuration property ``retry-unsuccessful-join-after``. When using ``seed-nodes`` this
@@ -110,6 +110,8 @@ When it has successfully joined it must be restarted to be able to join another
 cluster or to join the same cluster again. It can use the same host name and port
 after the restart, but it must have been removed from the cluster before the join
 request is accepted.
+
+.. _automatic-vs-manual-downing-java:
 
 Automatic vs. Manual Downing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -426,16 +428,13 @@ That is not done by the router. The configuration for a group looks like this:
 
 .. includecode:: ../../../akka-samples/akka-sample-cluster-java/src/multi-jvm/scala/sample/cluster/stats/StatsSampleSpec.scala#router-lookup-config
 
-.. note:: 
-
+.. note::
   The routee actors should be started as early as possible when starting the actor system, because
-  the router will try to use them as soon as the member status is changed to 'Up'. If it is not
-  available at that point it will be removed from the router and it will only re-try when the 
-  cluster members are changed.
+  the router will try to use them as soon as the member status is changed to 'Up'.
 
-It is the relative actor paths defined in ``routees.paths`` that identify what actor to lookup. 
-It is possible to limit the lookup of routees to member nodes tagged with a certain role by
-specifying ``use-role``.
+The relative actor paths defined in ``routees.paths`` are used as for selecting the actors to which the messages will be forwarded to by the router.
+Messages will be forwarded to the routees using :ref:`ActorSelection <actorSelection-java>`, so the same delivery semantics should be expected.
+It is possible to limit the lookup of routees to member nodes tagged with a certain role by specifying ``use-role``.
 
 ``nr-of-instances`` defines total number of routees in the cluster. Setting ``nr-of-instances`` 
 to a high value will result in new routees added to the router when nodes join the cluster.

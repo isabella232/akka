@@ -33,10 +33,10 @@ object SnapshotSpec {
   case class DeleteN(criteria: SnapshotSelectionCriteria)
 
   class DeleteSnapshotTestProcessor(name: String, probe: ActorRef) extends LoadSnapshotTestProcessor(name, probe) {
-    override def receive = {
+    override def receive = receiveDelete orElse super.receive
+    def receiveDelete: Receive = {
       case Delete1(metadata) ⇒ deleteSnapshot(metadata.sequenceNr, metadata.timestamp)
       case DeleteN(criteria) ⇒ deleteSnapshots(criteria)
-      case other             ⇒ super.receive(other)
     }
   }
 }
@@ -64,53 +64,56 @@ class SnapshotSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotS
   "A processor" must {
     "recover state starting from the most recent snapshot" in {
       val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
-      val processorId = name
+      val persistenceId = name
 
       processor ! Recover()
 
       expectMsgPF() {
-        case (SnapshotMetadata(`processorId`, 4, timestamp), state) ⇒
+        case (SnapshotMetadata(`persistenceId`, 4, timestamp), state) ⇒
           state should be(List("a-1", "b-2", "c-3", "d-4").reverse)
           timestamp should be > (0L)
       }
       expectMsg("e-5")
       expectMsg("f-6")
+      expectMsg(RecoveryCompleted)
     }
     "recover state starting from the most recent snapshot matching an upper sequence number bound" in {
       val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
-      val processorId = name
+      val persistenceId = name
 
       processor ! Recover(toSequenceNr = 3)
 
       expectMsgPF() {
-        case (SnapshotMetadata(`processorId`, 2, timestamp), state) ⇒
+        case (SnapshotMetadata(`persistenceId`, 2, timestamp), state) ⇒
           state should be(List("a-1", "b-2").reverse)
           timestamp should be > (0L)
       }
       expectMsg("c-3")
+      expectMsg(RecoveryCompleted)
     }
     "recover state starting from the most recent snapshot matching an upper sequence number bound (without further replay)" in {
       val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
-      val processorId = name
+      val persistenceId = name
 
       processor ! Recover(toSequenceNr = 4)
       processor ! "done"
 
       expectMsgPF() {
-        case (SnapshotMetadata(`processorId`, 4, timestamp), state) ⇒
+        case (SnapshotMetadata(`persistenceId`, 4, timestamp), state) ⇒
           state should be(List("a-1", "b-2", "c-3", "d-4").reverse)
           timestamp should be > (0L)
       }
+      expectMsg(RecoveryCompleted)
       expectMsg("done")
     }
     "recover state starting from the most recent snapshot matching criteria" in {
       val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
-      val processorId = name
+      val persistenceId = name
 
       processor ! Recover(fromSnapshot = SnapshotSelectionCriteria(maxSequenceNr = 2))
 
       expectMsgPF() {
-        case (SnapshotMetadata(`processorId`, 2, timestamp), state) ⇒
+        case (SnapshotMetadata(`persistenceId`, 2, timestamp), state) ⇒
           state should be(List("a-1", "b-2").reverse)
           timestamp should be > (0L)
       }
@@ -118,19 +121,21 @@ class SnapshotSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotS
       expectMsg("d-4")
       expectMsg("e-5")
       expectMsg("f-6")
+      expectMsg(RecoveryCompleted)
     }
     "recover state starting from the most recent snapshot matching criteria and an upper sequence number bound" in {
       val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
-      val processorId = name
+      val persistenceId = name
 
       processor ! Recover(fromSnapshot = SnapshotSelectionCriteria(maxSequenceNr = 2), toSequenceNr = 3)
 
       expectMsgPF() {
-        case (SnapshotMetadata(`processorId`, 2, timestamp), state) ⇒
+        case (SnapshotMetadata(`persistenceId`, 2, timestamp), state) ⇒
           state should be(List("a-1", "b-2").reverse)
           timestamp should be > (0L)
       }
       expectMsg("c-3")
+      expectMsg(RecoveryCompleted)
     }
     "recover state from scratch if snapshot based recovery is disabled" in {
       val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
@@ -140,12 +145,13 @@ class SnapshotSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotS
       expectMsg("a-1")
       expectMsg("b-2")
       expectMsg("c-3")
+      expectMsg(RecoveryCompleted)
     }
     "support single message deletions" in {
       val deleteProbe = TestProbe()
 
       val processor1 = system.actorOf(Props(classOf[DeleteSnapshotTestProcessor], name, testActor))
-      val processorId = name
+      val persistenceId = name
 
       system.eventStream.subscribe(deleteProbe.ref, classOf[DeleteSnapshot])
 
@@ -154,10 +160,11 @@ class SnapshotSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotS
       processor1 ! "done"
 
       val metadata = expectMsgPF() {
-        case (md @ SnapshotMetadata(`processorId`, 4, _), state) ⇒
+        case (md @ SnapshotMetadata(`persistenceId`, 4, _), state) ⇒
           state should be(List("a-1", "b-2", "c-3", "d-4").reverse)
           md
       }
+      expectMsg(RecoveryCompleted)
       expectMsg("done")
 
       processor1 ! Delete1(metadata)
@@ -168,18 +175,19 @@ class SnapshotSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotS
 
       processor2 ! Recover(toSequenceNr = 4)
       expectMsgPF() {
-        case (md @ SnapshotMetadata(`processorId`, 2, _), state) ⇒
+        case (md @ SnapshotMetadata(`persistenceId`, 2, _), state) ⇒
           state should be(List("a-1", "b-2").reverse)
           md
       }
       expectMsg("c-3")
       expectMsg("d-4")
+      expectMsg(RecoveryCompleted)
     }
     "support bulk message deletions" in {
       val deleteProbe = TestProbe()
 
       val processor1 = system.actorOf(Props(classOf[DeleteSnapshotTestProcessor], name, testActor))
-      val processorId = name
+      val persistenceId = name
 
       system.eventStream.subscribe(deleteProbe.ref, classOf[DeleteSnapshots])
 
@@ -187,9 +195,10 @@ class SnapshotSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotS
       processor1 ! Recover(toSequenceNr = 4)
       processor1 ! DeleteN(SnapshotSelectionCriteria(maxSequenceNr = 4))
       expectMsgPF() {
-        case (md @ SnapshotMetadata(`processorId`, 4, _), state) ⇒
+        case (md @ SnapshotMetadata(`persistenceId`, 4, _), state) ⇒
           state should be(List("a-1", "b-2", "c-3", "d-4").reverse)
       }
+      expectMsg(RecoveryCompleted)
       deleteProbe.expectMsgType[DeleteSnapshots]
 
       // recover processor from replayed messages (all snapshots deleted)
@@ -200,6 +209,7 @@ class SnapshotSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotS
       expectMsg("b-2")
       expectMsg("c-3")
       expectMsg("d-4")
+      expectMsg(RecoveryCompleted)
     }
   }
 }

@@ -1,176 +1,51 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
  */
-
 package akka.actor
 
-import org.openjdk.jmh.annotations._
-import com.typesafe.config.ConfigFactory
-import akka.testkit.TestProbe
-import scala.concurrent.duration._
 import java.util.concurrent.TimeUnit
 
+import org.openjdk.jmh.annotations._
+
+/*
+regex checking:
+[info] a.a.ActorCreationBenchmark.synchronousStarting       ss    120000       28.285        0.481       us
+
+hand checking:
+[info] a.a.ActorCreationBenchmark.synchronousStarting       ss    120000       21.496        0.502       us
+
+
+*/
 @State(Scope.Benchmark)
-@BenchmarkMode(Array(Mode.AverageTime))
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@BenchmarkMode(Array(Mode.SingleShotTime))
+@Fork(5)
+@Warmup(iterations = 1000)
+@Measurement(iterations = 4000)
 class ActorCreationBenchmark {
+  implicit val system: ActorSystem = ActorSystem()
 
-  val config = ConfigFactory.parseString(
-    """
-      akka {
-        log-config-on-start = off
-        log-dead-letters-during-shutdown = off
-        loglevel = "WARNING"
+  final val props = Props[MyActor]
 
-        test {
-          timefactor =  1.0
-          filter-leeway = 3s
-          single-expect-default = 3s
-          default-timeout = 5s
-          calling-thread-dispatcher {
-            type = akka.testkit.CallingThreadDispatcherConfigurator
-          }
-        }
-      }""".stripMargin).withFallback(ConfigFactory.load())
-
-  implicit val system = ActorSystem("test", config)
-
-  val probe = TestProbe()
-  implicit val testActor = probe.ref
-
-
-//  @Param(Array("100000"))
-  val numberOfActors = 100000
-
-  @Setup
-  def setup() {
+  var i = 1
+  def name = {
+    i +=1
+    "some-rather-long-actor-name-actor-" + i
   }
 
-  @TearDown
+  @TearDown(Level.Trial)
   def shutdown() {
     system.shutdown()
     system.awaitTermination()
   }
 
-  import ActorCreationPerfSpec._
-
-  @GenerateMicroBenchmark
-  @OperationsPerInvocation(100000)
-  def actor_creation_time_for_actorOf_Props_EmptyActor__each_time_new__100k_actors() {
-    val propsCreator = () => Props[EmptyActor]
-
-    test(propsCreator)
-  }
-
-  @GenerateMicroBenchmark
-  @OperationsPerInvocation(100000)
-  def actor_creation_time_for_actorOf_Props_EmptyActor__each_time_same__100k_actors() {
-    val p = Props[EmptyActor]
-    val propsCreator = () => p
-
-    test(propsCreator)
-  }
-
-  @GenerateMicroBenchmark
-  @OperationsPerInvocation(100000)
-  def actor_creation_time_for_actorOf_Props_new_EmptyActor__each_time_new__100k_actors() {
-    val propsCreator = () => { Props(new EmptyActor) }
-
-    test(propsCreator)
-  }
-
-  @GenerateMicroBenchmark
-  @OperationsPerInvocation(100000)
-  def actor_creation_time_for_actorOf_Props_new_EmptyActor__each_time_same__100k_actors() {
-    val p = Props(new EmptyActor)
-    val propsCreator = () => p
-
-    test(propsCreator)
-  }
-
-  @OperationsPerInvocation(100000)
-  def actor_creation_time_for_actorOf_Props_classOf_EmptyArgsActor__each_time_new__100k_actors() {
-    val propsCreator = () => Props(classOf[EmptyArgsActor], 4711, 1729)
-
-    test(propsCreator)
-  }
-
-  @GenerateMicroBenchmark
-  @OperationsPerInvocation(100000)
-  def actor_creation_time_for_actorOf_Props_classOf_EmptyArgsActor__each_time_same__100k_actors() {
-    val p = Props(classOf[EmptyArgsActor], 4711, 1729)
-    val propsCreator = () => p
-
-    test(propsCreator)
-  }
-
-  @inline def test(propsCreator: () => Props) {
-    val driver = system.actorOf(Props(classOf[Driver]), "driver-1")
-    probe.watch(driver)
-
-    driver ! IsAlive
-    probe.expectMsg(Alive)
-
-    driver ! Create(numberOfActors, propsCreator)
-    probe.expectMsgPF(15 seconds, s"waiting for Created") { case Created => }
-
-    driver ! WaitForChildren
-    probe.expectMsgPF(15 seconds, s"waiting for Waited") { case Waited => }
-
-    driver ! PoisonPill
-    probe.expectTerminated(driver, 15 seconds)
-  }
-
+  @Benchmark
+  @OutputTimeUnit(TimeUnit.MICROSECONDS)
+  def synchronousStarting =
+    system.actorOf(props, name)
 }
 
-object ActorCreationPerfSpec {
-
-  final case class Create(numberOfActors: Int, props: () => Props)
-  case object Created
-  case object IsAlive
-  case object Alive
-  case object WaitForChildren
-  case object Waited
-
-  class EmptyActor extends Actor {
-    def receive = {
-      case IsAlive => sender() ! Alive
-    }
-  }
-
-  class EmptyArgsActor(val foo: Int, val bar: Int) extends Actor {
-    def receive = {
-      case IsAlive => sender() ! Alive
-    }
-  }
-
-  class Driver extends Actor {
-
-    def receive = {
-      case IsAlive =>
-        sender() ! Alive
-      case Create(numberOfActors, propsCreator) =>
-        for (i ← 1 to numberOfActors) {
-          context.actorOf(propsCreator.apply())
-        }
-        sender() ! Created
-      case WaitForChildren =>
-        context.children.foreach(_ ! IsAlive)
-        context.become(waiting(context.children.size, sender()), discardOld = false)
-    }
-
-    def waiting(number: Int, replyTo: ActorRef): Receive = {
-      var current = number
-
-      {
-        case Alive =>
-          current -= 1
-          if (current == 0) {
-            replyTo ! Waited
-            context.unbecome()
-          }
-      }
-    }
+class MyActor extends Actor {
+  override def receive: Receive = {
+    case _ ⇒
   }
 }
-

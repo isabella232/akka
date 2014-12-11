@@ -16,7 +16,7 @@ import akka.persistence._
 /**
  * Abstract journal, optimized for asynchronous, non-blocking writes.
  */
-trait AsyncWriteJournal extends Actor with AsyncRecovery {
+trait AsyncWriteJournal extends Actor with WriteJournalBase with AsyncRecovery {
   import JournalProtocol._
   import AsyncWriteJournal._
   import context.dispatcher
@@ -24,28 +24,29 @@ trait AsyncWriteJournal extends Actor with AsyncRecovery {
   private val extension = Persistence(context.system)
   private val publish = extension.settings.internal.publishPluginCommands
 
-  private val resequencer = context.actorOf(Props[Resequencer])
+  private val resequencer = context.actorOf(Props[Resequencer]())
   private var resequencerCounter = 1L
 
   def receive = {
-    case WriteMessages(persistentBatch, processor) ⇒
+    case WriteMessages(resequenceables, processor, actorInstanceId) ⇒
       val cctr = resequencerCounter
-      def resequence(f: PersistentRepr ⇒ Any) = persistentBatch.zipWithIndex.foreach {
-        case (p, i) ⇒ resequencer ! Desequenced(f(p), cctr + i + 1, processor, p.sender)
+      def resequence(f: PersistentRepr ⇒ Any) = resequenceables.zipWithIndex.foreach {
+        case (p: PersistentRepr, i) ⇒ resequencer ! Desequenced(f(p), cctr + i + 1, processor, p.sender)
+        case (r, i)                 ⇒ resequencer ! Desequenced(LoopMessageSuccess(r.payload, actorInstanceId), cctr + i + 1, processor, r.sender)
       }
-      asyncWriteMessages(persistentBatch.map(_.prepareWrite())) onComplete {
+      asyncWriteMessages(preparePersistentBatch(resequenceables)) onComplete {
         case Success(_) ⇒
-          resequencer ! Desequenced(WriteMessagesSuccess, cctr, processor, self)
-          resequence(WriteMessageSuccess(_))
+          resequencer ! Desequenced(WriteMessagesSuccessful, cctr, processor, self)
+          resequence(WriteMessageSuccess(_, actorInstanceId))
         case Failure(e) ⇒
-          resequencer ! Desequenced(WriteMessagesFailure(e), cctr, processor, self)
-          resequence(WriteMessageFailure(_, e))
+          resequencer ! Desequenced(WriteMessagesFailed(e), cctr, processor, self)
+          resequence(WriteMessageFailure(_, e, actorInstanceId))
       }
-      resequencerCounter += persistentBatch.length + 1
-    case r @ ReplayMessages(fromSequenceNr, toSequenceNr, max, processorId, processor, replayDeleted) ⇒
+      resequencerCounter += resequenceables.length + 1
+    case r @ ReplayMessages(fromSequenceNr, toSequenceNr, max, persistenceId, processor, replayDeleted) ⇒
       // Send replayed messages and replay result to processor directly. No need
       // to resequence replayed messages relative to written and looped messages.
-      asyncReplayMessages(processorId, fromSequenceNr, toSequenceNr, max) { p ⇒
+      asyncReplayMessages(persistenceId, fromSequenceNr, toSequenceNr, max) { p ⇒
         if (!p.deleted || replayDeleted) processor.tell(ReplayedMessage(p), p.sender)
       } map {
         case _ ⇒ ReplayMessagesSuccess
@@ -54,10 +55,10 @@ trait AsyncWriteJournal extends Actor with AsyncRecovery {
       } pipeTo (processor) onSuccess {
         case _ if publish ⇒ context.system.eventStream.publish(r)
       }
-    case ReadHighestSequenceNr(fromSequenceNr, processorId, processor) ⇒
+    case ReadHighestSequenceNr(fromSequenceNr, persistenceId, processor) ⇒
       // Send read highest sequence number to processor directly. No need
       // to resequence the result relative to written and looped messages.
-      asyncReadHighestSequenceNr(processorId, fromSequenceNr).map {
+      asyncReadHighestSequenceNr(persistenceId, fromSequenceNr).map {
         highest ⇒ ReadHighestSequenceNrSuccess(highest)
       } recover {
         case e ⇒ ReadHighestSequenceNrFailure(e)
@@ -74,13 +75,13 @@ trait AsyncWriteJournal extends Actor with AsyncRecovery {
           if (publish) context.system.eventStream.publish(d)
         case Failure(e) ⇒
       }
-    case d @ DeleteMessagesTo(processorId, toSequenceNr, permanent) ⇒
-      asyncDeleteMessagesTo(processorId, toSequenceNr, permanent) onComplete {
+    case d @ DeleteMessagesTo(persistenceId, toSequenceNr, permanent) ⇒
+      asyncDeleteMessagesTo(persistenceId, toSequenceNr, permanent) onComplete {
         case Success(_) ⇒ if (publish) context.system.eventStream.publish(d)
         case Failure(e) ⇒
       }
-    case LoopMessage(message, processor) ⇒
-      resequencer ! Desequenced(LoopMessageSuccess(message), resequencerCounter, processor, sender)
+    case LoopMessage(message, processor, actorInstanceId) ⇒
+      resequencer ! Desequenced(LoopMessageSuccess(message, actorInstanceId), resequencerCounter, processor, sender)
       resequencerCounter += 1
   }
 
@@ -95,6 +96,7 @@ trait AsyncWriteJournal extends Actor with AsyncRecovery {
   /**
    * Plugin API: asynchronously writes a batch of delivery confirmations to the journal.
    */
+  @deprecated("writeConfirmations will be removed, since Channels will be removed.", since = "2.3.4")
   def asyncWriteConfirmations(confirmations: immutable.Seq[PersistentConfirmation]): Future[Unit]
 
   /**
@@ -102,6 +104,7 @@ trait AsyncWriteJournal extends Actor with AsyncRecovery {
    * journal. If `permanent` is set to `false`, the persistent messages are marked as
    * deleted, otherwise they are permanently deleted.
    */
+  @deprecated("asyncDeleteMessages will be removed.", since = "2.3.4")
   def asyncDeleteMessages(messageIds: immutable.Seq[PersistentId], permanent: Boolean): Future[Unit]
 
   /**
@@ -109,7 +112,7 @@ trait AsyncWriteJournal extends Actor with AsyncRecovery {
    * (inclusive). If `permanent` is set to `false`, the persistent messages are marked
    * as deleted, otherwise they are permanently deleted.
    */
-  def asyncDeleteMessagesTo(processorId: String, toSequenceNr: Long, permanent: Boolean): Future[Unit]
+  def asyncDeleteMessagesTo(persistenceId: String, toSequenceNr: Long, permanent: Boolean): Future[Unit]
   //#journal-plugin-api
 }
 

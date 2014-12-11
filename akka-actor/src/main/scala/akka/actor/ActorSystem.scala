@@ -20,6 +20,7 @@ import scala.concurrent.duration.{ FiniteDuration, Duration }
 import scala.concurrent.{ Await, Awaitable, CanAwait, Future, ExecutionContext, ExecutionContextExecutor }
 import scala.util.{ Failure, Success, Try }
 import scala.util.control.{ NonFatal, ControlThrowable }
+import java.util.Locale
 
 object ActorSystem {
 
@@ -179,7 +180,7 @@ object ActorSystem {
     final val Loggers: immutable.Seq[String] = immutableSeq(getStringList("akka.loggers"))
     final val LoggerStartTimeout: Timeout = Timeout(config.getMillisDuration("akka.logger-startup-timeout"))
     final val LogConfigOnStart: Boolean = config.getBoolean("akka.log-config-on-start")
-    final val LogDeadLetters: Int = config.getString("akka.log-dead-letters").toLowerCase match {
+    final val LogDeadLetters: Int = config.getString("akka.log-dead-letters").toLowerCase(Locale.ROOT) match {
       case "off" | "false" ⇒ 0
       case "on" | "true"   ⇒ Int.MaxValue
       case _               ⇒ config.getInt("akka.log-dead-letters")
@@ -493,10 +494,10 @@ abstract class ExtendedActorSystem extends ActorSystem {
 
 private[akka] class ActorSystemImpl(val name: String, applicationConfig: Config, classLoader: ClassLoader, defaultExecutionContext: Option[ExecutionContext]) extends ExtendedActorSystem {
 
-  if (!name.matches("""^[a-zA-Z0-9][a-zA-Z0-9-]*$"""))
+  if (!name.matches("""^[a-zA-Z0-9][a-zA-Z0-9-_]*$"""))
     throw new IllegalArgumentException(
       "invalid ActorSystem name [" + name +
-        "], must contain only word characters (i.e. [a-zA-Z0-9] plus non-leading '-')")
+        "], must contain only word characters (i.e. [a-zA-Z0-9] plus non-leading '-' or '_')")
 
   import ActorSystem._
 
@@ -613,11 +614,11 @@ private[akka] class ActorSystemImpl(val name: String, applicationConfig: Config,
   def /(path: Iterable[String]): ActorPath = guardian.path / path
 
   private lazy val _start: this.type = try {
+    registerOnTermination(stopScheduler())
     // the provider is expected to start default loggers, LocalActorRefProvider does this
     provider.init(this)
     if (settings.LogDeadLetters > 0)
       logDeadLetterListener = Some(systemActorOf(Props[DeadLetterListener], "deadLetterListener"))
-    registerOnTermination(stopScheduler())
     loadExtensions()
     if (LogConfigOnStart) logConfiguration()
     this
@@ -759,7 +760,7 @@ private[akka] class ActorSystemImpl(val name: String, applicationConfig: Config,
               case _               ⇒ Logging.simpleName(cell)
             }) +
             (cell match {
-              case real: ActorCell ⇒ " status=" + real.mailbox.status
+              case real: ActorCell ⇒ " status=" + real.mailbox.currentStatus
               case _               ⇒ ""
             }) +
             " " + (cell.childrenRefs match {

@@ -5,11 +5,13 @@
 package akka.io
 
 import java.io.{ File, IOException }
-import java.net.{ URLClassLoader, InetSocketAddress }
+import java.net.{ ServerSocket, URLClassLoader, InetSocketAddress }
 import java.nio.ByteBuffer
 import java.nio.channels._
 import java.nio.channels.spi.SelectorProvider
 import java.nio.channels.SelectionKey._
+import com.typesafe.config.ConfigFactory
+
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.duration._
@@ -33,7 +35,7 @@ object TcpConnectionSpec {
 class TcpConnectionSpec extends AkkaSpec("""
     akka.io.tcp.register-timeout = 500ms
     akka.actor.serialize-creators = on
-    """) {
+    """) { thisSpecs ⇒
   import TcpConnectionSpec._
 
   // Helper to avoid Windows localization specific differences
@@ -147,6 +149,7 @@ class TcpConnectionSpec extends AkkaSpec("""
 
         userHandler.send(connectionActor, Register(userHandler.ref))
         userHandler.expectMsgType[Received].data.decodeString("ASCII") should be("immediatedata")
+        ignoreWindowsWorkaroundForTicket15766()
         interestCallReceiver.expectMsg(OP_READ)
       }
     }
@@ -356,26 +359,50 @@ class TcpConnectionSpec extends AkkaSpec("""
     }
 
     "respect pull mode" in new EstablishedConnectionTest(pullMode = true) {
-      run {
-        serverSideChannel.write(ByteBuffer.wrap("testdata".getBytes("ASCII")))
+      // override config to decrease default buffer size
+      val config =
+        ConfigFactory.load(
+          ConfigFactory.parseString("akka.io.tcp.direct-buffer-size = 1k")
+            .withFallback(AkkaSpec.testConf))
+      override implicit def system: ActorSystem = ActorSystem("respectPullModeTest", config)
+
+      try run {
+        val maxBufferSize = 1 * 1024
+        val ts = "t" * maxBufferSize
+        val us = "u" * (maxBufferSize / 2)
+
+        // send a batch that is bigger than the default buffer to make sure we don't recurse and
+        // send more than one Received messages
+        serverSideChannel.write(ByteBuffer.wrap((ts ++ us).getBytes("ASCII")))
         connectionHandler.expectNoMsg(100.millis)
 
         connectionActor ! ResumeReading
         interestCallReceiver.expectMsg(OP_READ)
         selector.send(connectionActor, ChannelReadable)
-        connectionHandler.expectMsgType[Received].data.decodeString("ASCII") should be("testdata")
+        connectionHandler.expectMsgType[Received].data.decodeString("ASCII") should be(ts)
 
-        // have two packets in flight before the selector notices
-        serverSideChannel.write(ByteBuffer.wrap("testdata2".getBytes("ASCII")))
-        serverSideChannel.write(ByteBuffer.wrap("testdata3".getBytes("ASCII")))
-
+        interestCallReceiver.expectNoMsg(100.millis)
         connectionHandler.expectNoMsg(100.millis)
 
         connectionActor ! ResumeReading
         interestCallReceiver.expectMsg(OP_READ)
         selector.send(connectionActor, ChannelReadable)
-        connectionHandler.expectMsgType[Received].data.decodeString("ASCII") should be("testdata2testdata3")
+        connectionHandler.expectMsgType[Received].data.decodeString("ASCII") should be(us)
+
+        // make sure that after reading all pending data we don't yet register for reading more data
+        interestCallReceiver.expectNoMsg(100.millis)
+        connectionHandler.expectNoMsg(100.millis)
+
+        val vs = "v" * (maxBufferSize / 2)
+        serverSideChannel.write(ByteBuffer.wrap(vs.getBytes("ASCII")))
+
+        connectionActor ! ResumeReading
+        interestCallReceiver.expectMsg(OP_READ)
+        selector.send(connectionActor, ChannelReadable)
+
+        connectionHandler.expectMsgType[Received].data.decodeString("ASCII") should be(vs)
       }
+      finally system.shutdown()
     }
 
     "close the connection and reply with `Closed` upon reception of a `Close` command" in
@@ -423,7 +450,10 @@ class TcpConnectionSpec extends AkkaSpec("""
           assertThisConnectionActorTerminated()
 
           val buffer = ByteBuffer.allocate(1)
-          val thrown = evaluating { serverSideChannel.read(buffer) } should produce[IOException]
+          val thrown = evaluating {
+            windowsWorkaroundToDetectAbort()
+            serverSideChannel.read(buffer)
+          } should produce[IOException]
           thrown.getMessage should be(ConnectionResetByPeerMessage)
         }
       }
@@ -573,7 +603,7 @@ class TcpConnectionSpec extends AkkaSpec("""
 
         abortClose(serverSideChannel)
         writer.send(connectionActor, Write(ByteString("testdata")))
-        // bother writer and handler should get the message
+        // both writer and handler should get the message
         writer.expectMsgType[ErrorClosed]
         connectionHandler.expectMsgType[ErrorClosed]
 
@@ -789,6 +819,25 @@ class TcpConnectionSpec extends AkkaSpec("""
         writer.expectMsg(works)
       }
     }
+
+    "report abort before handler is registered (reproducer from #15033)" in {
+      // This test needs the OP_CONNECT workaround on Windows, see original report #15033 and parent ticket #15766
+
+      val bindAddress = new InetSocketAddress(23402)
+      val serverSocket = new ServerSocket(bindAddress.getPort, 100, bindAddress.getAddress)
+      val connectionProbe = TestProbe()
+
+      connectionProbe.send(IO(Tcp), Connect(bindAddress))
+
+      IO(Tcp) ! Connect(bindAddress)
+
+      val socket = serverSocket.accept()
+      connectionProbe.expectMsgType[Tcp.Connected]
+      val connectionActor = connectionProbe.sender()
+      connectionActor ! PoisonPill
+      verifyActorTermination(connectionActor)
+      an[IOException] should be thrownBy { socket.getInputStream.read() }
+    }
   }
 
   /////////////////////////////////////// TEST SUPPORT ////////////////////////////////////////////////
@@ -803,6 +852,9 @@ class TcpConnectionSpec extends AkkaSpec("""
   }
 
   abstract class LocalServerTest extends ChannelRegistry {
+    /** Allows overriding the system used */
+    implicit def system: ActorSystem = thisSpecs.system
+
     val serverAddress = temporaryServerAddress()
     val localServerChannel = ServerSocketChannel.open()
     val userHandler = TestProbe()
@@ -810,6 +862,11 @@ class TcpConnectionSpec extends AkkaSpec("""
 
     var registerCallReceiver = TestProbe()
     var interestCallReceiver = TestProbe()
+
+    def ignoreWindowsWorkaroundForTicket15766(): Unit = {
+      // Due to the Windows workaround of #15766 we need to set an OP_CONNECT to reliably detect connection resets
+      if (Helpers.isWindows) interestCallReceiver.expectMsg(OP_CONNECT)
+    }
 
     def run(body: ⇒ Unit): Unit = {
       try {
@@ -882,6 +939,19 @@ class TcpConnectionSpec extends AkkaSpec("""
     lazy val serverSelectionKey = registerChannel(serverSideChannel, "server")
     lazy val defaultbuffer = ByteBuffer.allocate(TestSize)
 
+    def windowsWorkaroundToDetectAbort(): Unit = {
+      // Due to a Windows quirk we need to set an OP_CONNECT to reliably detect connection resets, see #1576
+      if (Helpers.isWindows) {
+        serverSelectionKey.interestOps(OP_CONNECT)
+        nioSelector.select(10)
+      }
+    }
+
+    override def ignoreWindowsWorkaroundForTicket15766(): Unit = {
+      super.ignoreWindowsWorkaroundForTicket15766()
+      if (Helpers.isWindows) clientSelectionKey.interestOps(OP_CONNECT)
+    }
+
     override def run(body: ⇒ Unit): Unit = super.run {
       try {
         serverSideChannel.configureBlocking(false)
@@ -892,6 +962,7 @@ class TcpConnectionSpec extends AkkaSpec("""
         userHandler.expectMsg(Connected(serverAddress, clientSideChannel.socket.getLocalSocketAddress.asInstanceOf[InetSocketAddress]))
 
         userHandler.send(connectionActor, Register(connectionHandler.ref, keepOpenOnPeerClosed, useResumeWriting))
+        ignoreWindowsWorkaroundForTicket15766()
         if (!pullMode) interestCallReceiver.expectMsg(OP_READ)
 
         clientSelectionKey // trigger initialization
@@ -1011,6 +1082,7 @@ class TcpConnectionSpec extends AkkaSpec("""
           log.debug("setSoLinger(true, 0) failed with {}", e)
       }
       channel.close()
+      if (Helpers.isWindows) nioSelector.select(10) // Windows needs this
     }
   }
 

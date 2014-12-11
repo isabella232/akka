@@ -15,9 +15,26 @@ import akka.pattern.PromiseActorRef
 import akka.persistence.serialization.Message
 
 /**
- * Persistent message.
+ * INTERNAL API
+ *
+ * Marks messages which can be resequenced by the [[akka.persistence.journal.AsyncWriteJournal]].
+ *
+ * In essence it is either an [[NonPersistentRepr]] or [[Persistent]].
  */
-sealed abstract class Persistent {
+private[persistence] sealed trait Resequenceable {
+  def payload: Any
+  def sender: ActorRef
+}
+
+/**
+ * INTERNAL API
+ * Message which can be resequenced by the Journal, but will not be persisted.
+ */
+private[persistence] final case class NonPersistentRepr(payload: Any, sender: ActorRef) extends Resequenceable
+
+/** Persistent message. */
+@deprecated("Use akka.persistence.PersistentActor instead.", since = "2.3.4")
+sealed abstract class Persistent extends Resequenceable {
   /**
    * This persistent message's payload.
    */
@@ -38,6 +55,7 @@ sealed abstract class Persistent {
   def withPayload(payload: Any): Persistent
 }
 
+@deprecated("Use akka.persistence.PersistentActor instead", since = "2.3.4")
 object Persistent {
   /**
    * Java API: creates a new persistent message. Must only be used outside processors.
@@ -65,12 +83,14 @@ object Persistent {
    * @param payload payload of the new persistent message.
    * @param currentPersistentMessage optional current persistent message, defaults to `None`.
    */
+  @deprecated("Use akka.persistence.PersistentActor instead", since = "2.3.4")
   def apply(payload: Any)(implicit currentPersistentMessage: Option[Persistent] = None): Persistent =
     currentPersistentMessage.map(_.withPayload(payload)).getOrElse(PersistentRepr(payload))
 
   /**
    * [[Persistent]] extractor.
    */
+  @deprecated("Use akka.persistence.PersistentActor instead", since = "2.3.4")
   def unapply(persistent: Persistent): Option[(Any, Long)] =
     Some((persistent.payload, persistent.sequenceNr))
 }
@@ -79,6 +99,7 @@ object Persistent {
  * Persistent message that has been delivered by a [[Channel]] or [[PersistentChannel]]. Channel
  * destinations that receive messages of this type can confirm their receipt by calling [[confirm]].
  */
+@deprecated("Use akka.persistence.PersistentActor instead", since = "2.3.4")
 sealed abstract class ConfirmablePersistent extends Persistent {
   /**
    * Called by [[Channel]] and [[PersistentChannel]] destinations to confirm the receipt of a
@@ -93,10 +114,12 @@ sealed abstract class ConfirmablePersistent extends Persistent {
   def redeliveries: Int
 }
 
+@deprecated("Use akka.persistence.PersistentActor instead", since = "2.3.4")
 object ConfirmablePersistent {
   /**
    * [[ConfirmablePersistent]] extractor.
    */
+  @deprecated("Use akka.persistence.PersistentActor instead", since = "2.3.4")
   def unapply(persistent: ConfirmablePersistent): Option[(Any, Long, Int)] =
     Some((persistent.payload, persistent.sequenceNr, persistent.redeliveries))
 }
@@ -106,19 +129,26 @@ object ConfirmablePersistent {
  * journal. The processor receives the written messages individually as [[Persistent]] messages.
  * During recovery, they are also replayed individually.
  */
-case class PersistentBatch(persistentBatch: immutable.Seq[Persistent]) extends Message {
+@deprecated("Use akka.persistence.PersistentActor instead", since = "2.3.4")
+case class PersistentBatch(batch: immutable.Seq[Resequenceable]) extends Message
+
+@deprecated("Use akka.persistence.PersistentActor instead", since = "2.3.4")
+object PersistentBatch {
   /**
-   * INTERNAL API.
+   * Java API.
    */
-  private[persistence] def persistentReprList: List[PersistentRepr] =
-    persistentBatch.toList.asInstanceOf[List[PersistentRepr]]
+  def create(persistentBatch: JIterable[Persistent]) =
+    PersistentBatch(immutableSeq(persistentBatch))
 }
 
 /**
  * Plugin API: confirmation entry written by journal plugins.
  */
+@deprecated("Channel will be removed, see `akka.persistence.AtLeastOnceDelivery` instead.", since = "2.3.4")
 trait PersistentConfirmation {
-  def processorId: String
+  @deprecated("Use `persistenceId` instead. Processor will be removed.", since = "2.3.4")
+  final def processorId: String = persistenceId
+  def persistenceId: String
   def channelId: String
   def sequenceNr: Long
 }
@@ -126,11 +156,18 @@ trait PersistentConfirmation {
 /**
  * Plugin API: persistent message identifier.
  */
+@deprecated("deleteMessages will be removed.", since = "2.3.4")
 trait PersistentId {
+
   /**
-   * Id of processor that journals a persistent message
+   * Persistent id that journals a persistent message
    */
   def processorId: String
+
+  /**
+   * Persistent id that journals a persistent message
+   */
+  def persistenceId: String = processorId
 
   /**
    * A persistent message's sequence number.
@@ -141,6 +178,7 @@ trait PersistentId {
 /**
  * INTERNAL API.
  */
+@deprecated("deleteMessages will be removed.", since = "2.3.4")
 private[persistence] case class PersistentIdImpl(processorId: String, sequenceNr: Long) extends PersistentId
 
 /**
@@ -150,7 +188,9 @@ private[persistence] case class PersistentIdImpl(processorId: String, sequenceNr
  * @see [[journal.AsyncWriteJournal]]
  * @see [[journal.AsyncRecovery]]
  */
-trait PersistentRepr extends Persistent with PersistentId with Message {
+trait PersistentRepr extends Persistent with Resequenceable with PersistentId with Message {
+  // todo we want to get rid of the Persistent() wrapper from user land; PersistentRepr is here to stay. #15230
+
   import scala.collection.JavaConverters._
 
   /**
@@ -167,33 +207,39 @@ trait PersistentRepr extends Persistent with PersistentId with Message {
    * Number of redeliveries. Only greater than zero if message has been redelivered by a [[Channel]]
    * or [[PersistentChannel]].
    */
+  @deprecated("Channel will be removed.", since = "2.3.4")
   def redeliveries: Int
 
   /**
    * Channel ids of delivery confirmations that are available for this message. Only non-empty
    * for replayed messages.
    */
+  @deprecated("Channel will be removed.", since = "2.3.4")
   def confirms: immutable.Seq[String]
 
   /**
    * Java API, Plugin API: channel ids of delivery confirmations that are available for this
    * message. Only non-empty for replayed messages.
    */
+  @deprecated("Channel will be removed.", since = "2.3.4")
   def getConfirms: JList[String] = confirms.asJava
 
   /**
    * `true` only if this message has been delivered by a channel.
    */
+  @deprecated("Channel will be removed.", since = "2.3.4")
   def confirmable: Boolean
 
   /**
    * Delivery confirmation message.
    */
+  @deprecated("Channel will be removed.", since = "2.3.4")
   def confirmMessage: Delivered
 
   /**
    * Delivery confirmation message.
    */
+  @deprecated("Channel will be removed.", since = "2.3.4")
   def confirmTarget: ActorRef
 
   /**
@@ -217,12 +263,12 @@ trait PersistentRepr extends Persistent with PersistentId with Message {
    */
   def update(
     sequenceNr: Long = sequenceNr,
-    processorId: String = processorId,
+    @deprecatedName('processorId) persistenceId: String = persistenceId,
     deleted: Boolean = deleted,
-    redeliveries: Int = redeliveries,
-    confirms: immutable.Seq[String] = confirms,
-    confirmMessage: Delivered = confirmMessage,
-    confirmTarget: ActorRef = confirmTarget,
+    @deprecated("Channel will be removed.", since = "2.3.4") redeliveries: Int = redeliveries,
+    @deprecated("Channel will be removed.", since = "2.3.4") confirms: immutable.Seq[String] = confirms,
+    @deprecated("Channel will be removed.", since = "2.3.4") confirmMessage: Delivered = confirmMessage,
+    @deprecated("Channel will be removed.", since = "2.3.4") confirmTarget: ActorRef = confirmTarget,
     sender: ActorRef = sender): PersistentRepr
 }
 
@@ -238,29 +284,21 @@ object PersistentRepr {
   def apply(
     payload: Any,
     sequenceNr: Long = 0L,
-    processorId: String = PersistentRepr.Undefined,
+    @deprecatedName('processorId) persistenceId: String = PersistentRepr.Undefined,
     deleted: Boolean = false,
-    redeliveries: Int = 0,
-    confirms: immutable.Seq[String] = Nil,
-    confirmable: Boolean = false,
-    confirmMessage: Delivered = null,
-    confirmTarget: ActorRef = null,
+    @deprecated("Channel will be removed.", since = "2.3.4") redeliveries: Int = 0,
+    @deprecated("Channel will be removed.", since = "2.3.4") confirms: immutable.Seq[String] = Nil,
+    @deprecated("Channel will be removed.", since = "2.3.4") confirmable: Boolean = false,
+    @deprecated("Channel will be removed.", since = "2.3.4") confirmMessage: Delivered = null,
+    @deprecated("Channel will be removed.", since = "2.3.4") confirmTarget: ActorRef = null,
     sender: ActorRef = null) =
-    if (confirmable) ConfirmablePersistentImpl(payload, sequenceNr, processorId, deleted, redeliveries, confirms, confirmMessage, confirmTarget, sender)
-    else PersistentImpl(payload, sequenceNr, processorId, deleted, confirms, sender)
+    if (confirmable) ConfirmablePersistentImpl(payload, sequenceNr, persistenceId, deleted, redeliveries, confirms, confirmMessage, confirmTarget, sender)
+    else PersistentImpl(payload, sequenceNr, persistenceId, deleted, confirms, sender)
 
   /**
    * Java API, Plugin API.
    */
   def create = apply _
-}
-
-object PersistentBatch {
-  /**
-   * Java API.
-   */
-  def create(persistentBatch: JIterable[Persistent]) =
-    PersistentBatch(immutableSeq(persistentBatch))
 }
 
 /**
@@ -269,7 +307,7 @@ object PersistentBatch {
 private[persistence] case class PersistentImpl(
   payload: Any,
   sequenceNr: Long,
-  processorId: String,
+  @deprecatedName('processorId) override val persistenceId: String,
   deleted: Boolean,
   confirms: immutable.Seq[String],
   sender: ActorRef) extends Persistent with PersistentRepr {
@@ -282,28 +320,32 @@ private[persistence] case class PersistentImpl(
 
   def update(
     sequenceNr: Long,
-    processorId: String,
+    @deprecatedName('processorId) persistenceId: String,
     deleted: Boolean,
     redeliveries: Int,
     confirms: immutable.Seq[String],
     confirmMessage: Delivered,
     confirmTarget: ActorRef,
     sender: ActorRef) =
-    copy(sequenceNr = sequenceNr, processorId = processorId, deleted = deleted, confirms = confirms, sender = sender)
+    copy(sequenceNr = sequenceNr, persistenceId = persistenceId, deleted = deleted, confirms = confirms, sender = sender)
 
   val redeliveries: Int = 0
   val confirmable: Boolean = false
   val confirmMessage: Delivered = null
   val confirmTarget: ActorRef = null
+
+  @deprecated("Use persistenceId.", since = "2.3.4")
+  override def processorId = persistenceId
 }
 
 /**
  * INTERNAL API.
  */
+@deprecated("ConfirmablePersistent will be removed, see `AtLeastOnceDelivery` instead.", since = "2.3.4")
 private[persistence] case class ConfirmablePersistentImpl(
   payload: Any,
   sequenceNr: Long,
-  processorId: String,
+  @deprecatedName('processorId) override val persistenceId: String,
   deleted: Boolean,
   redeliveries: Int,
   confirms: immutable.Seq[String],
@@ -322,14 +364,18 @@ private[persistence] case class ConfirmablePersistentImpl(
   def prepareWrite(sender: ActorRef) =
     copy(sender = sender, confirmMessage = null, confirmTarget = null)
 
-  def update(sequenceNr: Long, processorId: String, deleted: Boolean, redeliveries: Int, confirms: immutable.Seq[String], confirmMessage: Delivered, confirmTarget: ActorRef, sender: ActorRef) =
-    copy(sequenceNr = sequenceNr, processorId = processorId, deleted = deleted, redeliveries = redeliveries, confirms = confirms, confirmMessage = confirmMessage, confirmTarget = confirmTarget, sender = sender)
+  def update(sequenceNr: Long, @deprecatedName('processorId) persistenceId: String, deleted: Boolean, redeliveries: Int, confirms: immutable.Seq[String], confirmMessage: Delivered, confirmTarget: ActorRef, sender: ActorRef) =
+    copy(sequenceNr = sequenceNr, persistenceId = persistenceId, deleted = deleted, redeliveries = redeliveries, confirms = confirms, confirmMessage = confirmMessage, confirmTarget = confirmTarget, sender = sender)
+
+  @deprecated("Use persistenceId.", since = "2.3.4")
+  override def processorId = persistenceId
 }
 
 /**
  * INTERNAL API.
  */
+@deprecated("ConfirmablePersistent will be removed, see `AtLeastOnceDelivery` instead.", since = "2.3.4")
 private[persistence] object ConfirmablePersistentImpl {
   def apply(persistent: PersistentRepr, confirmMessage: Delivered, confirmTarget: ActorRef = null): ConfirmablePersistentImpl =
-    ConfirmablePersistentImpl(persistent.payload, persistent.sequenceNr, persistent.processorId, persistent.deleted, persistent.redeliveries, persistent.confirms, confirmMessage, confirmTarget, persistent.sender)
+    ConfirmablePersistentImpl(persistent.payload, persistent.sequenceNr, persistent.persistenceId, persistent.deleted, persistent.redeliveries, persistent.confirms, confirmMessage, confirmTarget, persistent.sender)
 }

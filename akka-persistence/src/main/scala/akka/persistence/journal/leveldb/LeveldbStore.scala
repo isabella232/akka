@@ -27,18 +27,14 @@ private[persistence] trait LeveldbStore extends Actor with LeveldbIdMapping with
   val nativeLeveldb = config.getBoolean("native")
 
   val leveldbOptions = new Options().createIfMissing(true)
-  val leveldbReadOptions = new ReadOptions().verifyChecksums(config.getBoolean("checksum"))
-  val leveldbWriteOptions = new WriteOptions().sync(config.getBoolean("fsync"))
+  def leveldbReadOptions = new ReadOptions().verifyChecksums(config.getBoolean("checksum"))
+  val leveldbWriteOptions = new WriteOptions().sync(config.getBoolean("fsync")).snapshot(false)
   val leveldbDir = new File(config.getString("dir"))
   var leveldb: DB = _
 
   def leveldbFactory =
     if (nativeLeveldb) org.fusesource.leveldbjni.JniDBFactory.factory
     else org.iq80.leveldb.impl.Iq80DBFactory.factory
-
-  // TODO: support migration of processor and channel ids
-  // needed if default processor and channel ids are used
-  // (actor paths, which contain deployment information).
 
   val serialization = SerializationExtension(context.system)
 
@@ -52,13 +48,13 @@ private[persistence] trait LeveldbStore extends Actor with LeveldbIdMapping with
 
   def deleteMessages(messageIds: immutable.Seq[PersistentId], permanent: Boolean) = withBatch { batch ⇒
     messageIds foreach { messageId ⇒
-      if (permanent) batch.delete(keyToBytes(Key(numericId(messageId.processorId), messageId.sequenceNr, 0)))
-      else batch.put(keyToBytes(deletionKey(numericId(messageId.processorId), messageId.sequenceNr)), Array.emptyByteArray)
+      if (permanent) batch.delete(keyToBytes(Key(numericId(messageId.persistenceId), messageId.sequenceNr, 0)))
+      else batch.put(keyToBytes(deletionKey(numericId(messageId.persistenceId), messageId.sequenceNr)), Array.emptyByteArray)
     }
   }
 
-  def deleteMessagesTo(processorId: String, toSequenceNr: Long, permanent: Boolean) = withBatch { batch ⇒
-    val nid = numericId(processorId)
+  def deleteMessagesTo(persistenceId: String, toSequenceNr: Long, permanent: Boolean) = withBatch { batch ⇒
+    val nid = numericId(persistenceId)
 
     // seek to first existing message
     val fromSequenceNr = withIterator { iter ⇒
@@ -73,14 +69,16 @@ private[persistence] trait LeveldbStore extends Actor with LeveldbIdMapping with
     }
   }
 
-  def leveldbSnapshot = leveldbReadOptions.snapshot(leveldb.getSnapshot)
+  def leveldbSnapshot(): ReadOptions = leveldbReadOptions.snapshot(leveldb.getSnapshot)
 
   def withIterator[R](body: DBIterator ⇒ R): R = {
-    val iterator = leveldb.iterator(leveldbSnapshot)
+    val ro = leveldbSnapshot()
+    val iterator = leveldb.iterator(ro)
     try {
       body(iterator)
     } finally {
       iterator.close()
+      ro.snapshot().close()
     }
   }
 
@@ -99,13 +97,13 @@ private[persistence] trait LeveldbStore extends Actor with LeveldbIdMapping with
   def persistentFromBytes(a: Array[Byte]): PersistentRepr = serialization.deserialize(a, classOf[PersistentRepr]).get
 
   private def addToMessageBatch(persistent: PersistentRepr, batch: WriteBatch): Unit = {
-    val nid = numericId(persistent.processorId)
+    val nid = numericId(persistent.persistenceId)
     batch.put(keyToBytes(counterKey(nid)), counterToBytes(persistent.sequenceNr))
     batch.put(keyToBytes(Key(nid, persistent.sequenceNr, 0)), persistentToBytes(persistent))
   }
 
   private def addToConfirmationBatch(confirmation: PersistentConfirmation, batch: WriteBatch): Unit = {
-    val npid = numericId(confirmation.processorId)
+    val npid = numericId(confirmation.persistenceId)
     val ncid = numericId(confirmation.channelId)
     batch.put(keyToBytes(Key(npid, confirmation.sequenceNr, ncid)), confirmation.channelId.getBytes("UTF-8"))
   }

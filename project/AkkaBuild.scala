@@ -20,6 +20,7 @@ import com.typesafe.sbt.SbtSite.site
 import com.typesafe.sbt.SbtSite.SiteKeys.packageSite
 import com.typesafe.sbt.site.SphinxSupport
 import pl.project13.scala.sbt.SbtJmh._
+import pl.project13.scala.sbt.SbtJmh.JmhKeys._
 import com.typesafe.sbt.site.SphinxSupport.{ enableOutput, generatePdf, generatedPdf, generateEpub, generatedEpub, sphinxInputs, sphinxPackages, Sphinx }
 import com.typesafe.sbt.preprocess.Preprocess.{ preprocess, preprocessExts, preprocessVars, simplePreprocess }
 import java.lang.Boolean.getBoolean
@@ -38,15 +39,12 @@ object AkkaBuild extends Build {
 
   val enableMiMa = true
 
-  val requestedScalaVersion = System.getProperty("akka.scalaVersion", "2.10.4")
-  val Seq(scalaEpoch, scalaMajor) = """(\d+)\.(\d+)\..*""".r.unapplySeq(requestedScalaVersion).get.map(_.toInt)
   val streamAndHttpVersion = "0.11-SNAPSHOT"
-
   lazy val buildSettings = Seq(
     organization := "com.typesafe.akka",
     version      := "2.3-SNAPSHOT",
-    scalaVersion := requestedScalaVersion,
-    scalaBinaryVersion := System.getProperty("akka.scalaBinaryVersion", if (scalaVersion.value contains "-") scalaVersion.value else scalaBinaryVersion.value)
+    scalaVersion := Dependencies.Versions.scala,
+    crossScalaVersions := Dependencies.Versions.crossScala
   )
 
   lazy val akka = Project(
@@ -75,16 +73,13 @@ object AkkaBuild extends Build {
       S3.progress in S3.upload := true,
       mappings in S3.upload <<= (Release.releaseDirectory, version) map { (d, v) =>
         val downloads = d / "downloads"
-        val archivesPathFinder = (downloads * ("*" + v + ".zip")) +++ (downloads * ("*" + v + ".tgz"))
+        val archivesPathFinder = downloads * ("*" + v + ".zip")
         archivesPathFinder.get.map(file => (file -> ("akka/" + file.getName)))
       },
-      validatePullRequest <<= Seq(SphinxSupport.generate in Sphinx in docsDev,
-        test in Test in stream, test in Test in streamTestkit, test in Test in streamTests, test in Test in streamTck,
-        test in Test in httpCore, test in Test in http, test in Test in httpJavaTests, test in Test in httpJava8Tests,
-        test in Test in httpTestkit, test in Test in httpTests, test in Test in docsDev).dependOn,
-      aggregate in publishM2 := false // REMOVE DURING MERGE INTO release-2.3
+      validatePullRequest <<= (Unidoc.unidoc, SphinxSupport.generate in Sphinx in docs) map { (_, _) => }
     ),
-    aggregate = Seq(streamAndHttp) // FIXME DURING MERGE INTO release-2.3
+    aggregate = Seq(actor, testkit, actorTests, dataflow, remote, remoteTests, camel, cluster, slf4j, agent, transactor,
+      persistence, persistenceTck, mailboxes, zeroMQ, kernel, osgi, docs, contrib, samples, multiNodeTestkit, streamAndHttp)
   )
 
   lazy val akkaScalaNightly = Project(
@@ -110,7 +105,7 @@ object AkkaBuild extends Build {
       (multiJvmProjects map (_ % "multi-jvm->multi-jvm"))
     ),
     settings = defaultSettings ++ multiJvmSettings ++ Seq(
-      scalaVersion := requestedScalaVersion,
+      scalaVersion := Dependencies.Versions.scala,
       publishArtifact := false,
       definedTests in Test := Nil
     ) ++ (
@@ -159,7 +154,7 @@ object AkkaBuild extends Build {
       // to fix scaladoc generation
       fullClasspath in doc in Compile <<= fullClasspath in Compile,
       libraryDependencies ++= Dependencies.actor,
-      previousArtifact := akkaPreviousArtifact("akka-actor")
+      previousArtifact := akkaPreviousArtifact("akka-actor").value
     )
   )
 
@@ -178,7 +173,7 @@ object AkkaBuild extends Build {
     base = file("akka-dataflow"),
     dependencies = Seq(testkit % "test->test"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettingsNoVerificationOfDiagrams  ++ OSGi.dataflow ++ cpsPlugin ++ Seq(
-      previousArtifact := akkaPreviousArtifact("akka-dataflow")
+      previousArtifact := akkaPreviousArtifact("akka-dataflow").value
     )
   )
 
@@ -189,7 +184,7 @@ object AkkaBuild extends Build {
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.testkit ++ Seq(
       libraryDependencies ++= Dependencies.testkit,
       initialCommands += "import akka.testkit._",
-      previousArtifact := akkaPreviousArtifact("akka-testkit")
+      previousArtifact := akkaPreviousArtifact("akka-testkit").value
     )
   )
 
@@ -220,7 +215,7 @@ object AkkaBuild extends Build {
       libraryDependencies ++= Dependencies.remote,
       // disable parallel tests
       parallelExecution in Test := false,
-      previousArtifact := akkaPreviousArtifact("akka-remote")
+      previousArtifact := akkaPreviousArtifact("akka-remote").value
     )
   )
 
@@ -229,7 +224,7 @@ object AkkaBuild extends Build {
     base = file("akka-multi-node-testkit"),
     dependencies = Seq(remote, testkit),
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ Seq(
-      previousArtifact := akkaPreviousArtifact("akka-multi-node-testkit")
+      previousArtifact := akkaPreviousArtifact("akka-multi-node-testkit").value
     )
   )
 
@@ -262,7 +257,7 @@ object AkkaBuild extends Build {
         (name: String) => (src ** (name + ".conf")).get.headOption.map("-Dakka.config=" + _.absolutePath).toSeq
       },
       scalatestOptions in MultiJvm := defaultMultiJvmScalatestOptions,
-      previousArtifact := akkaPreviousArtifact("akka-cluster")
+      previousArtifact := akkaPreviousArtifact("akka-cluster").value
     )
   ) configs (MultiJvm)
 
@@ -272,7 +267,7 @@ object AkkaBuild extends Build {
     dependencies = Seq(actor, testkit % "test->test"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.slf4j ++ Seq(
       libraryDependencies ++= Dependencies.slf4j,
-      previousArtifact := akkaPreviousArtifact("akka-slf4j")
+      previousArtifact := akkaPreviousArtifact("akka-slf4j").value
     )
   )
 
@@ -282,7 +277,7 @@ object AkkaBuild extends Build {
     dependencies = Seq(actor, testkit % "test->test"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettingsNoVerificationOfDiagrams ++ javadocSettings ++ OSGi.agent ++ Seq(
       libraryDependencies ++= Dependencies.agent,
-      previousArtifact := akkaPreviousArtifact("akka-agent")
+      previousArtifact := akkaPreviousArtifact("akka-agent").value
     )
   )
 
@@ -292,7 +287,7 @@ object AkkaBuild extends Build {
     dependencies = Seq(actor, testkit % "test->test"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.transactor ++ Seq(
       libraryDependencies ++= Dependencies.transactor,
-      previousArtifact := akkaPreviousArtifact("akka-transactor")
+      previousArtifact := akkaPreviousArtifact("akka-transactor").value
     )
   )
 
@@ -304,7 +299,19 @@ object AkkaBuild extends Build {
       fork in Test := true,
       javaOptions in Test := defaultMultiJvmOptions,
       Dependencies.persistence,
-      previousArtifact := akkaPreviousArtifact("akka-persistence-experimental")
+      previousArtifact := akkaPreviousArtifact("akka-persistence-experimental").value
+    )
+  )
+
+  lazy val persistenceTck = Project(
+    id = "akka-persistence-tck-experimental",
+    base = file("akka-persistence-tck"),
+    dependencies = Seq(persistence % "compile;test->test", testkit % "compile->test"),
+    settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ experimentalSettings ++ javadocSettings ++ OSGi.persistence ++ Seq(
+      fork in Test := true,
+      javaOptions in Test := defaultMultiJvmOptions,
+      libraryDependencies ++= Dependencies.persistenceTck,
+      previousArtifact := None
     )
   )
 
@@ -621,7 +628,7 @@ object AkkaBuild extends Build {
     dependencies = Seq(remote, testkit % "compile;test->test"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.mailboxesCommon ++ Seq(
       libraryDependencies ++= Dependencies.mailboxes,
-      previousArtifact := akkaPreviousArtifact("akka-mailboxes-common"),
+      previousArtifact := akkaPreviousArtifact("akka-mailboxes-common").value,
       publishArtifact in Test := true
     )
   )
@@ -632,7 +639,7 @@ object AkkaBuild extends Build {
     dependencies = Seq(mailboxesCommon % "compile;test->test", testkit % "test"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.fileMailbox ++ Seq(
       libraryDependencies ++= Dependencies.fileMailbox,
-      previousArtifact := akkaPreviousArtifact("akka-file-mailbox")
+      previousArtifact := akkaPreviousArtifact("akka-file-mailbox").value
     )
   )
 
@@ -641,8 +648,8 @@ object AkkaBuild extends Build {
     base = file("akka-zeromq"),
     dependencies = Seq(actor, testkit % "test;test->test"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.zeroMQ ++ Seq(
-      libraryDependencies ++= Dependencies.zeroMQ,
-      previousArtifact := akkaPreviousArtifact("akka-zeromq")
+      Dependencies.zeroMQ,
+      previousArtifact := akkaPreviousArtifact("akka-zeromq").value
     )
   )
 
@@ -652,7 +659,7 @@ object AkkaBuild extends Build {
     dependencies = Seq(actor, testkit % "test->test"),
     settings = defaultSettings ++ formatSettings ++ scaladocSettingsNoVerificationOfDiagrams ++ javadocSettings ++ Seq(
       libraryDependencies ++= Dependencies.kernel,
-      previousArtifact := akkaPreviousArtifact("akka-kernel")
+      previousArtifact := akkaPreviousArtifact("akka-kernel").value
     )
   )
 
@@ -663,7 +670,7 @@ object AkkaBuild extends Build {
     settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.camel ++ Seq(
       libraryDependencies ++= Dependencies.camel,
       testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
-      previousArtifact := akkaPreviousArtifact("akka-camel")
+      previousArtifact := akkaPreviousArtifact("akka-camel").value
     )
   )
 
@@ -878,7 +885,7 @@ object AkkaBuild extends Build {
     id = "akka-docs",
     base = file("akka-docs"),
     dependencies = Seq(actor, testkit % "test->test",
-      remote % "compile;test->test", cluster, slf4j, agent, zeroMQ, camel, osgi, persistence),
+      remote % "compile;test->test", cluster, slf4j, agent, zeroMQ, camel, osgi, persistence, persistenceTck),
     settings = defaultSettings ++ docFormatSettings ++ site.settings ++ site.sphinxSupport() ++ site.publishSite ++ sphinxPreprocessing ++ cpsPlugin ++ Seq(
       sourceDirectory in Sphinx <<= baseDirectory / "rst",
       watchSources <++= (sourceDirectory in Sphinx, excludeFilter in Global) map { (source, excl) =>
@@ -900,7 +907,7 @@ object AkkaBuild extends Build {
       enableOutput in generatePdf in Sphinx := true,
       enableOutput in generateEpub in Sphinx := true,
       unmanagedSourceDirectories in Test <<= sourceDirectory in Sphinx apply { _ ** "code" get },
-      libraryDependencies ++= Dependencies.docs,
+      Dependencies.docs,
       publishArtifact in Compile := false,
       unmanagedSourceDirectories in ScalariformKeys.format in Test <<= unmanagedSourceDirectories in Test,
       testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
@@ -922,7 +929,7 @@ object AkkaBuild extends Build {
       enableOutput in generatePdf in Sphinx := true,
       enableOutput in generateEpub in Sphinx := true,
       unmanagedSourceDirectories in Test <<= sourceDirectory in Sphinx apply { _ ** "code" get },
-      libraryDependencies ++= Dependencies.docs,
+      Dependencies.docs,
       unmanagedSourceDirectories in ScalariformKeys.format in Test <<= unmanagedSourceDirectories in Test,
       testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
       publishArtifact := false,
@@ -1146,10 +1153,10 @@ object AkkaBuild extends Build {
         .map(file(_))
     },
 
-    validatePullRequestTask
+    validatePullRequestTask,
+    validatePullRequest <<= validatePullRequest.dependsOn(test in Test),
     // add reportBinaryIssues to validatePullRequest on minor version maintenance branch
-    //validatePullRequest <<= validatePullRequest.dependsOn(reportBinaryIssues)
-
+    validatePullRequest <<= validatePullRequest.dependsOn(reportBinaryIssues)
   ) ++ mavenLocalResolverSettings ++ JUnitFileReporting.settings ++ StatsDMetrics.settings
 
 
@@ -1350,7 +1357,37 @@ object AkkaBuild extends Build {
       ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor#GotUid.copy"),
       ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor#GotUid.this"),
       ProblemFilters.exclude[MissingTypesProblem]("akka.remote.ReliableDeliverySupervisor$GotUid$"),
-      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor#GotUid.apply")
+      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor#GotUid.apply"),
+
+      // Change of private method to protected by #15212
+      ProblemFilters.exclude[MissingMethodProblem]("akka.persistence.snapshot.local.LocalSnapshotStore.akka$persistence$snapshot$local$LocalSnapshotStore$$save"),
+
+      // Changes in akka-stream-experimental are not binary compatible - still source compatible (2.3.3 -> 2.3.4)
+      // Adding `PersistentActor.persistAsync`
+      // Adding `PersistentActor.defer`
+      // Changes in akka-persistence-experimental in #13944
+      // Changes in private LevelDB Store by #13962
+      // Renamed `processorId` to `persistenceId`
+      ProblemFilters.excludePackage("akka.persistence"),
+
+      // Adding wildcardFanOut to internal message ActorSelectionMessage by #13992
+      FilterAnyProblem("akka.actor.ActorSelectionMessage$"),
+      FilterAnyProblem("akka.actor.ActorSelectionMessage"),
+      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ContainerFormats#SelectionEnvelopeOrBuilder.hasWildcardFanOut"),
+      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ContainerFormats#SelectionEnvelopeOrBuilder.getWildcardFanOut"),
+
+      // Adding expectMsg overload to testkit #15425
+      ProblemFilters.exclude[MissingMethodProblem]("akka.testkit.TestKitBase.expectMsg"),
+
+      // Adding akka.japi.Option.getOrElse #15383
+      ProblemFilters.exclude[MissingMethodProblem]("akka.japi.Option.getOrElse"),
+
+      // Change to internal API to fix #15991
+      ProblemFilters.exclude[MissingClassProblem]("akka.io.TcpConnection$UpdatePendingWrite$"),
+      ProblemFilters.exclude[MissingClassProblem]("akka.io.TcpConnection$UpdatePendingWrite"),
+
+      // Change to optimize use of ForkJoin with Akka's Mailbox
+      ProblemFilters.exclude[MissingMethodProblem]("akka.dispatch.Mailbox.status")
     )
   }
 
@@ -1360,13 +1397,24 @@ object AkkaBuild extends Build {
     binaryIssueFilters ++= mimaIgnoredProblems
   )
 
-  def akkaPreviousArtifact(id: String, organization: String = "com.typesafe.akka", version: String = "2.3.0",
-      crossVersion: String = "2.10"): Option[sbt.ModuleID] =
+  def akkaPreviousArtifact(id: String): Def.Initialize[Option[sbt.ModuleID]] = Def.setting {
     if (enableMiMa) {
-      val fullId = if (crossVersion.isEmpty) id else id + "_" + crossVersion
-      Some(organization % fullId % version) // the artifact to compare binary compatibility with
+      // Note: This is a little gross because we don't have a 2.3.0 release on Scala 2.11.x
+      // This should be expanded if there are more deviations.
+      val version: String = 
+        scalaBinaryVersion.value match {
+          case "2.11" => "2.3.2"
+          case _ =>      "2.3.0"
+        }
+      val fullId = crossVersion.value match {
+         case _ : CrossVersion.Binary => id + "_" + scalaBinaryVersion.value
+         case _ : CrossVersion.Full => id + "_" + scalaVersion.value
+         case CrossVersion.Disabled => id 
+       }
+      Some(organization.value % fullId % version) // the artifact to compare binary compatibility with
     }
     else None
+  }
 
   def loadSystemProperties(fileName: String): Unit = {
     import scala.collection.JavaConverters._
@@ -1406,7 +1454,7 @@ object AkkaBuild extends Build {
       OsgiKeys.exportPackage := Seq("akka*"),
       OsgiKeys.privatePackage := Seq("akka.osgi.impl"),
       //akka-actor packages are not imported, as contained in the CP
-      OsgiKeys.importPackage := (osgiOptionalImports map optionalResolution) ++ Seq("!sun.misc", scalaImport(), configImport(), "*"),
+      OsgiKeys.importPackage := (osgiOptionalImports map optionalResolution) ++ Seq("!sun.misc", scalaVersion(scalaImport).value, configImport(), "*"),
       // dynamicImportPackage needed for loading classes defined in configuration
       OsgiKeys.dynamicImportPackage := Seq("*")
      )
@@ -1465,14 +1513,19 @@ object AkkaBuild extends Build {
       "com.google.protobuf")
 
     def exports(packages: Seq[String] = Seq(), imports: Seq[String] = Nil) = osgiSettings ++ Seq(
-      OsgiKeys.importPackage := imports ++ defaultImports,
+      OsgiKeys.importPackage := imports ++ scalaVersion(defaultImports).value,
       OsgiKeys.exportPackage := packages
     )
-    def defaultImports = Seq("!sun.misc", akkaImport(), configImport(), scalaImport(), "*")
+    def defaultImports(scalaVersion: String) = Seq("!sun.misc", akkaImport(), configImport(), scalaImport(scalaVersion), "*")
     def akkaImport(packageName: String = "akka.*") = versionedImport(packageName, "2.3", "2.4")
     def configImport(packageName: String = "com.typesafe.config.*") = versionedImport(packageName, "1.2.0", "1.3.0")
     def protobufImport(packageName: String = "com.google.protobuf.*") = versionedImport(packageName, "2.5.0", "2.6.0")
-    def scalaImport(packageName: String = "scala.*") = versionedImport(packageName, s"$scalaEpoch.$scalaMajor", s"$scalaEpoch.${scalaMajor+1}")
+    def scalaImport(version: String) = {
+      val packageName = "scala.*"
+      val ScalaVersion = """(\d+)\.(\d+)\..*""".r
+      val ScalaVersion(epoch, major) = version
+      versionedImport(packageName, s"$epoch.$major", s"$epoch.${major+1}")
+    }
     def optionalResolution(packageName: String) = "%s;resolution:=optional".format(packageName)
     def versionedImport(packageName: String, lower: String, upper: String) = s"""$packageName;version="[$lower,$upper)""""
   }
@@ -1483,13 +1536,18 @@ object AkkaBuild extends Build {
 object Dependencies {
   import DependencyHelpers._
 
+  import DependencyHelpers._
+  import DependencyHelpers.ScalaVersionDependentModuleID._
+
   object Versions {
+    val crossScala = Seq("2.10.4", "2.11.4")
+    val scala = crossScala.head
     val scalaStmVersion  = System.getProperty("akka.build.scalaStmVersion", "0.7")
     val scalaZeroMQVersion = System.getProperty("akka.build.scalaZeroMQVersion", "0.0.7")
     val genJavaDocVersion = System.getProperty("akka.build.genJavaDocVersion", "0.8")
     val scalaTestVersion = System.getProperty("akka.build.scalaTestVersion", "2.1.3")
     val scalaCheckVersion = System.getProperty("akka.build.scalaCheckVersion", "1.11.3")
-    val scalaContinuationsVersion = System.getProperty("akka.build.scalaContinuationsVersion", "1.0.1")
+    val scalaContinuationsVersion = System.getProperty("akka.build.scalaContinuationsVersion", "1.0.2")
 
     val reactiveStreamsVersion = System.getProperty("akka.build.reactiveStreamsVersion", "1.0.0.M3")
 
@@ -1506,7 +1564,7 @@ object Dependencies {
     // Compile
     val camelCore     = "org.apache.camel"            % "camel-core"                   % "2.10.3" exclude("org.slf4j", "slf4j-api") // ApacheV2
 
-    val config        = "com.typesafe"                % "config"                       % "1.2.0"       // ApacheV2
+    val config        = "com.typesafe"                % "config"                       % "1.2.1"       // ApacheV2
     // mirrored in OSGi sample
     val netty         = "io.netty"                    % "netty"                        % "3.8.0.Final" // ApacheV2
     // mirrored in OSGi sample
@@ -1515,7 +1573,11 @@ object Dependencies {
     val scalaXml      = ScalaVersionDependentModuleID.post210Dependency("org.scala-lang.modules" %% "scala-xml" % "1.0.1") // Scala License
 
     val slf4jApi      = "org.slf4j"                   % "slf4j-api"                    % "1.7.5"       // MIT
-    val zeroMQClient  = "org.zeromq"                 %% "zeromq-scala-binding"         % scalaZeroMQVersion // ApacheV2
+    val zeroMQClient = ScalaVersionDependentModuleID.fromPF {
+      case version if version.startsWith("2.10") => "org.zeromq"                % "zeromq-scala-binding_2.10" % "0.0.7"        // ApacheV2
+      case version if version.startsWith("2.11") => "org.spark-project.zeromq"  % "zeromq-scala-binding_2.11" % "0.0.7-spark"  // ApacheV2
+      case v => throw new RuntimeException("Scala version $v not supported for zeromq")
+    }
     // mirrored in OSGi sample
     val uncommonsMath = "org.uncommons.maths"         % "uncommons-maths"              % "1.2.2a" exclude("jfree", "jcommon") exclude("jfree", "jfreechart")      // ApacheV2
     // mirrored in OSGi sample
@@ -1634,6 +1696,8 @@ object Dependencies {
 
   val httpJava8Tests = deps(Test.junit, Test.junitIntf)
 
+  val persistenceTck = Seq(Test.scalatest.copy(configurations = Some("compile")), Test.junit.copy(configurations = Some("compile")))
+
   val stream = Seq(
     // FIXME use project dependency when akka-stream-experimental-2.3.x is released
     "com.typesafe.akka" %% "akka-actor" % Versions.publishedAkkaVersion,
@@ -1671,37 +1735,13 @@ object Dependencies {
 
   val uncommons = Seq(uncommonsMath)
 
-  val docs = Seq(Test.scalatest, Test.junit, Test.junitIntf)
+  val docs = deps(Test.scalatest, Test.junit, Test.junitIntf, Test.scalaXml)
 
-  val zeroMQ = Seq(protobuf, zeroMQClient, Test.scalatest, Test.junit)
+  val zeroMQ = deps(protobuf, zeroMQClient, Test.scalatest, Test.junit)
 
   val clusterSample = Seq(Test.scalatest, sigar)
 
   val contrib = Seq(Test.junitIntf, Test.commonsIo)
 
   val multiNodeSample = Seq(Test.scalatest)
-}
-
-object DependencyHelpers {
-  case class ScalaVersionDependentModuleID(val modules: String => Seq[ModuleID]) {
-    def %(config: String): ScalaVersionDependentModuleID =
-      ScalaVersionDependentModuleID(version => modules(version).map(_ % config))
-  }
-  object ScalaVersionDependentModuleID {
-    implicit def liftConstantModule(mod: ModuleID): ScalaVersionDependentModuleID =
-      ScalaVersionDependentModuleID(_ => Seq(mod))
-
-    def fromPF(f: PartialFunction[String, ModuleID]): ScalaVersionDependentModuleID =
-      ScalaVersionDependentModuleID(version => if (f.isDefinedAt(version)) Seq(f(version)) else Nil)
-    def post210Dependency(moduleId: ModuleID): ScalaVersionDependentModuleID = fromPF {
-      case version if !version.startsWith("2.10") => moduleId
-    }
-  }
-
-  /**
-   * Use this as a dependency setting if the dependencies contain both static and Scala-version
-   * dependent entries.
-   */
-  def deps(modules: ScalaVersionDependentModuleID*) =
-    libraryDependencies <++= scalaVersion(version => modules.flatMap(m => m.modules(version)))
 }

@@ -4,25 +4,31 @@
 
 package doc;
 
-import java.util.concurrent.TimeUnit;
-
+import akka.actor.AbstractActor;
+import akka.actor.ActorPath;
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import akka.actor.Props;
 import akka.japi.pf.ReceiveBuilder;
+import akka.persistence.*;
 import scala.Option;
 import scala.PartialFunction;
 import scala.concurrent.duration.Duration;
-
-import akka.actor.*;
-import akka.persistence.*;
 import scala.runtime.BoxedUnit;
+import java.io.Serializable;
+
+import java.util.concurrent.TimeUnit;
 
 import static java.util.Arrays.asList;
 
 public class LambdaPersistenceDocTest {
 
+  public interface SomeOtherMessage {}
+
   public interface ProcessorMethods {
-    //#processor-id
-    public String processorId();
-    //#processor-id
+    //#persistence-id
+    public String persistenceId();
+    //#persistence-id
     //#recovery-status
     public boolean recoveryRunning();
     public boolean recoveryFinished();
@@ -50,7 +56,7 @@ public class LambdaPersistenceDocTest {
             Throwable cause = failure.cause();
             // ...
           }).
-          matchAny(otherwise -> {
+          match(SomeOtherMessage.class, message -> {
             // message not written to journal
           }).build()
         );
@@ -117,13 +123,13 @@ public class LambdaPersistenceDocTest {
     }
 
     class MyProcessor4 extends AbstractProcessor implements ProcessorMethods {
-      //#processor-id-override
+      //#persistence-id-override
       @Override
-      public String processorId() {
-        return "my-stable-processor-id";
+      public String persistenceId() {
+        return "my-stable-persistence-id";
       }
 
-      //#processor-id-override
+      //#persistence-id-override
       public MyProcessor4() {
         receive(ReceiveBuilder.
           match(Persistent.class, received -> {/* ... */}).build()
@@ -132,45 +138,126 @@ public class LambdaPersistenceDocTest {
     }
 
     //#recovery-completed
-    class MyProcessor5 extends AbstractProcessor {
-      
-      public MyProcessor5() {
-        receive(ReceiveBuilder.
-          matchEquals("FIRST", s -> {
-            recoveryCompleted();
-            getContext().become(active);
-            unstashAll();
-          }).
-          matchAny(message -> {
-            if (recoveryFinished()) {
-              stash(); 
-            } else {
-              active.apply(message);  
-            }
-          }).
-          build()
-        );
+    class MyPersistentActor5 extends AbstractPersistentActor {
+
+      @Override public String persistenceId() { 
+        return "my-stable-persistence-id";
       }
 
-      @Override
-      public void preStart() throws Exception {
-        super.preStart();
-        self().tell("FIRST", self());
+      @Override public PartialFunction<Object, BoxedUnit> receiveRecover() {
+        return ReceiveBuilder.
+          match(RecoveryCompleted.class, r -> {
+            recoveryCompleted();
+          }).
+          match(String.class, this::handleEvent).build();
       }
-  
+
+      @Override public PartialFunction<Object, BoxedUnit> receiveCommand() {
+        return ReceiveBuilder.
+          match(String.class, s -> s.equals("cmd"),
+            s -> persist("evt", this::handleEvent)).build();
+      }      
+      
       private void recoveryCompleted() {
           // perform init after recovery, before any other messages
           // ...
       }
 
-      PartialFunction<Object, BoxedUnit> active =
-        ReceiveBuilder.
-          match(Persistent.class, message -> {/* ... */}).
-          build();
+      private void handleEvent(String event) {
+        // update state
+        // ...
+      }
       
     }
     //#recovery-completed
   };
+
+  static Object atLeastOnceExample = new Object() {
+      //#at-least-once-example
+      
+      class Msg implements Serializable {
+        public final long deliveryId;
+        public final String s;
+        
+        public Msg(long deliveryId, String s) {
+          this.deliveryId = deliveryId;
+          this.s = s;
+        }
+      }
+      
+      class Confirm implements Serializable {
+        public final long deliveryId;
+        
+        public Confirm(long deliveryId) {
+          this.deliveryId = deliveryId;
+        }
+      }
+      
+  
+      class MsgSent implements Serializable {
+        public final String s;
+        
+        public MsgSent(String s) {
+          this.s = s;
+        }
+      }
+      class MsgConfirmed implements Serializable {
+        public final long deliveryId;
+        
+        public MsgConfirmed(long deliveryId) {
+          this.deliveryId = deliveryId;
+        }
+      }
+      
+      class MyPersistentActor extends AbstractPersistentActorWithAtLeastOnceDelivery {
+        private final ActorPath destination;
+
+        public MyPersistentActor(ActorPath destination) {
+            this.destination = destination;
+        }
+
+        @Override
+        public PartialFunction<Object, BoxedUnit> receiveCommand() {
+          return ReceiveBuilder.
+            match(String.class, s -> {
+              persist(new MsgSent(s), evt -> updateState(evt));
+            }).
+            match(Confirm.class, confirm -> {
+              persist(new MsgConfirmed(confirm.deliveryId), evt -> updateState(evt));
+            }).
+            build();
+        }
+
+        @Override
+        public PartialFunction<Object, BoxedUnit> receiveRecover() {
+          return ReceiveBuilder.
+              match(Object.class, evt -> updateState(evt)).build();
+        }        
+        
+        void updateState(Object event) {
+          if (event instanceof MsgSent) {
+            final MsgSent evt = (MsgSent) event;
+            deliver(destination, deliveryId -> new Msg(deliveryId, evt.s));
+          } else if (event instanceof MsgConfirmed) {
+            final MsgConfirmed evt = (MsgConfirmed) event;
+            confirmDelivery(evt.deliveryId);
+          }
+        }
+      }
+
+      class MyDestination extends AbstractActor {
+        public MyDestination() {
+          receive(ReceiveBuilder.
+            match(Msg.class, msg -> {
+              // ...
+              sender().tell(new Confirm(msg.deliveryId), self());
+            }).build()
+          );
+        }
+      }
+      //#at-least-once-example
+    };
+
 
   static Object o3 = new Object() {
     //#channel-example
@@ -371,13 +458,17 @@ public class LambdaPersistenceDocTest {
 
   static Object o8 = new Object() {
     //#reliable-event-delivery
-    class MyEventsourcedProcessor extends AbstractEventsourcedProcessor {
+    class MyEventsourcedProcessor extends AbstractPersistentActor {
       private ActorRef destination;
       private ActorRef channel;
 
       public MyEventsourcedProcessor(ActorRef destination) {
         this.destination = destination;
         this.channel = context().actorOf(Channel.props(), "channel");
+      }
+
+      @Override public String persistenceId() { 
+        return "my-stable-persistence-id";
       }
 
       private void handleEvent(String event) {
@@ -404,16 +495,119 @@ public class LambdaPersistenceDocTest {
   };
 
   static Object o9 = new Object() {
-    //#view
-    class MyView extends AbstractView {
-      @Override
-      public String processorId() {
-        return "some-processor-id";
+    //#persist-async
+    class MyPersistentActor extends AbstractPersistentActor {
+
+      @Override public String persistenceId() { 
+        return "my-stable-persistence-id";
       }
+
+      private void handleCommand(String c) {
+        sender().tell(c, self());
+
+        persistAsync(String.format("evt-%s-1", c), e -> {
+          sender().tell(e, self());
+        });
+        persistAsync(String.format("evt-%s-2", c), e -> {
+          sender().tell(e, self());
+        });
+      }
+
+      @Override public PartialFunction<Object, BoxedUnit> receiveRecover() {
+        return ReceiveBuilder.
+          match(String.class, this::handleCommand).build();
+      }
+
+      @Override public PartialFunction<Object, BoxedUnit> receiveCommand() {
+        return ReceiveBuilder.
+          match(String.class, this::handleCommand).build();
+      }
+    }
+    //#persist-async
+
+    public void usage() {
+      final ActorSystem system = ActorSystem.create("example");
+      //#persist-async-usage
+      final ActorRef processor = system.actorOf(Props.create(MyPersistentActor.class));
+      processor.tell("a", null);
+      processor.tell("b", null);
+
+      // possible order of received messages:
+      // a
+      // b
+      // evt-a-1
+      // evt-a-2
+      // evt-b-1
+      // evt-b-2
+      //#persist-async-usage
+    }
+  };
+
+
+  static Object o10 = new Object() {
+    //#defer
+    class MyPersistentActor extends AbstractPersistentActor {
+
+      @Override public String persistenceId() { 
+        return "my-stable-persistence-id";
+      }
+
+      private void handleCommand(String c) {
+        persistAsync(String.format("evt-%s-1", c), e -> {
+          sender().tell(e, self());
+        });
+        persistAsync(String.format("evt-%s-2", c), e -> {
+          sender().tell(e, self());
+        });
+
+        defer(String.format("evt-%s-3", c), e -> {
+          sender().tell(e, self());
+        });
+      }
+
+      @Override public PartialFunction<Object, BoxedUnit> receiveRecover() {
+        return ReceiveBuilder.
+          match(String.class, this::handleCommand).build();
+      }
+
+      @Override public PartialFunction<Object, BoxedUnit> receiveCommand() {
+        return ReceiveBuilder.
+          match(String.class, this::handleCommand).build();
+      }
+    }
+    //#defer
+
+    public void usage() {
+      final ActorSystem system = ActorSystem.create("example");
+      final ActorRef sender = null; // your imaginary sender here
+      //#defer-caller
+      final ActorRef processor = system.actorOf(Props.create(MyPersistentActor.class));
+      processor.tell("a", sender);
+      processor.tell("b", sender);
+
+      // order of received messages:
+      // a
+      // b
+      // evt-a-1
+      // evt-a-2
+      // evt-a-3
+      // evt-b-1
+      // evt-b-2
+      // evt-b-3
+      //#defer-caller
+    }
+  };
+
+
+  static Object o11 = new Object() {
+    //#view
+    class MyView extends AbstractPersistentView {
+      @Override public String persistenceId() { return "some-persistence-id"; }
+      @Override public String viewId() { return "some-persistence-id-view"; }
 
       public MyView() {
         receive(ReceiveBuilder.
-          match(Persistent.class, persistent -> {
+          match(Object.class, p -> isPersistent(),  persistent -> {
             // ...
           }).build()
         );

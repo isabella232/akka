@@ -171,7 +171,7 @@ Lifecycle and Failure Recovery Model
    :align: center
    :width: 620
 
-Each link with  link with a remote system can be in one of the four states as illustrated above. Before any communication
+Each link with a remote system can be in one of the four states as illustrated above. Before any communication
 happens with a remote system at a given ``Address`` the state of the association is ``Idle``. The first time a message
 is attempted to be sent to the remote system or an inbound connection is accepted the state of the link transitions to
 ``Active`` denoting that the two systems has messages to send or receive and no failures were encountered so far.
@@ -294,7 +294,7 @@ Pluggable transport support
 ---------------------------
 
 Akka can be configured to use various transports to communicate with remote systems. The core
-component of this feature is the :meth:`akka.remote.Transport` SPI. Transport implementations must extend this trait.
+component of this feature is the :meth:`akka.remote.transport.Transport` SPI. Transport implementations must extend this trait.
 Transports can be loaded by setting the ``akka.remote.enabled-transports`` configuration key to point to one or
 more configuration sections containing driver descriptions.
 
