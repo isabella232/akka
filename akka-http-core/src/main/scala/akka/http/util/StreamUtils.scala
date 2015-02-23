@@ -160,7 +160,9 @@ private[http] object StreamUtils {
    *
    * FIXME: should be provided by akka-stream, see #15588
    */
-  def fromInputStreamSource(inputStream: InputStream, defaultChunkSize: Int = 65536): Source[ByteString] = {
+  def fromInputStreamSource(inputStream: InputStream,
+                            fileIODispatcher: String,
+                            defaultChunkSize: Int = 65536): Source[ByteString] = {
     import akka.stream.impl._
 
     def props(materializer: ActorFlowMaterializer): Props = {
@@ -179,7 +181,7 @@ private[http] object StreamUtils {
           } else ByteString.empty
       }
 
-      IteratorPublisher.props(iterator, materializer.settings).withDispatcher(materializer.settings.fileIODispatcher)
+      IteratorPublisher.props(iterator, materializer.settings).withDispatcher(fileIODispatcher)
     }
 
     new AtomicBoolean(false) with SimpleActorFlowSource[ByteString] {

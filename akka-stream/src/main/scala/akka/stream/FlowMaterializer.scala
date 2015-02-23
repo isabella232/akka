@@ -199,7 +199,6 @@ object ActorFlowMaterializerSettings {
       dispatcher = config.getString("dispatcher"),
       supervisionDecider = Supervision.stoppingDecider,
       subscriptionTimeoutSettings = StreamSubscriptionTimeoutSettings(config),
-      fileIODispatcher = config.getString("file-io-dispatcher"),
       debugLogging = config.getBoolean("debug-logging"),
       optimizations = Optimizations.none)
 
@@ -234,7 +233,6 @@ final case class ActorFlowMaterializerSettings(
   dispatcher: String,
   supervisionDecider: Supervision.Decider,
   subscriptionTimeoutSettings: StreamSubscriptionTimeoutSettings,
-  fileIODispatcher: String, // FIXME Why does this exist?!
   debugLogging: Boolean,
   optimizations: Optimizations) {
 
