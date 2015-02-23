@@ -4,23 +4,20 @@
 
 package akka.http.coding
 
-import org.scalatest.{ Inspectors, WordSpec }
-import scala.annotation.tailrec
-
-import scala.concurrent.duration._
-
 import java.io.{ OutputStream, InputStream, ByteArrayInputStream, ByteArrayOutputStream }
 import java.util
 import java.util.zip.DataFormatException
-
-import akka.http.util._
-
-import akka.http.model.HttpMethods._
-import akka.http.model.{ HttpEntity, HttpRequest }
+import scala.annotation.tailrec
+import scala.concurrent.Await
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
+import scala.util.control.NoStackTrace
+import org.scalatest.{ Inspectors, WordSpec }
 import akka.stream.scaladsl.{ Sink, Source }
 import akka.util.ByteString
-
-import scala.util.control.NoStackTrace
+import akka.http.model.{ HttpEntity, HttpRequest }
+import akka.http.model.HttpMethods._
+import akka.http.util._
 
 abstract class CoderSpec extends WordSpec with CodecSpecSupport with Inspectors {
   protected def Coder: Coder with StreamDecoder
@@ -53,13 +50,13 @@ abstract class CoderSpec extends WordSpec with CodecSpecSupport with Inspectors 
     }
     "properly round-trip encode/decode an HttpRequest" in {
       val request = HttpRequest(POST, entity = HttpEntity(largeText))
-      Coder.decode(Coder.encode(request)) should equal(request)
+      Coder.decode(Coder.encode(request)).toStrict(1.second).awaitResult(1.second) should equal(request)
     }
     if (corruptInputCheck) {
       "throw an error on corrupt input" in {
-        a[DataFormatException] should be thrownBy {
+        (the[RuntimeException] thrownBy {
           ourDecode(corruptContent)
-        }
+        }).getCause should be(a[DataFormatException])
       }
     }
     "not throw an error if a subsequent block is corrupt" in {
@@ -75,7 +72,7 @@ abstract class CoderSpec extends WordSpec with CodecSpecSupport with Inspectors 
       val chunks = largeTextBytes.grouped(512).toVector
       val comp = Coder.newCompressor
       val compressedChunks = chunks.map { chunk ⇒ comp.compressAndFlush(chunk) } :+ comp.finish()
-      val uncompressed = Coder.decodeFromIterator(compressedChunks.iterator)
+      val uncompressed = decodeFromIterator(() ⇒ compressedChunks.iterator)
 
       uncompressed should readAs(largeText)
     }
@@ -119,7 +116,7 @@ abstract class CoderSpec extends WordSpec with CodecSpecSupport with Inspectors 
 
   def encode(s: String) = ourEncode(ByteString(s, "UTF8"))
   def ourEncode(bytes: ByteString): ByteString = Coder.encode(bytes)
-  def ourDecode(bytes: ByteString): ByteString = Coder.decode(bytes)
+  def ourDecode(bytes: ByteString): ByteString = Coder.decode(bytes).awaitResult(1.second)
 
   lazy val corruptContent = {
     val content = encode(largeText).toArray
@@ -152,4 +149,7 @@ abstract class CoderSpec extends WordSpec with CodecSpecSupport with Inspectors 
 
   def decodeChunks(input: Source[ByteString]): ByteString =
     input.via(Coder.decoderFlow).join.awaitResult(3.seconds)
+
+  def decodeFromIterator(iterator: () ⇒ Iterator[ByteString]): ByteString =
+    Await.result(Source(iterator).via(Coder.decoderFlow).join, 3.seconds)
 }

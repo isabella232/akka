@@ -4,10 +4,10 @@
 
 package akka.http.coding
 
-import akka.util.ByteString
-
 import java.io.{ InputStream, OutputStream }
 import java.util.zip._
+import akka.util.ByteString
+import akka.http.util._
 
 class DeflateSpec extends CoderSpec {
   protected def Coder: Coder with StreamDecoder = Deflate
@@ -20,9 +20,9 @@ class DeflateSpec extends CoderSpec {
 
   override def extraTests(): Unit = {
     "throw early if header is corrupt" in {
-      a[DataFormatException] should be thrownBy {
+      (the[RuntimeException] thrownBy {
         ourDecode(ByteString(0, 1, 2, 3, 4))
-      }
+      }).getCause should be(a[DataFormatException])
     }
   }
 }

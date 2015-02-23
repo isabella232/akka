@@ -213,57 +213,6 @@ private[http] object StreamUtils {
         else (ErrorPublisher(new IllegalStateException("One time source can only be instantiated once"), "failed").asInstanceOf[Publisher[T]], ())
     }
   }
-
-  def runStrict(sourceData: ByteString, transformer: Flow[ByteString, ByteString], maxByteSize: Long, maxElements: Int): Try[Option[ByteString]] =
-    runStrict(Iterator.single(sourceData), transformer, maxByteSize, maxElements)
-
-  def runStrict(sourceData: Iterator[ByteString], transformer: Flow[ByteString, ByteString], maxByteSize: Long, maxElements: Int): Try[Option[ByteString]] =
-    Try {
-      transformer match {
-        // FIXME #16382 right now the flow can't use keys, should that be allowed?
-        case Pipe(ops, keys, _) if keys.isEmpty ⇒
-          if (ops.isEmpty)
-            Some(sourceData.foldLeft(ByteString.empty)(_ ++ _))
-          else {
-            @tailrec def tryBuild(remaining: List[AstNode], acc: List[PushPullStage[ByteString, ByteString]]): List[PushPullStage[ByteString, ByteString]] =
-              remaining match {
-                case Nil ⇒ acc.reverse
-                case StageFactory(mkStage, _) :: tail ⇒
-                  mkStage() match {
-                    case d: PushPullStage[ByteString, ByteString] ⇒
-                      tryBuild(tail, d :: acc)
-                    case _ ⇒ Nil
-                  }
-                case _ ⇒ Nil
-              }
-
-            val strictOps = tryBuild(ops, Nil)
-            if (strictOps.isEmpty)
-              None
-            else {
-              val iter: Iterator[ByteString] = new IteratorInterpreter(sourceData, strictOps).iterator
-              var byteSize = 0L
-              var result = ByteString.empty
-              var i = 0
-              // note that iter.next() will throw exception if the stream fails, caught by the enclosing Try
-              while (iter.hasNext) {
-                i += 1
-                if (i > maxElements)
-                  throw new IllegalArgumentException(s"Too many elements produced by byte transformation, $i was greater than max allowed $maxElements elements")
-                val elem = iter.next()
-                byteSize += elem.size
-                if (byteSize > maxByteSize)
-                  throw new IllegalArgumentException(s"Too large data result, $byteSize bytes was greater than max allowed $maxByteSize bytes")
-                result ++= elem
-              }
-              Some(result)
-            }
-          }
-
-        case _ ⇒ None
-      }
-    }
-
 }
 
 /**

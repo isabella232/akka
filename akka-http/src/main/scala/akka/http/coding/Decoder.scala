@@ -4,12 +4,13 @@
 
 package akka.http.coding
 
+import scala.concurrent.Future
 import akka.http.model._
-import akka.http.util.StreamUtils
+import akka.stream.FlowMaterializer
 import akka.stream.stage.Stage
+import akka.stream.scaladsl.{ Sink, Source, Flow }
 import akka.util.ByteString
 import headers.HttpEncoding
-import akka.stream.scaladsl.Flow
 
 trait Decoder {
   def encoding: HttpEncoding
@@ -25,7 +26,8 @@ trait Decoder {
   def withMaxBytesPerChunk(maxBytesPerChunk: Int): Decoder
 
   def decoderFlow: Flow[ByteString, ByteString]
-  def decode(input: ByteString): ByteString
+  def decode(input: ByteString)(implicit mat: FlowMaterializer): Future[ByteString] =
+    Source.single(input).via(decoderFlow).runWith(Sink.head)
 }
 object Decoder {
   val MaxBytesPerChunkDefault: Int = 65536
@@ -47,10 +49,4 @@ trait StreamDecoder extends Decoder { outer ⇒
 
   def decoderFlow: Flow[ByteString, ByteString] =
     Flow[ByteString].transform(newDecompressorStage(maxBytesPerChunk))
-
-  def decode(input: ByteString): ByteString = decodeWithLimits(input)
-  def decodeWithLimits(input: ByteString, maxBytesSize: Int = Int.MaxValue, maxIterations: Int = 1000): ByteString =
-    StreamUtils.runStrict(input, decoderFlow, maxBytesSize, maxIterations).get.get
-  def decodeFromIterator(input: Iterator[ByteString], maxBytesSize: Int = Int.MaxValue, maxIterations: Int = 1000): ByteString =
-    StreamUtils.runStrict(input, decoderFlow, maxBytesSize, maxIterations).get.get
 }
