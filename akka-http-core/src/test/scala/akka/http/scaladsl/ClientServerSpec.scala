@@ -6,8 +6,7 @@ package akka.http.scaladsl
 
 import java.io.{ BufferedReader, BufferedWriter, InputStreamReader, OutputStreamWriter }
 import java.net.Socket
-import akka.http.scaladsl.Http.ServerBinding
-import akka.http.{ ClientConnectionSettings, ServerSettings }
+import scala.util.Success
 import com.typesafe.config.{ Config, ConfigFactory }
 import scala.annotation.tailrec
 import scala.concurrent.{ Promise, Future, Await }
@@ -18,13 +17,13 @@ import akka.testkit.EventFilter
 import akka.stream.{ ActorFlowMaterializer, BindFailedException }
 import akka.stream.scaladsl._
 import akka.stream.testkit._
+import akka.http.{ ConnectionPoolSettings, ClientConnectionSettings, ServerSettings }
+import akka.http.scaladsl.Http.ServerBinding
 import akka.http.scaladsl.model.HttpEntity._
 import akka.http.scaladsl.model.HttpMethods._
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.model.headers._
 import akka.http.impl.util._
-
-import scala.util.Success
 
 class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
   val testConf: Config = ConfigFactory.parseString("""
@@ -228,6 +227,27 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
 
         connSourceSub.cancel()
       }
+    }
+
+    "pass a simple pipelining test" in {
+      val (_, hostname, port) = TestUtils.temporaryServerHostnameAndPort()
+      val binding = Http().bindAndHandleSync(r ⇒
+        HttpResponse(entity = r.uri.toString.reverse.takeWhile(Character.isDigit).reverse), hostname, port)
+      val b1 = Await.result(binding, 3.seconds)
+
+      val settings = ConnectionPoolSettings(maxConnections = 10, pipeliningLimit = 15, maxOpenRequests = 16384,
+        maxRetries = 0, idleTimeout = 2.seconds, connectionSettings = ClientConnectionSettings(system))
+
+      val N = 1000L
+      val result = Source(() ⇒ Iterator.from(1))
+        .take(N)
+        .map(id ⇒ HttpRequest(uri = s"http://$hostname:$port/r$id"))
+        .mapAsyncUnordered(8)(Http().singleRequest(_, settings).flatMap(_.entity.toStrict(1.second)))
+        .map(_.data.utf8String.toLong)
+        .runFold(0L)(_ + _)
+
+      Await.result(result, 40.seconds) shouldEqual N * (N + 1) / 2
+      Await.result(b1.unbind(), 1.second)
     }
 
     "be able to deal with eager closing of the request stream on the client side" in Utils.assertAllStagesStopped {

@@ -29,7 +29,7 @@ class HighLevelOutgoingConnectionSpec extends AkkaSpec("akka.loggers = []\n akka
         .map(id ⇒ HttpRequest(uri = s"/r$id"))
         .via(Http().outgoingConnection(serverHostName, serverPort))
         .mapAsync(4)(_.entity.toStrict(1.second))
-        .map { r ⇒ val s = r.data.utf8String; log.debug(s); s.toInt }
+        .map { r ⇒ val s = r.data.utf8String; s.toInt }
         .runFold(0)(_ + _)
 
       Await.result(result, 10.seconds) shouldEqual N * (N + 1) / 2
