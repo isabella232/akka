@@ -3,6 +3,9 @@
  */
 package akka.stream.stage
 
+import akka.event.{ Logging, LogSource }
+import akka.stream.{ ActorMaterializer, Materializer, Attributes, Supervision }
+
 /**
  * General interface for stream transformation.
  *
@@ -17,7 +20,7 @@ package akka.stream.stage
  *
  * It is possible to keep state in the concrete `Stage` instance with
  * ordinary instance variables. The `Transformer` is executed by an actor and
- * therefore you don not have to add any additional thread safety or memory
+ * therefore you do not have to add any additional thread safety or memory
  * visibility constructs to access the state from the callback methods.
  *
  * @see [[akka.stream.scaladsl.Flow#transform]]
@@ -25,10 +28,82 @@ package akka.stream.stage
  */
 sealed trait Stage[-In, Out]
 
-private[stream] abstract class AbstractStage[-In, Out, PushD <: Directive, PullD <: Directive, Ctx <: Context[Out]] extends Stage[In, Out] {
-  private[stream] var holding = false
-  private[stream] var allowedToPush = false
-  private[stream] var terminationPending = false
+/**
+ * INTERNAL API
+ */
+private[stream] object AbstractStage {
+  final val UpstreamBall = 1
+  final val DownstreamBall = 2
+  final val BothBalls = UpstreamBall | DownstreamBall
+  final val BothBallsAndNoTerminationPending = UpstreamBall | DownstreamBall | NoTerminationPending
+  final val PrecedingWasPull = 0x4000
+  final val NoTerminationPending = 0x8000
+}
+
+abstract class AbstractStage[-In, Out, PushD <: Directive, PullD <: Directive, Ctx <: Context[Out], LifeCtx <: LifecycleContext] extends Stage[In, Out] {
+  /**
+   * INTERNAL API
+   */
+  private[stream] var bits = AbstractStage.NoTerminationPending
+
+  /**
+   * INTERNAL API
+   */
+  private[stream] var context: Ctx = _
+
+  /**
+   * INTERNAL API
+   */
+  private[stream] def isDetached: Boolean = false
+
+  /**
+   * INTERNAL API
+   */
+  private[stream] def enterAndPush(elem: Out): Unit = {
+    val c = context
+    c.enter()
+    c.push(elem)
+    c.execute()
+  }
+
+  /**
+   * INTERNAL API
+   */
+  private[stream] def enterAndPull(): Unit = {
+    val c = context
+    c.enter()
+    c.pull()
+    c.execute()
+  }
+
+  /**
+   * INTERNAL API
+   */
+  private[stream] def enterAndFinish(): Unit = {
+    val c = context
+    c.enter()
+    c.finish()
+    c.execute()
+  }
+
+  /**
+   * INTERNAL API
+   */
+  private[stream] def enterAndFail(e: Throwable): Unit = {
+    val c = context
+    c.enter()
+    c.fail(e)
+    c.execute()
+  }
+
+  /**
+   * User overridable callback.
+   * <p/>
+   * It is called before any other method defined on the `Stage`.
+   * Empty default implementation.
+   */
+  @throws(classOf[Exception])
+  def preStart(ctx: LifeCtx): Unit = ()
 
   /**
    * `onPush` is called when an element from upstream is available and there is demand from downstream, i.e.
@@ -58,6 +133,9 @@ private[stream] abstract class AbstractStage[-In, Out, PushD <: Directive, PullD
    * with [[akka.stream.stage.Context#isFinishing]].
    *
    * By default the finish signal is immediately propagated with [[akka.stream.stage.Context#finish]].
+   *
+   * *IMPORTANT NOTICE:* this signal is not back-pressured, it might arrive from upstream even though
+   * the last action by this stage was a “push”.
    */
   def onUpstreamFinish(ctx: Ctx): TerminationDirective = ctx.finish()
 
@@ -70,12 +148,12 @@ private[stream] abstract class AbstractStage[-In, Out, PushD <: Directive, PullD
 
   /**
    * `onUpstreamFailure` is called when upstream has signaled that the stream is completed
-   * with error. It is not called if [[#onPull]] or [[#onPush]] of the stage itself
+   * with failure. It is not called if [[#onPull]] or [[#onPush]] of the stage itself
    * throws an exception.
    *
-   * Note that elements that were emitted by upstream before the error happened might
+   * Note that elements that were emitted by upstream before the failure happened might
    * not have been received by this stage when `onUpstreamFailure` is called, i.e.
-   * errors are not backpressured and might be propagated as soon as possible.
+   * failures are not backpressured and might be propagated as soon as possible.
    *
    * Here you cannot call [[akka.stream.stage.Context#push]], because there might not
    * be any demand from  downstream. To emit additional elements before terminating you
@@ -85,6 +163,33 @@ private[stream] abstract class AbstractStage[-In, Out, PushD <: Directive, PullD
    */
   def onUpstreamFailure(cause: Throwable, ctx: Ctx): TerminationDirective = ctx.fail(cause)
 
+  /**
+   * User overridable callback.
+   * <p/>
+   * Is called after the Stages final action is performed.  // TODO need better wording here
+   * Empty default implementation.
+   */
+  @throws(classOf[Exception])
+  def postStop(): Unit = ()
+
+  /**
+   * If an exception is thrown from [[#onPush]] this method is invoked to decide how
+   * to handle the exception. By default this method returns [[Supervision.Stop]].
+   *
+   * If an exception is thrown from [[#onPull]] the stream will always be completed with
+   * failure, because it is not always possible to recover from that state.
+   * In concrete stages it is of course possible to use ordinary try-catch-recover inside
+   * `onPull` when it is know how to recover from such exceptions.
+   *
+   */
+  def decide(t: Throwable): Supervision.Directive = Supervision.Stop
+
+  /**
+   * Used to create a fresh instance of the stage after an error resulting in a [[Supervision.Restart]]
+   * directive. By default it will return the same instance untouched, so you must override it
+   * if there are any state that should be cleared before restarting, e.g. by returning a new instance.
+   */
+  def restart(): Stage[In, Out] = this
 }
 
 /**
@@ -130,7 +235,7 @@ private[stream] abstract class AbstractStage[-In, Out, PushD <: Directive, PullD
  * @see [[StatefulStage]]
  * @see [[PushStage]]
  */
-abstract class PushPullStage[In, Out] extends AbstractStage[In, Out, Directive, Directive, Context[Out]]
+abstract class PushPullStage[In, Out] extends AbstractStage[In, Out, SyncDirective, SyncDirective, Context[Out], LifecycleContext]
 
 /**
  * `PushStage` is a [[PushPullStage]] that always perform transitive pull by calling `ctx.pull` from `onPull`.
@@ -139,7 +244,7 @@ abstract class PushStage[In, Out] extends PushPullStage[In, Out] {
   /**
    * Always pulls from upstream.
    */
-  final override def onPull(ctx: Context[Out]): Directive = ctx.pull()
+  final override def onPull(ctx: Context[Out]): SyncDirective = ctx.pull()
 }
 
 /**
@@ -153,7 +258,7 @@ abstract class PushStage[In, Out] extends PushPullStage[In, Out] {
  * (resulting in two signals).
  *
  * However, DetachedStages have the ability to call [[akka.stream.stage.DetachedContext#hold]] as a response to
- * [[#onPush]] and [[akka.stream.stage.DetachedContext##onPull]] which temporarily takes the signal off and
+ * [[#onPush]] and [[#onPull]] which temporarily takes the signal off and
  * stops execution, at the same time putting the stage in an [[akka.stream.stage.DetachedContext#isHolding]] state.
  * If the stage is in a holding state it contains one absorbed signal, therefore in this state the only possible
  * command to call is [[akka.stream.stage.DetachedContext#pushAndPull]] which results in two events making the
@@ -164,15 +269,50 @@ abstract class PushStage[In, Out] extends PushPullStage[In, Out] {
  *
  * @see [[PushPullStage]]
  */
-abstract class DetachedStage[In, Out] extends AbstractStage[In, Out, UpstreamDirective, DownstreamDirective, DetachedContext[Out]]
+abstract class DetachedStage[In, Out]
+  extends AbstractStage[In, Out, UpstreamDirective, DownstreamDirective, DetachedContext[Out], LifecycleContext] {
+  private[stream] override def isDetached = true
+
+  /**
+   * If an exception is thrown from [[#onPush]] this method is invoked to decide how
+   * to handle the exception. By default this method returns [[Supervision.Stop]].
+   *
+   * If an exception is thrown from [[#onPull]] or if the stage is holding state the stream
+   * will always be completed with failure, because it is not always possible to recover from
+   * that state.
+   * In concrete stages it is of course possible to use ordinary try-catch-recover inside
+   * `onPull` when it is know how to recover from such exceptions.
+   */
+  override def decide(t: Throwable): Supervision.Directive = super.decide(t)
+}
+
+/**
+ * This is a variant of [[DetachedStage]] that can receive asynchronous input
+ * from external sources, for example timers or Future results. In order to
+ * do this, obtain an [[AsyncCallback]] from the [[AsyncContext]] and attach
+ * it to the asynchronous event. When the event fires an asynchronous notification
+ * will be dispatched that eventually will lead to `onAsyncInput` being invoked
+ * with the provided data item.
+ */
+abstract class AsyncStage[In, Out, Ext]
+  extends AbstractStage[In, Out, UpstreamDirective, DownstreamDirective, AsyncContext[Out, Ext], AsyncContext[Out, Ext]] {
+  private[stream] override def isDetached = true
+
+  /**
+   * Implement this method to define the action to be taken in response to an
+   * asynchronous notification that was previously registered using
+   * [[AsyncContext#getAsyncCallback]].
+   */
+  def onAsyncInput(event: Ext, ctx: AsyncContext[Out, Ext]): Directive
+}
 
 /**
  * The behavior of [[StatefulStage]] is defined by these two methods, which
- * has the same sematics as corresponding methods in [[PushPullStage]].
+ * has the same semantics as corresponding methods in [[PushPullStage]].
  */
 abstract class StageState[In, Out] {
-  def onPush(elem: In, ctx: Context[Out]): Directive
-  def onPull(ctx: Context[Out]): Directive = ctx.pull()
+  def onPush(elem: In, ctx: Context[Out]): SyncDirective
+  def onPull(ctx: Context[Out]): SyncDirective = ctx.pull()
 }
 
 /**
@@ -204,12 +344,14 @@ abstract class StatefulStage[In, Out] extends PushPullStage[In, Out] {
    */
   abstract class State extends StageState[In, Out]
 
-  private var emitting = false
-  private var _current: StageState[In, Out] = _
+  private[this] var emitting = false
+  private[this] var _current: StageState[In, Out] = _
   become(initial)
 
   /**
    * Concrete subclass must return the initial behavior from this method.
+   *
+   * **Warning:** This method must not be implemented as `val`.
    */
   def initial: StageState[In, Out]
 
@@ -229,11 +371,11 @@ abstract class StatefulStage[In, Out] extends PushPullStage[In, Out] {
   /**
    * Invokes current state.
    */
-  final override def onPush(elem: In, ctx: Context[Out]): Directive = _current.onPush(elem, ctx)
+  final override def onPush(elem: In, ctx: Context[Out]): SyncDirective = _current.onPush(elem, ctx)
   /**
    * Invokes current state.
    */
-  final override def onPull(ctx: Context[Out]): Directive = _current.onPull(ctx)
+  final override def onPull(ctx: Context[Out]): SyncDirective = _current.onPull(ctx)
 
   override def onUpstreamFinish(ctx: Context[Out]): TerminationDirective =
     if (emitting) ctx.absorbTermination()
@@ -243,13 +385,13 @@ abstract class StatefulStage[In, Out] extends PushPullStage[In, Out] {
    * Scala API: Can be used from [[StageState#onPush]] or [[StageState#onPull]] to push more than one
    * element downstreams.
    */
-  final def emit(iter: Iterator[Out], ctx: Context[Out]): Directive = emit(iter, ctx, _current)
+  final def emit(iter: Iterator[Out], ctx: Context[Out]): SyncDirective = emit(iter, ctx, _current)
 
   /**
    * Java API: Can be used from [[StageState#onPush]] or [[StageState#onPull]] to push more than one
    * element downstreams.
    */
-  final def emit(iter: java.util.Iterator[Out], ctx: Context[Out]): Directive = {
+  final def emit(iter: java.util.Iterator[Out], ctx: Context[Out]): SyncDirective = {
     import scala.collection.JavaConverters._
     emit(iter.asScala, ctx)
   }
@@ -258,7 +400,7 @@ abstract class StatefulStage[In, Out] extends PushPullStage[In, Out] {
    * Scala API: Can be used from [[StageState#onPush]] or [[StageState#onPull]] to push more than one
    * element downstreams and after that change behavior.
    */
-  final def emit(iter: Iterator[Out], ctx: Context[Out], nextState: StageState[In, Out]): Directive = {
+  final def emit(iter: Iterator[Out], ctx: Context[Out], nextState: StageState[In, Out]): SyncDirective = {
     if (emitting) throw new IllegalStateException("already in emitting state")
     if (iter.isEmpty) {
       become(nextState)
@@ -268,7 +410,8 @@ abstract class StatefulStage[In, Out] extends PushPullStage[In, Out] {
       if (iter.hasNext) {
         emitting = true
         become(emittingState(iter, andThen = Become(nextState.asInstanceOf[StageState[Any, Any]])))
-      }
+      } else
+        become(nextState)
       ctx.push(elem)
     }
   }
@@ -277,7 +420,7 @@ abstract class StatefulStage[In, Out] extends PushPullStage[In, Out] {
    * Java API: Can be used from [[StageState#onPush]] or [[StageState#onPull]] to push more than one
    * element downstreams and after that change behavior.
    */
-  final def emit(iter: java.util.Iterator[Out], ctx: Context[Out], nextState: StageState[In, Out]): Directive = {
+  final def emit(iter: java.util.Iterator[Out], ctx: Context[Out], nextState: StageState[In, Out]): SyncDirective = {
     import scala.collection.JavaConverters._
     emit(iter.asScala, ctx, nextState)
   }
@@ -286,7 +429,7 @@ abstract class StatefulStage[In, Out] extends PushPullStage[In, Out] {
    * Scala API: Can be used from [[StageState#onPush]] or [[StageState#onPull]] to push more than one
    * element downstreams and after that finish (complete downstreams, cancel upstreams).
    */
-  final def emitAndFinish(iter: Iterator[Out], ctx: Context[Out]): Directive = {
+  final def emitAndFinish(iter: Iterator[Out], ctx: Context[Out]): SyncDirective = {
     if (emitting) throw new IllegalStateException("already in emitting state")
     if (iter.isEmpty)
       ctx.finish()
@@ -305,7 +448,7 @@ abstract class StatefulStage[In, Out] extends PushPullStage[In, Out] {
    * Java API: Can be used from [[StageState#onPush]] or [[StageState#onPull]] to push more than one
    * element downstreams and after that finish (complete downstreams, cancel upstreams).
    */
-  final def emitAndFinish(iter: java.util.Iterator[Out], ctx: Context[Out]): Directive = {
+  final def emitAndFinish(iter: java.util.Iterator[Out], ctx: Context[Out]): SyncDirective = {
     import scala.collection.JavaConverters._
     emitAndFinish(iter.asScala, ctx)
   }
@@ -313,7 +456,7 @@ abstract class StatefulStage[In, Out] extends PushPullStage[In, Out] {
   /**
    * Scala API: Can be used from [[#onUpstreamFinish]] to push final elements downstreams
    * before completing the stream successfully. Note that if this is used from
-   * [[#onUpstreamFailure]] the error will be absorbed and the stream will be completed
+   * [[#onUpstreamFailure]] the failure will be absorbed and the stream will be completed
    * successfully.
    */
   final def terminationEmit(iter: Iterator[Out], ctx: Context[Out]): TerminationDirective = {
@@ -360,18 +503,63 @@ abstract class StatefulStage[In, Out] extends PushPullStage[In, Out] {
 }
 
 /**
+ * INTERNAL API
+ *
+ * `BoundaryStage` implementations are meant to communicate with the external world. These stages do not have most of the
+ * safety properties enforced and should be used carefully. One important ability of BoundaryStages that they can take
+ * off an execution signal by calling `ctx.exit()`. This is typically used immediately after an external signal has
+ * been produced (for example an actor message). BoundaryStages can also kickstart execution by calling `enter()` which
+ * returns a context they can use to inject signals into the interpreter. There is no checks in place to enforce that
+ * the number of signals taken out by exit() and the number of signals returned via enter() are the same -- using this
+ * stage type needs extra care from the implementer.
+ *
+ * BoundaryStages are the elements that make the interpreter *tick*, there is no other way to start the interpreter
+ * than using a BoundaryStage.
+ */
+private[akka] abstract class BoundaryStage extends AbstractStage[Any, Any, Directive, Directive, BoundaryContext, LifecycleContext] {
+  final override def decide(t: Throwable): Supervision.Directive = Supervision.Stop
+
+  final override def restart(): BoundaryStage =
+    throw new UnsupportedOperationException("BoundaryStage doesn't support restart")
+}
+
+/**
  * Return type from [[Context]] methods.
  */
 sealed trait Directive
-sealed trait UpstreamDirective extends Directive
-sealed trait DownstreamDirective extends Directive
-sealed trait TerminationDirective extends Directive
-final class FreeDirective extends UpstreamDirective with DownstreamDirective with TerminationDirective
+sealed trait AsyncDirective extends Directive
+sealed trait SyncDirective extends Directive
+sealed trait UpstreamDirective extends SyncDirective
+sealed trait DownstreamDirective extends SyncDirective
+sealed trait TerminationDirective extends SyncDirective
+// never instantiated
+sealed abstract class FreeDirective private () extends UpstreamDirective with DownstreamDirective with TerminationDirective with AsyncDirective
+
+trait LifecycleContext {
+  /**
+   * Returns the Materializer that was used to materialize this [[Stage]].
+   * It can be used to materialize sub-flows.
+   */
+  def materializer: Materializer
+
+  /** Returns operation attributes associated with the this Stage */
+  def attributes: Attributes
+}
 
 /**
  * Passed to the callback methods of [[PushPullStage]] and [[StatefulStage]].
  */
-sealed trait Context[Out] {
+sealed trait Context[Out] extends LifecycleContext {
+  /**
+   * INTERNAL API
+   */
+  private[stream] def enter(): Unit
+
+  /**
+   * INTERNAL API
+   */
+  private[stream] def execute(): Unit
+
   /**
    * Push one element to downstreams.
    */
@@ -403,6 +591,7 @@ sealed trait Context[Out] {
    * This returns `true` after [[#absorbTermination]] has been used.
    */
   def isFinishing: Boolean
+
 }
 
 /**
@@ -414,16 +603,59 @@ sealed trait Context[Out] {
  * events making the balance right again: 1 hold + 1 external event = 2 external event
  */
 trait DetachedContext[Out] extends Context[Out] {
-  def hold(): FreeDirective
+  def holdUpstream(): UpstreamDirective
+  def holdUpstreamAndPush(elem: Out): UpstreamDirective
+
+  def holdDownstream(): DownstreamDirective
+  def holdDownstreamAndPull(): DownstreamDirective
 
   /**
    * This returns `true` when [[#hold]] has been used
    * and it is reset to `false` after [[#pushAndPull]].
    */
-  def isHolding: Boolean
+  def isHoldingBoth: Boolean = isHoldingUpstream && isHoldingDownstream
+  def isHoldingUpstream: Boolean
+  def isHoldingDownstream: Boolean
 
   def pushAndPull(elem: Out): FreeDirective
 
+}
+
+/**
+ * An asynchronous callback holder that is attached to an [[AsyncContext]].
+ * Invoking [[AsyncCallback#invoke]] will eventually lead to [[AsyncStage#onAsyncInput]]
+ * being called.
+ */
+trait AsyncCallback[T] {
+  /**
+   * Dispatch an asynchronous notification. This method is thread-safe and
+   * may be invoked from external execution contexts.
+   */
+  def invoke(t: T): Unit
+}
+
+/**
+ * This kind of context is available to [[AsyncStage]]. It implements the same
+ * interface as for [[DetachedStage]] with the addition of being able to obtain
+ * [[AsyncCallback]] objects that allow the registration of asynchronous
+ * notifications.
+ */
+trait AsyncContext[Out, Ext] extends DetachedContext[Out] {
+  /**
+   * Obtain a callback object that can be used asynchronously to re-enter the
+   * current [[AsyncStage]] with an asynchronous notification. After the
+   * notification has been invoked, eventually [[AsyncStage#onAsyncInput]]
+   * will be called with the given data item.
+   *
+   * This object can be cached and reused within the same [[AsyncStage]].
+   */
+  def getAsyncCallback(): AsyncCallback[Ext]
+  /**
+   * In response to an asynchronous notification an [[AsyncStage]] may choose
+   * to neither push nor pull nor terminate, which is represented as this
+   * directive.
+   */
+  def ignore(): AsyncDirective
 }
 
 /**
@@ -432,3 +664,4 @@ trait DetachedContext[Out] extends Context[Out] {
 private[akka] trait BoundaryContext extends Context[Any] {
   def exit(): FreeDirective
 }
+

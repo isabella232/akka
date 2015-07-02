@@ -1,26 +1,30 @@
 package akka.stream.testkit
 
 import akka.actor.{ ActorRefFactory, ActorSystem }
-import akka.stream.MaterializerSettings
+import akka.stream.ActorMaterializerSettings
 import akka.stream.scaladsl._
 import org.reactivestreams.Publisher
-import akka.stream.FlowMaterializer
+import akka.stream.ActorMaterializer
+import akka.stream.Attributes
 
 class ChainSetup[In, Out](
-  stream: Flow[In, In] ⇒ Flow[In, Out],
-  val settings: MaterializerSettings,
-  materializer: FlowMaterializer,
-  toPublisher: (Source[Out], FlowMaterializer) ⇒ Publisher[Out])(implicit val system: ActorSystem) {
+  stream: Flow[In, In, _] ⇒ Flow[In, Out, _],
+  val settings: ActorMaterializerSettings,
+  materializer: ActorMaterializer,
+  toPublisher: (Source[Out, _], ActorMaterializer) ⇒ Publisher[Out])(implicit val system: ActorSystem) {
 
-  def this(stream: Flow[In, In] ⇒ Flow[In, Out], settings: MaterializerSettings, toPublisher: (Source[Out], FlowMaterializer) ⇒ Publisher[Out])(implicit system: ActorSystem) =
-    this(stream, settings, FlowMaterializer(settings)(system), toPublisher)(system)
+  def this(stream: Flow[In, In, _] ⇒ Flow[In, Out, _], settings: ActorMaterializerSettings, toPublisher: (Source[Out, _], ActorMaterializer) ⇒ Publisher[Out])(implicit system: ActorSystem) =
+    this(stream, settings, ActorMaterializer(settings)(system), toPublisher)(system)
 
-  def this(stream: Flow[In, In] ⇒ Flow[In, Out], settings: MaterializerSettings, materializerCreator: (MaterializerSettings, ActorRefFactory) ⇒ FlowMaterializer, toPublisher: (Source[Out], FlowMaterializer) ⇒ Publisher[Out])(implicit system: ActorSystem) =
+  def this(stream: Flow[In, In, _] ⇒ Flow[In, Out, _],
+           settings: ActorMaterializerSettings,
+           materializerCreator: (ActorMaterializerSettings, ActorRefFactory) ⇒ ActorMaterializer,
+           toPublisher: (Source[Out, _], ActorMaterializer) ⇒ Publisher[Out])(implicit system: ActorSystem) =
     this(stream, settings, materializerCreator(settings, system), toPublisher)(system)
 
-  val upstream = StreamTestKit.PublisherProbe[In]()
-  val downstream = StreamTestKit.SubscriberProbe[Out]()
-  private val s = Source(upstream).via(stream(Flow[In]))
+  val upstream = TestPublisher.manualProbe[In]()
+  val downstream = TestSubscriber.probe[Out]()
+  private val s = Source(upstream).via(stream(Flow[In].map(x ⇒ x).named("buh")))
   val publisher = toPublisher(s, materializer)
   val upstreamSubscription = upstream.expectSubscription()
   publisher.subscribe(downstream)

@@ -6,15 +6,14 @@ package akka.stream.scaladsl
 import scala.collection.immutable
 import scala.concurrent.forkjoin.ThreadLocalRandom.{ current ⇒ random }
 
-import akka.stream.MaterializerSettings
+import akka.stream.ActorMaterializerSettings
 import akka.stream.testkit.AkkaSpec
 import akka.stream.testkit.ScriptedTest
 
 class FlowGroupedSpec extends AkkaSpec with ScriptedTest {
 
-  val settings = MaterializerSettings(system)
+  val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 16)
-    .withFanOutBuffer(initialSize = 1, maxSize = 16)
 
   "A Grouped" must {
 

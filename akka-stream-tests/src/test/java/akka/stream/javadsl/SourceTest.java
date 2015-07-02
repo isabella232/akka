@@ -1,6 +1,10 @@
+/**
+ * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ */
 package akka.stream.javadsl;
 
 import akka.actor.ActorRef;
+import akka.actor.Cancellable;
 import akka.dispatch.Foreach;
 import akka.dispatch.Futures;
 import akka.dispatch.OnSuccess;
@@ -8,7 +12,7 @@ import akka.japi.Pair;
 import akka.stream.OverflowStrategy;
 import akka.stream.StreamTest;
 import akka.stream.stage.*;
-import akka.stream.javadsl.japi.*;
+import akka.japi.function.*;
 import akka.stream.testkit.AkkaSpec;
 import akka.testkit.JavaTestKit;
 
@@ -16,16 +20,16 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import scala.concurrent.Await;
 import scala.concurrent.Future;
+import scala.concurrent.duration.Duration;
 import scala.concurrent.duration.FiniteDuration;
 import scala.runtime.BoxedUnit;
 import scala.util.Try;
-
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
-
 import static org.junit.Assert.assertEquals;
 
+@SuppressWarnings("serial")
 public class SourceTest extends StreamTest {
   public SourceTest() {
     super(actorSystemResource);
@@ -40,7 +44,7 @@ public class SourceTest extends StreamTest {
     final JavaTestKit probe = new JavaTestKit(system);
     final String[] lookup = {"a", "b", "c", "d", "e", "f"};
     final java.lang.Iterable<Integer> input = Arrays.asList(0, 1, 2, 3, 4, 5);
-    final Source<Integer> ints = Source.from(input);
+    final Source<Integer, ?> ints = Source.from(input);
 
     ints.drop(2).take(3).takeWithin(FiniteDuration.create(10, TimeUnit.SECONDS)).map(new Function<Integer, String>() {
       public String apply(Integer elem) {
@@ -59,7 +63,7 @@ public class SourceTest extends StreamTest {
         public java.util.List<String> apply(java.util.List<String> elem) {
           return elem;
         }
-      }).fold("", new Function2<String, String, String>() {
+      }).runFold("", new Function2<String, String, String>() {
       public String apply(String acc, String elem) {
         return acc + elem;
       }
@@ -76,9 +80,9 @@ public class SourceTest extends StreamTest {
   public void mustBeAbleToUseVoidTypeInForeach() {
     final JavaTestKit probe = new JavaTestKit(system);
     final java.lang.Iterable<String> input = Arrays.asList("a", "b", "c");
-    Source<String> ints = Source.from(input);
+    Source<String, ?> ints = Source.from(input);
 
-    Future<BoxedUnit> completion = ints.foreach(new Procedure<String>() {
+    Future<BoxedUnit> completion = ints.runForeach(new Procedure<String>() {
       public void apply(String elem) {
         probe.getRef().tell(elem, ActorRef.noSender());
       }
@@ -113,7 +117,7 @@ public class SourceTest extends StreamTest {
           public StageState<Integer, Integer> initial() {
             return new StageState<Integer, Integer>() {
               @Override
-              public Directive onPush(Integer element, Context<Integer> ctx) {
+              public SyncDirective onPush(Integer element, Context<Integer> ctx) {
                 sum += element;
                 count += 1;
                 if (count == 4) {
@@ -133,7 +137,7 @@ public class SourceTest extends StreamTest {
 
         };
       }
-    }).foreach(new Procedure<Integer>() {
+    }).runForeach(new Procedure<Integer>() {
       public void apply(Integer elem) {
         probe.getRef().tell(elem, ActorRef.noSender());
       }
@@ -158,10 +162,10 @@ public class SourceTest extends StreamTest {
       public String apply(String elem) {
         return elem.substring(0, 1);
       }
-    }).foreach(new Procedure<Pair<String, Source<String>>>() {
+    }).runForeach(new Procedure<Pair<String, Source<String, BoxedUnit>>>() {
       @Override
-      public void apply(final Pair<String, Source<String>> pair) throws Exception {
-        pair.second().foreach(new Procedure<String>() {
+      public void apply(final Pair<String, Source<String, BoxedUnit>> pair) throws Exception {
+        pair.second().runForeach(new Procedure<String>() {
           @Override
           public void apply(String elem) throws Exception {
             probe.getRef().tell(new Pair<String, String>(pair.first(), elem), ActorRef.noSender());
@@ -194,15 +198,15 @@ public class SourceTest extends StreamTest {
       public boolean test(String elem) {
         return elem.equals(".");
       }
-    }).foreach(new Procedure<Source<String>>() {
+    }).runForeach(new Procedure<Source<String, BoxedUnit>>() {
       @Override
-      public void apply(Source<String> subStream) throws Exception {
+      public void apply(Source<String, BoxedUnit> subStream) throws Exception {
         subStream.filter(new Predicate<String>() {
           @Override
           public boolean test(String elem) {
             return !elem.equals(".");
           }
-        }).grouped(10).foreach(new Procedure<List<String>>() {
+        }).grouped(10).runForeach(new Procedure<List<String>>() {
           @Override
           public void apply(List<String> chunk) throws Exception {
             probe.getRef().tell(chunk, ActorRef.noSender());
@@ -233,10 +237,10 @@ public class SourceTest extends StreamTest {
     final Iterable<String> input1 = Arrays.asList("A", "B", "C");
     final Iterable<String> input2 = Arrays.asList("D", "E", "F");
 
-    final Source<String> in1 = Source.from(input1);
-    final Source<String> in2 = Source.from(input2);
+    final Source<String, ?> in1 = Source.from(input1);
+    final Source<String, ?> in2 = Source.from(input2);
 
-    in1.concat(in2).foreach(new Procedure<String>() {
+    in1.concat(in2).runForeach(new Procedure<String>() {
       public void apply(String elem) {
         probe.getRef().tell(elem, ActorRef.noSender());
       }
@@ -250,13 +254,13 @@ public class SourceTest extends StreamTest {
   public void mustBeAbleToUseCallableInput() {
     final JavaTestKit probe = new JavaTestKit(system);
     final Iterable<Integer> input1 = Arrays.asList(4, 3, 2, 1, 0);
-    final akka.stream.javadsl.japi.Creator<Iterator<Integer>> input = new akka.stream.javadsl.japi.Creator<Iterator<Integer>>() {
+    final Creator<Iterator<Integer>> input = new Creator<Iterator<Integer>>() {
       @Override
       public Iterator<Integer> create() {
         return input1.iterator();
       }
     };
-    Source.from(input).foreach(new Procedure<Integer>() {
+    Source.fromIterator(input).runForeach(new Procedure<Integer>() {
       public void apply(Integer elem) {
         probe.getRef().tell(elem, ActorRef.noSender());
       }
@@ -272,10 +276,10 @@ public class SourceTest extends StreamTest {
     final JavaTestKit probe = new JavaTestKit(system);
     final Iterable<String> input = Arrays.asList("A", "B", "C");
 
-    Source.from(input).runWith(Sink.<String>onComplete(new Procedure<BoxedUnit>() {
+    Source.from(input).runWith(Sink.<String>onComplete(new Procedure<Try<BoxedUnit>>() {
       @Override
-      public void apply(BoxedUnit param) throws Exception {
-        probe.getRef().tell(param, ActorRef.noSender());
+      public void apply(Try<BoxedUnit> param) throws Exception {
+        probe.getRef().tell(param.get(), ActorRef.noSender());
       }
     }), materializer);
 
@@ -318,9 +322,9 @@ public class SourceTest extends StreamTest {
   public void mustBeAbleToUsePrefixAndTail() throws Exception {
     final JavaTestKit probe = new JavaTestKit(system);
     final Iterable<Integer> input = Arrays.asList(1, 2, 3, 4, 5, 6);
-    Future<Pair<List<Integer>, Source<Integer>>> future = Source.from(input).prefixAndTail(3)
-      .runWith(Sink.<Pair<List<Integer>, Source<Integer>>>head(), materializer);
-    Pair<List<Integer>, Source<Integer>> result = Await.result(future,
+    Future<Pair<List<Integer>, Source<Integer, BoxedUnit>>> future = Source.from(input).prefixAndTail(3)
+      .runWith(Sink.<Pair<List<Integer>, Source<Integer, BoxedUnit>>>head(), materializer);
+    Pair<List<Integer>, Source<Integer, BoxedUnit>> result = Await.result(future,
       probe.dilated(FiniteDuration.create(3, TimeUnit.SECONDS)));
     assertEquals(Arrays.asList(1, 2, 3), result.first());
 
@@ -335,10 +339,12 @@ public class SourceTest extends StreamTest {
     final Iterable<Integer> input1 = Arrays.asList(1, 2, 3);
     final Iterable<Integer> input2 = Arrays.asList(4, 5);
 
-    final List<Source<Integer>> mainInputs = Arrays.asList(Source.from(input1), Source.from(input2));
+    final List<Source<Integer, BoxedUnit>> mainInputs = new ArrayList<Source<Integer,BoxedUnit>>();
+    mainInputs.add(Source.from(input1));
+    mainInputs.add(Source.from(input2));
 
     Future<List<Integer>> future = Source.from(mainInputs)
-      .flatten(akka.stream.javadsl.FlattenStrategy.<Integer>concat()).grouped(6)
+      .flatten(akka.stream.javadsl.FlattenStrategy.<Integer, BoxedUnit>concat()).grouped(6)
       .runWith(Sink.<List<Integer>>head(), materializer);
 
     List<Integer> result = Await.result(future, probe.dilated(FiniteDuration.create(3, TimeUnit.SECONDS)));
@@ -371,7 +377,7 @@ public class SourceTest extends StreamTest {
       public String apply(String aggr, String in) throws Exception {
         return aggr + in;
       }
-    }).fold("", new Function2<String, String, String>() {
+    }).runFold("", new Function2<String, String, String>() {
       @Override
       public String apply(String aggr, String in) throws Exception {
         return aggr + in;
@@ -403,24 +409,17 @@ public class SourceTest extends StreamTest {
   @Test
   public void mustProduceTicks() throws Exception {
     final JavaTestKit probe = new JavaTestKit(system);
-    final Callable<String> tick = new Callable<String>() {
-      private int count = 1;
-
-      @Override
-      public String call() {
-        return "tick-" + (count++);
+    Source<String, Cancellable> tickSource = Source.from(FiniteDuration.create(1, TimeUnit.SECONDS), 
+        FiniteDuration.create(500, TimeUnit.MILLISECONDS), "tick");
+    Cancellable cancellable = tickSource.to(Sink.foreach(new Procedure<String>() {
+      public void apply(String elem) {
+        probe.getRef().tell(elem, ActorRef.noSender());
       }
-    };
-    Source.from(FiniteDuration.create(1, TimeUnit.SECONDS), FiniteDuration.create(500, TimeUnit.MILLISECONDS), tick)
-      .foreach(new Procedure<String>() {
-        public void apply(String elem) {
-          probe.getRef().tell(elem, ActorRef.noSender());
-        }
-      }, materializer);
+    })).run(materializer);
     probe.expectNoMsg(FiniteDuration.create(600, TimeUnit.MILLISECONDS));
-    probe.expectMsgEquals("tick-1");
+    probe.expectMsgEquals("tick");
     probe.expectNoMsg(FiniteDuration.create(200, TimeUnit.MILLISECONDS));
-    probe.expectMsgEquals("tick-2");
+    probe.expectMsgEquals("tick");
     probe.expectNoMsg(FiniteDuration.create(200, TimeUnit.MILLISECONDS));
 
   }
@@ -429,11 +428,11 @@ public class SourceTest extends StreamTest {
   public void mustBeAbleToUseMapFuture() throws Exception {
     final JavaTestKit probe = new JavaTestKit(system);
     final Iterable<String> input = Arrays.asList("a", "b", "c");
-    Source.from(input).mapAsync(new Function<String, Future<String>>() {
+    Source.from(input).mapAsync(4, new Function<String, Future<String>>() {
       public Future<String> apply(String elem) {
         return Futures.successful(elem.toUpperCase());
       }
-    }).foreach(new Procedure<String>() {
+    }).runForeach(new Procedure<String>() {
       public void apply(String elem) {
         probe.getRef().tell(elem, ActorRef.noSender());
       }
@@ -452,4 +451,74 @@ public class SourceTest extends StreamTest {
     String result = Await.result(future2, probe.dilated(FiniteDuration.create(3, TimeUnit.SECONDS)));
     assertEquals("A", result);
   }
+  
+  @Test
+  public void mustRepeat() throws Exception {
+    final Future<List<Integer>> f = Source.repeat(42).grouped(10000).runWith(Sink.<List<Integer>> head(), materializer);
+    final List<Integer> result = Await.result(f, FiniteDuration.create(3, TimeUnit.SECONDS));
+    assertEquals(result.size(), 10000);
+    for (Integer i: result) assertEquals(i, (Integer) 42);
+  }
+  
+  @Test
+  public void mustBeAbleToUseActorRefSource() throws Exception {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final Source<Integer, ActorRef> actorRefSource = Source.actorRef(10, OverflowStrategy.fail());
+    final ActorRef ref = actorRefSource.to(Sink.foreach(new Procedure<Integer>() {
+      public void apply(Integer elem) {
+        probe.getRef().tell(elem, ActorRef.noSender());
+      }
+    })).run(materializer);
+    ref.tell(1, ActorRef.noSender());
+    probe.expectMsgEquals(1);
+    ref.tell(2, ActorRef.noSender());
+    probe.expectMsgEquals(2);
+  }
+
+  @Test
+  public void mustBeAbleToUseDropWhile() throws Exception {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final Source<Integer, ?> source = Source.from(Arrays.asList(0, 1, 2, 3)).dropWhile
+            (new Predicate<Integer>() {
+              public boolean test(Integer elem) {
+                return elem < 2;
+              }
+            });
+
+    final Future<BoxedUnit> future = source.runWith(Sink.foreach(new Procedure<Integer>() { // Scala Future
+      public void apply(Integer elem) {
+        probe.getRef().tell(elem, ActorRef.noSender());
+      }
+    }), materializer);
+
+    probe.expectMsgEquals(2);
+    probe.expectMsgEquals(3);
+    Await.ready(future, Duration.apply(200, TimeUnit.MILLISECONDS));
+  }
+
+  @Test
+  public void mustBeAbleToUseTakeWhile() throws Exception {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final Source<Integer, ?> source = Source.from(Arrays.asList(0, 1, 2, 3)).takeWhile
+            (new Predicate<Integer>() {
+              public boolean test(Integer elem) {
+                return elem < 2;
+              }
+            });
+
+    final Future<BoxedUnit> future = source.runWith(Sink.foreach(new Procedure<Integer>() { // Scala Future
+      public void apply(Integer elem) {
+        probe.getRef().tell(elem, ActorRef.noSender());
+      }
+    }), materializer);
+
+    probe.expectMsgEquals(0);
+    probe.expectMsgEquals(1);
+
+    FiniteDuration duration = Duration.apply(200, TimeUnit.MILLISECONDS);
+
+    probe.expectNoMsg(duration);
+    Await.ready(future, duration);
+  }
+
 }

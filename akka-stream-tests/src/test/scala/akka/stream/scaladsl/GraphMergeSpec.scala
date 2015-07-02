@@ -3,36 +3,45 @@
  */
 package akka.stream.scaladsl
 
+import akka.stream.{ ActorMaterializer, ActorMaterializerSettings, Inlet, Outlet }
+
 import scala.concurrent.duration._
 
-import akka.stream.scaladsl.FlowGraphImplicits._
-import akka.stream.testkit.StreamTestKit
-import akka.stream.testkit.TwoStreamsSetup
+import akka.stream.testkit._
+import akka.stream.testkit.Utils._
 
 class GraphMergeSpec extends TwoStreamsSetup {
+  import FlowGraph.Implicits._
 
   override type Outputs = Int
-  val op = Merge[Int]
-  override def operationUnderTestLeft = op
-  override def operationUnderTestRight = op
+
+  override def fixture(b: FlowGraph.Builder[_]): Fixture = new Fixture(b) {
+    val merge = b add Merge[Outputs](2)
+
+    override def left: Inlet[Outputs] = merge.in(0)
+    override def right: Inlet[Outputs] = merge.in(1)
+    override def out: Outlet[Outputs] = merge.out
+
+  }
 
   "merge" must {
 
-    "work in the happy case" in {
+    "work in the happy case" in assertAllStagesStopped {
       // Different input sizes (4 and 6)
       val source1 = Source(0 to 3)
       val source2 = Source(4 to 9)
       val source3 = Source(List[Int]())
-      val probe = StreamTestKit.SubscriberProbe[Int]()
+      val probe = TestSubscriber.manualProbe[Int]()
 
-      FlowGraph { implicit b ⇒
-        val m1 = Merge[Int]("m1")
-        val m2 = Merge[Int]("m2")
-        val m3 = Merge[Int]("m3")
+      FlowGraph.closed() { implicit b ⇒
+        val m1 = b.add(Merge[Int](2))
+        val m2 = b.add(Merge[Int](2))
 
-        source1 ~> m1 ~> Flow[Int].map(_ * 2) ~> m2 ~> Flow[Int].map(_ / 2).map(_ + 1) ~> Sink(probe)
-        source2 ~> m1
-        source3 ~> m2
+        source1 ~> m1.in(0)
+        m1.out ~> Flow[Int].map(_ * 2) ~> m2.in(0)
+        m2.out ~> Flow[Int].map(_ / 2).map(_ + 1) ~> Sink(probe)
+        source2 ~> m1.in(1)
+        source3 ~> m2.in(1)
 
       }.run()
 
@@ -56,17 +65,18 @@ class GraphMergeSpec extends TwoStreamsSetup {
       val source5 = Source(List(5))
       val source6 = Source(List[Int]())
 
-      val probe = StreamTestKit.SubscriberProbe[Int]()
+      val probe = TestSubscriber.manualProbe[Int]()
 
-      FlowGraph { implicit b ⇒
-        val merge = Merge[Int]("merge")
+      FlowGraph.closed() { implicit b ⇒
+        val merge = b.add(Merge[Int](6))
 
-        source1 ~> merge ~> Flow[Int] ~> Sink(probe)
-        source2 ~> merge
-        source3 ~> merge
-        source4 ~> merge
-        source5 ~> merge
-        source6 ~> merge
+        source1 ~> merge.in(0)
+        source2 ~> merge.in(1)
+        source3 ~> merge.in(2)
+        source4 ~> merge.in(3)
+        source5 ~> merge.in(4)
+        source6 ~> merge.in(5)
+        merge.out ~> Sink(probe)
 
       }.run()
 
@@ -84,7 +94,7 @@ class GraphMergeSpec extends TwoStreamsSetup {
 
     commonTests()
 
-    "work with one immediately completed and one nonempty publisher" in {
+    "work with one immediately completed and one nonempty publisher" in assertAllStagesStopped {
       val subscriber1 = setup(completedPublisher, nonemptyPublisher(1 to 4))
       val subscription1 = subscriber1.expectSubscription()
       subscription1.request(4)
@@ -104,7 +114,7 @@ class GraphMergeSpec extends TwoStreamsSetup {
       subscriber2.expectComplete()
     }
 
-    "work with one delayed completed and one nonempty publisher" in {
+    "work with one delayed completed and one nonempty publisher" in assertAllStagesStopped {
       val subscriber1 = setup(soonToCompletePublisher, nonemptyPublisher(1 to 4))
       val subscription1 = subscriber1.expectSubscription()
       subscription1.request(4)
@@ -132,6 +142,32 @@ class GraphMergeSpec extends TwoStreamsSetup {
     "work with one delayed failed and one nonempty publisher" in {
       // This is nondeterministic, multiple scenarios can happen
       pending
+    }
+
+    "pass along early cancellation" in assertAllStagesStopped {
+      val up1 = TestPublisher.manualProbe[Int]()
+      val up2 = TestPublisher.manualProbe[Int]()
+      val down = TestSubscriber.manualProbe[Int]()
+
+      val src1 = Source.subscriber[Int]
+      val src2 = Source.subscriber[Int]
+
+      val (graphSubscriber1, graphSubscriber2) = FlowGraph.closed(src1, src2)((_, _)) { implicit b ⇒
+        (s1, s2) ⇒
+          val merge = b.add(Merge[Int](2))
+          s1.outlet ~> merge.in(0)
+          s2.outlet ~> merge.in(1)
+          merge.out ~> Sink(down)
+      }.run()
+
+      val downstream = down.expectSubscription()
+      downstream.cancel()
+      up1.subscribe(graphSubscriber1)
+      up2.subscribe(graphSubscriber2)
+      val upsub1 = up1.expectSubscription()
+      upsub1.expectCancellation()
+      val upsub2 = up2.expectSubscription()
+      upsub2.expectCancellation()
     }
 
   }

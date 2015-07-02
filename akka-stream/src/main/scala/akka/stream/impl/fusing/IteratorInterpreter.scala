@@ -3,6 +3,8 @@
  */
 package akka.stream.impl.fusing
 
+import akka.event.NoLogging
+import akka.stream._
 import akka.stream.stage._
 
 /**
@@ -12,10 +14,10 @@ private[akka] object IteratorInterpreter {
   final case class IteratorUpstream[T](input: Iterator[T]) extends PushPullStage[T, T] {
     private var hasNext = input.hasNext
 
-    override def onPush(elem: T, ctx: Context[T]): Directive =
+    override def onPush(elem: T, ctx: Context[T]): SyncDirective =
       throw new UnsupportedOperationException("IteratorUpstream operates as a source, it cannot be pushed")
 
-    override def onPull(ctx: Context[T]): Directive = {
+    override def onPull(ctx: Context[T]): SyncDirective = {
       if (!hasNext) ctx.finish()
       else {
         val elem = input.next()
@@ -34,7 +36,7 @@ private[akka] object IteratorInterpreter {
     private var done = false
     private var nextElem: T = _
     private var needsPull = true
-    private var lastError: Throwable = null
+    private var lastFailure: Throwable = null
 
     override def onPush(elem: Any, ctx: BoundaryContext): Directive = {
       nextElem = elem.asInstanceOf[T]
@@ -52,25 +54,25 @@ private[akka] object IteratorInterpreter {
 
     override def onUpstreamFailure(cause: Throwable, ctx: BoundaryContext): TerminationDirective = {
       done = true
-      lastError = cause
+      lastFailure = cause
       ctx.finish()
     }
 
     private def pullIfNeeded(): Unit = {
       if (needsPull) {
-        enter().pull() // will eventually result in a finish, or an onPush which exits
+        enterAndPull() // will eventually result in a finish, or an onPush which exits
       }
     }
 
     override def hasNext: Boolean = {
       if (!done) pullIfNeeded()
-      !(done && needsPull) || (lastError ne null)
+      !(done && needsPull) || (lastFailure ne null)
     }
 
     override def next(): T = {
-      if (lastError ne null) {
-        val e = lastError
-        lastError = null
+      if (lastFailure ne null) {
+        val e = lastFailure
+        lastFailure = null
         throw e
       } else if (!hasNext)
         Iterator.empty.next()
@@ -94,7 +96,10 @@ private[akka] class IteratorInterpreter[I, O](val input: Iterator[I], val ops: S
 
   private val upstream = IteratorUpstream(input)
   private val downstream = IteratorDownstream[O]()
-  private val interpreter = new OneBoundedInterpreter(upstream +: ops.asInstanceOf[Seq[Stage[_, _]]] :+ downstream)
+  private val interpreter = new OneBoundedInterpreter(upstream +: ops.asInstanceOf[Seq[Stage[_, _]]] :+ downstream,
+    (op, ctx, evt) ⇒ throw new UnsupportedOperationException("IteratorInterpreter is fully synchronous"),
+    NoLogging,
+    NoMaterializer)
   interpreter.init()
 
   def iterator: Iterator[O] = downstream

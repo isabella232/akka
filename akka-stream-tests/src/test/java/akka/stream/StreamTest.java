@@ -9,11 +9,11 @@ import akka.stream.javadsl.AkkaJUnitActorSystemResource;
 
 public abstract class StreamTest {
     final protected ActorSystem system;
-    final protected FlowMaterializer materializer;
+    final protected ActorMaterializer materializer;
 
     protected StreamTest(AkkaJUnitActorSystemResource actorSystemResource) {
         system = actorSystemResource.getSystem();
-        MaterializerSettings settings = MaterializerSettings.create(system);
-        materializer = FlowMaterializer.create(settings, system);
+        ActorMaterializerSettings settings = ActorMaterializerSettings.create(system);
+        materializer = ActorMaterializer.create(settings, system);
     }
 }

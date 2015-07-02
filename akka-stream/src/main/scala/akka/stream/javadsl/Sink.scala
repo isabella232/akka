@@ -1,25 +1,25 @@
 /**
- * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2015 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.stream.javadsl
 
-import akka.actor.ActorRef
-import akka.actor.Props
-import akka.stream.javadsl
-import akka.stream.scaladsl
-import akka.stream.FlowMaterializer
-import org.reactivestreams.Publisher
-import org.reactivestreams.Subscriber
+import akka.actor.{ ActorRef, Props }
+import akka.japi.function
+import akka.stream.impl.StreamLayout
+import akka.stream.{ javadsl, scaladsl, _ }
+import org.reactivestreams.{ Publisher, Subscriber }
 
-import scala.concurrent.Future
+import scala.concurrent.{ ExecutionContext, Future }
+import scala.util.Try
 
 /** Java API */
 object Sink {
 
-  import akka.stream.scaladsl.JavaConverters._
+  val factory: SinkCreate = new SinkCreate {}
 
   /** Adapt [[scaladsl.Sink]] for use within Java DSL */
-  def adapt[O](sink: scaladsl.Sink[O]): javadsl.Sink[O] =
+  //FIXME: Is this needed now?
+  def adapt[O, M](sink: scaladsl.Sink[O, M]): javadsl.Sink[O, M] =
     new Sink(sink)
 
   /**
@@ -27,88 +27,116 @@ object Sink {
    * output (or the given `zero` value) and the element as input.
    * The returned [[scala.concurrent.Future]] will be completed with value of the final
    * function evaluation when the input stream ends, or completed with `Failure`
-   * if there is an error is signaled in the stream.
+   * if there is a failure is signaled in the stream.
    */
-  def fold[U, In](zero: U, f: japi.Function2[U, In, U]): javadsl.KeyedSink[In, Future[U]] =
-    new KeyedSink(scaladsl.Sink.fold[U, In](zero)(f.apply))
+  def fold[U, In](zero: U, f: function.Function2[U, In, U]): javadsl.Sink[In, Future[U]] =
+    new Sink(scaladsl.Sink.fold[U, In](zero)(f.apply))
 
   /**
    * Helper to create [[Sink]] from `Subscriber`.
    */
-  def create[In](subs: Subscriber[In]): Sink[In] =
-    new Sink[In](scaladsl.Sink(subs))
-
-  /**
-   * Creates a `Sink` by using an empty [[FlowGraphBuilder]] on a block that expects a [[FlowGraphBuilder]] and
-   * returns the `UndefinedSource`.
-   */
-  def create[T]()(block: japi.Function[FlowGraphBuilder, UndefinedSource[T]]): Sink[T] =
-    new Sink(scaladsl.Sink.apply() { b ⇒ block.apply(b.asJava).asScala })
-
-  /**
-   * Creates a `Sink` by using a FlowGraphBuilder from this [[PartialFlowGraph]] on a block that expects
-   * a [[FlowGraphBuilder]] and returns the `UndefinedSource`.
-   */
-  def create[T](graph: PartialFlowGraph, block: japi.Function[FlowGraphBuilder, UndefinedSource[T]]): Sink[T] =
-    new Sink[T](scaladsl.Sink.apply(graph.asScala) { b ⇒ block.apply(b.asJava).asScala })
-
-  /**
-   * Creates a `Sink` that is materialized to an [[akka.actor.ActorRef]] which points to an Actor
-   * created according to the passed in [[akka.actor.Props]]. Actor created by the `props` should
-   * be [[akka.stream.actor.ActorSubscriber]].
-   */
-  def create[T](props: Props): KeyedSink[T, ActorRef] =
-    new KeyedSink(scaladsl.Sink.apply(props))
+  def create[In](subs: Subscriber[In]): Sink[In, Unit] =
+    new Sink(scaladsl.Sink(subs))
 
   /**
    * A `Sink` that immediately cancels its upstream after materialization.
    */
-  def cancelled[T]: Sink[T] =
+  def cancelled[T](): Sink[T, Unit] =
     new Sink(scaladsl.Sink.cancelled)
 
   /**
    * A `Sink` that will consume the stream and discard the elements.
    */
-  def ignore[T](): Sink[T] =
+  def ignore[T](): Sink[T, Future[Unit]] =
     new Sink(scaladsl.Sink.ignore)
 
   /**
    * A `Sink` that materializes into a [[org.reactivestreams.Publisher]].
    * that can handle one [[org.reactivestreams.Subscriber]].
    */
-  def publisher[In](): KeyedSink[In, Publisher[In]] =
-    new KeyedSink(scaladsl.Sink.publisher)
+  def publisher[In](): Sink[In, Publisher[In]] =
+    new Sink(scaladsl.Sink.publisher)
 
   /**
    * A `Sink` that will invoke the given procedure for each received element. The sink is materialized
    * into a [[scala.concurrent.Future]] will be completed with `Success` when reaching the
-   * normal end of the stream, or completed with `Failure` if there is an error is signaled in
+   * normal end of the stream, or completed with `Failure` if there is a failure is signaled in
    * the stream..
    */
-  def foreach[T](f: japi.Procedure[T]): KeyedSink[T, Future[Unit]] =
-    new KeyedSink(scaladsl.Sink.foreach(f.apply))
+  def foreach[T](f: function.Procedure[T]): Sink[T, Future[Unit]] =
+    new Sink(scaladsl.Sink.foreach(f.apply))
+
+  /**
+   * A `Sink` that will invoke the given procedure for each received element in parallel. The sink is materialized
+   * into a [[scala.concurrent.Future]].
+   *
+   * If `f` throws an exception and the supervision decision is
+   * [[akka.stream.Supervision.Stop]] the `Future` will be completed with failure.
+   *
+   * If `f` throws an exception and the supervision decision is
+   * [[akka.stream.Supervision.Resume]] or [[akka.stream.Supervision.Restart]] the
+   * element is dropped and the stream continues.
+   */
+  def foreachParallel[T](parallel: Int)(f: function.Procedure[T])(ec: ExecutionContext): Sink[T, Future[Unit]] =
+    new Sink(scaladsl.Sink.foreachParallel(parallel)(f.apply)(ec))
 
   /**
    * A `Sink` that materializes into a [[org.reactivestreams.Publisher]]
    * that can handle more than one [[org.reactivestreams.Subscriber]].
    */
-  def fanoutPublisher[T](initialBufferSize: Int, maximumBufferSize: Int): KeyedSink[T, Publisher[T]] =
-    new KeyedSink(scaladsl.Sink.fanoutPublisher(initialBufferSize, maximumBufferSize))
+  def fanoutPublisher[T](initialBufferSize: Int, maximumBufferSize: Int): Sink[T, Publisher[T]] =
+    new Sink(scaladsl.Sink.fanoutPublisher(initialBufferSize, maximumBufferSize))
 
   /**
-   * A `Sink` that when the flow is completed, either through an error or normal
+   * A `Sink` that when the flow is completed, either through a failure or normal
    * completion, apply the provided function with [[scala.util.Success]]
    * or [[scala.util.Failure]].
    */
-  def onComplete[In](onComplete: japi.Procedure[Unit]): Sink[In] =
-    new Sink(scaladsl.Sink.onComplete[In](x ⇒ onComplete.apply(x)))
+  def onComplete[In](callback: function.Procedure[Try[Unit]]): Sink[In, Unit] =
+    new Sink(scaladsl.Sink.onComplete[In](x ⇒ callback.apply(x)))
 
   /**
    * A `Sink` that materializes into a `Future` of the first value received.
    */
-  def head[In]: KeyedSink[In, Future[In]] =
-    new KeyedSink(scaladsl.Sink.head[In])
+  def head[In](): Sink[In, Future[In]] =
+    new Sink(scaladsl.Sink.head[In])
 
+  /**
+   * Sends the elements of the stream to the given `ActorRef`.
+   * If the target actor terminates the stream will be cancelled.
+   * When the stream is completed successfully the given `onCompleteMessage`
+   * will be sent to the destination actor.
+   * When the stream is completed with failure a [[akka.actor.Status.Failure]]
+   * message will be sent to the destination actor.
+   *
+   * It will request at most `maxInputBufferSize` number of elements from
+   * upstream, but there is no back-pressure signal from the destination actor,
+   * i.e. if the actor is not consuming the messages fast enough the mailbox
+   * of the actor will grow. For potentially slow consumer actors it is recommended
+   * to use a bounded mailbox with zero `mailbox-push-timeout-time` or use a rate
+   * limiting stage in front of this `Sink`.
+   *
+   */
+  def actorRef[In](ref: ActorRef, onCompleteMessage: Any): Sink[In, Unit] =
+    new Sink(scaladsl.Sink.actorRef[In](ref, onCompleteMessage))
+
+  /**
+   * Creates a `Sink` that is materialized to an [[akka.actor.ActorRef]] which points to an Actor
+   * created according to the passed in [[akka.actor.Props]]. Actor created by the `props` should
+   * be [[akka.stream.actor.ActorSubscriber]].
+   */
+  def actorSubscriber[T](props: Props): Sink[T, ActorRef] =
+    new Sink(scaladsl.Sink.actorSubscriber(props))
+
+  /**
+   * A graph with the shape of a sink logically is a sink, this method makes
+   * it so also in type.
+   */
+  def wrap[T, M](g: Graph[SinkShape[T], M]): Sink[T, M] =
+    g match {
+      case s: Sink[T, M] ⇒ s
+      case other         ⇒ new Sink(scaladsl.Sink.wrap(other))
+    }
 }
 
 /**
@@ -117,37 +145,29 @@ object Sink {
  * A `Sink` is a set of stream processing steps that has one open input and an attached output.
  * Can be used as a `Subscriber`
  */
-class Sink[-In](delegate: scaladsl.Sink[In]) {
+class Sink[-In, +Mat](delegate: scaladsl.Sink[In, Mat]) extends Graph[SinkShape[In], Mat] {
 
-  /** Converts this Sink to it's Scala DSL counterpart */
-  def asScala: scaladsl.Sink[In] = delegate
+  override def shape: SinkShape[In] = delegate.shape
+  private[stream] def module: StreamLayout.Module = delegate.module
 
-  // RUN WITH //
-
-  /**
-   * Connect the `KeyedSource` to this `Sink` and run it.
-   *
-   * The returned value is the materialized value of the `KeyedSource`, e.g. the `Subscriber` of a `Source.subscriber()`.
-   *
-   * @tparam T materialized type of given Source
-   */
-  def runWith[T](source: javadsl.KeyedSource[In, T], materializer: FlowMaterializer): T =
-    asScala.runWith(source.asScala)(materializer).asInstanceOf[T]
+  /** Converts this Sink to its Scala DSL counterpart */
+  def asScala: scaladsl.Sink[In, Mat] = delegate
 
   /**
    * Connect this `Sink` to a `Source` and run it.
    */
-  def runWith(source: javadsl.Source[In], materializer: FlowMaterializer): Unit =
-    asScala.runWith(source.asScala)(materializer)
-}
+  def runWith[M](source: Graph[SourceShape[In], M], materializer: Materializer): M =
+    asScala.runWith(source)(materializer)
 
-/**
- * Java API
- *
- * A `Sink` that will create an object during materialization that the user will need
- * to retrieve in order to access aspects of this sink (could be a completion Future
- * or a cancellation handle, etc.)
- */
-final class KeyedSink[-In, M](delegate: scaladsl.KeyedSink[In, M]) extends javadsl.Sink[In](delegate) with KeyedMaterializable[M] {
-  override def asScala: scaladsl.KeyedSink[In, M] = super.asScala.asInstanceOf[scaladsl.KeyedSink[In, M]]
+  /**
+   * Transform only the materialized value of this Sink, leaving all other properties as they were.
+   */
+  def mapMaterializedValue[Mat2](f: function.Function[Mat, Mat2]): Sink[In, Mat2] =
+    new Sink(delegate.mapMaterializedValue(f.apply _))
+
+  override def withAttributes(attr: Attributes): javadsl.Sink[In, Mat] =
+    new Sink(delegate.withAttributes(attr))
+
+  override def named(name: String): javadsl.Sink[In, Mat] =
+    new Sink(delegate.named(name))
 }

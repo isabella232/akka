@@ -1,7 +1,7 @@
 package akka.stream.impl
 
 import akka.actor.{ Actor, ActorRef }
-import akka.stream.MaterializerSettings
+import akka.stream.ActorMaterializerSettings
 import org.reactivestreams.Subscriber
 
 /**
@@ -25,22 +25,25 @@ private[akka] abstract class FanoutOutputs(val maxBufferSize: Int, val initialBu
   override val subreceive = new SubReceive(waitingExposedPublisher)
 
   def enqueueOutputElement(elem: Any): Unit = {
+    ReactiveStreamsCompliance.requireNonNullElement(elem)
     downstreamBufferSpace -= 1
     pushToDownstream(elem)
   }
 
-  def complete(): Unit =
+  override def complete(): Unit =
     if (!downstreamCompleted) {
       downstreamCompleted = true
       completeDownstream()
     }
 
-  def cancel(e: Throwable): Unit = {
+  override def cancel(): Unit = complete()
+
+  override def error(e: Throwable): Unit = {
     if (!downstreamCompleted) {
       downstreamCompleted = true
       abortDownstream(e)
+      if (exposedPublisher ne null) exposedPublisher.shutdown(Some(e))
     }
-    if (exposedPublisher ne null) exposedPublisher.shutdown(Some(e))
   }
 
   def isClosed: Boolean = downstreamCompleted
@@ -55,7 +58,7 @@ private[akka] abstract class FanoutOutputs(val maxBufferSize: Int, val initialBu
   override protected def shutdown(completed: Boolean): Unit = {
     if (exposedPublisher ne null) {
       if (completed) exposedPublisher.shutdown(None)
-      else exposedPublisher.shutdown(Some(new IllegalStateException("Cannot subscribe to shutdown publisher")))
+      else exposedPublisher.shutdown(ActorPublisher.SomeNormalShutdownReason)
     }
     afterShutdown()
   }
@@ -76,11 +79,9 @@ private[akka] abstract class FanoutOutputs(val maxBufferSize: Int, val initialBu
     case SubscribePending ⇒
       subscribePending()
     case RequestMore(subscription, elements) ⇒
-      // FIXME can we avoid this cast?
       moreRequested(subscription.asInstanceOf[ActorSubscriptionWithCursor[Any]], elements)
       pump.pump()
     case Cancel(subscription) ⇒
-      // FIXME can we avoid this cast?
       unregisterSubscription(subscription.asInstanceOf[ActorSubscriptionWithCursor[Any]])
       pump.pump()
   }
@@ -91,7 +92,7 @@ private[akka] abstract class FanoutOutputs(val maxBufferSize: Int, val initialBu
  * INTERNAL API
  */
 private[akka] class FanoutProcessorImpl(
-  _settings: MaterializerSettings,
+  _settings: ActorMaterializerSettings,
   initialFanoutBufferSize: Int,
   maximumFanoutBufferSize: Int) extends ActorProcessorImpl(_settings) {
 
@@ -105,9 +106,10 @@ private[akka] class FanoutProcessorImpl(
   }
 
   override def fail(e: Throwable): Unit = {
-    log.error(e, "failure during processing") // FIXME: escalate to supervisor instead
+    if (settings.debugLogging)
+      log.debug("fail due to: {}", e.getMessage)
     primaryInputs.cancel()
-    primaryOutputs.cancel(e)
+    primaryOutputs.error(e)
     // Stopping will happen after flush
   }
 
@@ -118,5 +120,5 @@ private[akka] class FanoutProcessorImpl(
 
   def afterFlush(): Unit = context.stop(self)
 
-  nextPhase(running)
+  initialPhase(1, running)
 }

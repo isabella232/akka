@@ -4,17 +4,15 @@
 package akka.stream.scaladsl
 
 import scala.concurrent.duration._
-import akka.stream.MaterializerSettings
-import akka.stream.testkit.AkkaSpec
-import akka.stream.testkit.ScriptedTest
-import akka.stream.testkit.StreamTestKit.SubscriberProbe
-import akka.stream.FlowMaterializer
+import akka.stream.ActorMaterializerSettings
+import akka.stream.testkit._
+import akka.stream.testkit.Utils._
+import akka.stream.ActorMaterializer
 
 class FlowMapConcatSpec extends AkkaSpec with ScriptedTest {
 
-  val settings = MaterializerSettings(system)
+  val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 16)
-    .withFanOutBuffer(initialSize = 1, maxSize = 16)
 
   "A MapConcat" must {
 
@@ -30,16 +28,18 @@ class FlowMapConcatSpec extends AkkaSpec with ScriptedTest {
     }
 
     "map and concat grouping with slow downstream" in {
-      val settings = MaterializerSettings(system)
+      val settings = ActorMaterializerSettings(system)
         .withInputBuffer(initialSize = 2, maxSize = 2)
-      implicit val materializer = FlowMaterializer(settings)
-      val s = SubscriberProbe[Int]
-      val input = (1 to 20).grouped(5).toList
-      Source(input).mapConcat(identity).map(x ⇒ { Thread.sleep(10); x }).runWith(Sink(s))
-      val sub = s.expectSubscription()
-      sub.request(100)
-      for (i ← 1 to 20) s.expectNext(i)
-      s.expectComplete()
+      implicit val materializer = ActorMaterializer(settings)
+      assertAllStagesStopped {
+        val s = TestSubscriber.manualProbe[Int]
+        val input = (1 to 20).grouped(5).toList
+        Source(input).mapConcat(identity).map(x ⇒ { Thread.sleep(10); x }).runWith(Sink(s))
+        val sub = s.expectSubscription()
+        sub.request(100)
+        for (i ← 1 to 20) s.expectNext(i)
+        s.expectComplete()
+      }
     }
 
   }

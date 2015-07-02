@@ -10,30 +10,22 @@ import org.scalatest.WordSpec
 
 class DslConsistencySpec extends WordSpec with Matchers {
 
-  val sFlowClass = classOf[akka.stream.scaladsl.Flow[_, _]]
-  val jFlowClass = classOf[akka.stream.javadsl.Flow[_, _]]
+  val sFlowClass = classOf[akka.stream.scaladsl.Flow[_, _, _]]
+  val jFlowClass = classOf[akka.stream.javadsl.Flow[_, _, _]]
 
-  val sSourceClass = classOf[akka.stream.scaladsl.Source[_]]
-  val jSourceClass = classOf[akka.stream.javadsl.Source[_]]
+  val sSourceClass = classOf[akka.stream.scaladsl.Source[_, _]]
+  val jSourceClass = classOf[akka.stream.javadsl.Source[_, _]]
 
-  val sSinkClass = classOf[akka.stream.scaladsl.Sink[_]]
-  val jSinkClass = classOf[akka.stream.javadsl.Sink[_]]
+  val sSinkClass = classOf[akka.stream.scaladsl.Sink[_, _]]
+  val jSinkClass = classOf[akka.stream.javadsl.Sink[_, _]]
 
-  val sKeyClass = classOf[akka.stream.scaladsl.Key[_]]
-  val jKeyClass = classOf[akka.stream.javadsl.Key[_]]
-
-  val sMaterializedMapClass = classOf[akka.stream.scaladsl.MaterializedMap]
-  val jMaterializedMapClass = classOf[akka.stream.javadsl.MaterializedMap]
-
-  val jFlowGraphClass = classOf[akka.stream.javadsl.FlowGraph]
-  val sFlowGraphClass = classOf[akka.stream.scaladsl.FlowGraph]
-
-  val jPartialFlowGraphClass = classOf[akka.stream.javadsl.PartialFlowGraph]
-  val sPartialFlowGraphClass = classOf[akka.stream.scaladsl.PartialFlowGraph]
+  val jRunnableGraphClass = classOf[akka.stream.javadsl.RunnableGraph[_]]
+  val sRunnableGraphClass = classOf[akka.stream.scaladsl.RunnableGraph[_]]
 
   val ignore =
     Set("equals", "hashCode", "notify", "notifyAll", "wait", "toString", "getClass") ++
-      Set("create", "apply", "ops", "appendJava", "andThen", "withAttributes") ++
+      Set("productArity", "canEqual", "productPrefix", "copy", "productIterator", "productElement") ++
+      Set("create", "apply", "ops", "appendJava", "andThen", "andThenMat", "isIdentity", "withAttributes", "transformMaterializing") ++
       Set("asScala", "asJava")
 
   val allowMissing: Map[Class[_], Set[String]] = Map(
@@ -46,11 +38,10 @@ class DslConsistencySpec extends WordSpec with Matchers {
     jSourceClass -> Set("timerTransform"),
     jSinkClass -> Set(),
 
-    sFlowGraphClass -> Set("builder"),
-    jFlowGraphClass → Set("graph", "cyclesAllowed"),
-    jPartialFlowGraphClass → Set("graph", "cyclesAllowed", "disconnectedAllowed"))
+    sRunnableGraphClass -> Set("builder"),
+    jRunnableGraphClass → Set("graph", "cyclesAllowed"))
 
-  def materializing(m: Method): Boolean = m.getParameterTypes.contains(classOf[FlowMaterializer])
+  def materializing(m: Method): Boolean = m.getParameterTypes.contains(classOf[ActorMaterializer])
 
   def assertHasMethod(c: Class[_], name: String): Unit = {
     // include class name to get better error message
@@ -63,10 +54,7 @@ class DslConsistencySpec extends WordSpec with Matchers {
     ("Source" -> List(sSourceClass, jSourceClass)) ::
       ("Flow" -> List(sFlowClass, jFlowClass)) ::
       ("Sink" -> List(sSinkClass, jSinkClass)) ::
-      ("Key" -> List(sKeyClass, jKeyClass)) ::
-      ("MaterializedMap" -> List(sMaterializedMapClass, jMaterializedMapClass)) ::
-      ("FlowGraph" -> List(sFlowGraphClass, jFlowGraphClass)) ::
-      ("PartialFlowGraph" -> List(sPartialFlowGraphClass, jPartialFlowGraphClass)) ::
+      ("RunanbleFlow" -> List(sRunnableGraphClass, jRunnableGraphClass)) ::
       Nil foreach {
         case (element, classes) ⇒
 

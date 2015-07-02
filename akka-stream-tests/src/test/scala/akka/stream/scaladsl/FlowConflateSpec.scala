@@ -6,31 +6,28 @@ package akka.stream.scaladsl
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.concurrent.forkjoin.ThreadLocalRandom
-import akka.stream.{ OverflowStrategy, FlowMaterializer, MaterializerSettings }
-import akka.stream.testkit.{ StreamTestKit, AkkaSpec }
+import akka.stream.{ OverflowStrategy, ActorMaterializer, ActorMaterializerSettings }
+import akka.stream.testkit._
 
 class FlowConflateSpec extends AkkaSpec {
 
-  val settings = MaterializerSettings(system)
+  val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 2)
-    .withFanOutBuffer(initialSize = 2, maxSize = 2)
 
-  implicit val materializer = FlowMaterializer(settings)
+  implicit val materializer = ActorMaterializer(settings)
 
   "Conflate" must {
 
     "pass-through elements unchanged when there is no rate difference" in {
-      val publisher = StreamTestKit.PublisherProbe[Int]()
-      val subscriber = StreamTestKit.SubscriberProbe[Int]()
+      val publisher = TestPublisher.probe[Int]()
+      val subscriber = TestSubscriber.manualProbe[Int]()
 
-      Source(publisher).conflate(seed = i ⇒ i)(aggregate = (sum, i) ⇒ sum + i).runWith(Sink(subscriber))
-
-      val autoPublisher = new StreamTestKit.AutoPublisher(publisher)
+      Source(publisher).conflate(seed = i ⇒ i)(aggregate = (sum, i) ⇒ sum + i).to(Sink(subscriber)).run()
       val sub = subscriber.expectSubscription()
 
       for (i ← 1 to 100) {
         sub.request(1)
-        autoPublisher.sendNext(i)
+        publisher.sendNext(i)
         subscriber.expectNext(i)
       }
 
@@ -38,16 +35,14 @@ class FlowConflateSpec extends AkkaSpec {
     }
 
     "conflate elements while downstream is silent" in {
-      val publisher = StreamTestKit.PublisherProbe[Int]()
-      val subscriber = StreamTestKit.SubscriberProbe[Int]()
+      val publisher = TestPublisher.probe[Int]()
+      val subscriber = TestSubscriber.manualProbe[Int]()
 
-      Source(publisher).conflate(seed = i ⇒ i)(aggregate = (sum, i) ⇒ sum + i).runWith(Sink(subscriber))
-
-      val autoPublisher = new StreamTestKit.AutoPublisher(publisher)
+      Source(publisher).conflate(seed = i ⇒ i)(aggregate = (sum, i) ⇒ sum + i).to(Sink(subscriber)).run()
       val sub = subscriber.expectSubscription()
 
       for (i ← 1 to 100) {
-        autoPublisher.sendNext(i)
+        publisher.sendNext(i)
       }
       subscriber.expectNoMsg(1.second)
       sub.request(1)
@@ -59,30 +54,28 @@ class FlowConflateSpec extends AkkaSpec {
       val future = Source(1 to 1000)
         .conflate(seed = i ⇒ i)(aggregate = (sum, i) ⇒ sum + i)
         .map { i ⇒ if (ThreadLocalRandom.current().nextBoolean()) Thread.sleep(10); i }
-        .fold(0)(_ + _)
+        .runFold(0)(_ + _)
       Await.result(future, 10.seconds) should be(500500)
     }
 
     "backpressure subscriber when upstream is slower" in {
-      val publisher = StreamTestKit.PublisherProbe[Int]()
-      val subscriber = StreamTestKit.SubscriberProbe[Int]()
+      val publisher = TestPublisher.probe[Int]()
+      val subscriber = TestSubscriber.manualProbe[Int]()
 
-      Source(publisher).conflate(seed = i ⇒ i)(aggregate = (sum, i) ⇒ sum + i).runWith(Sink(subscriber))
-
-      val autoPublisher = new StreamTestKit.AutoPublisher(publisher)
+      Source(publisher).conflate(seed = i ⇒ i)(aggregate = (sum, i) ⇒ sum + i).to(Sink(subscriber)).run()
       val sub = subscriber.expectSubscription()
 
       sub.request(1)
-      autoPublisher.sendNext(1)
+      publisher.sendNext(1)
       subscriber.expectNext(1)
 
       sub.request(1)
       subscriber.expectNoMsg(1.second)
-      autoPublisher.sendNext(2)
+      publisher.sendNext(2)
       subscriber.expectNext(2)
 
-      autoPublisher.sendNext(3)
-      autoPublisher.sendNext(4)
+      publisher.sendNext(3)
+      publisher.sendNext(4)
       sub.request(1)
       subscriber.expectNext(7)
 
@@ -96,7 +89,7 @@ class FlowConflateSpec extends AkkaSpec {
       val future = Source(1 to 50)
         .conflate(seed = i ⇒ i)(aggregate = (sum, i) ⇒ sum + i)
         .buffer(50, OverflowStrategy.backpressure)
-        .fold(0)(_ + _)
+        .runFold(0)(_ + _)
       Await.result(future, 3.seconds) should be((1 to 50).sum)
     }
 

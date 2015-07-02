@@ -4,30 +4,39 @@
 package akka.stream.impl
 
 import java.util.concurrent.atomic.AtomicReference
-
+import scala.concurrent.Promise
 import org.reactivestreams.{ Subscriber, Subscription }
 
 /**
  * INTERNAL API
  */
 
-private[akka] class BlackholeSubscriber[T](highWatermark: Int) extends Subscriber[T] {
+private[akka] class BlackholeSubscriber[T](highWatermark: Int, onComplete: Promise[Unit]) extends Subscriber[T] {
 
-  private val lowWatermark = Math.max(1, highWatermark / 2)
+  private val lowWatermark: Int = Math.max(1, highWatermark / 2)
   private var requested = 0L
-
-  private val subscription: AtomicReference[Subscription] = new AtomicReference(null)
+  private var subscription: Subscription = null
 
   override def onSubscribe(sub: Subscription): Unit = {
-    if (subscription.compareAndSet(null, sub)) requestMore()
-    else sub.cancel()
+    ReactiveStreamsCompliance.requireNonNullSubscription(sub)
+    if (subscription ne null) sub.cancel()
+    else {
+      subscription = sub
+      requestMore()
+    }
   }
 
-  override def onError(cause: Throwable): Unit = ()
+  override def onError(cause: Throwable): Unit = {
+    ReactiveStreamsCompliance.requireNonNullException(cause)
+    onComplete.tryFailure(cause)
+  }
 
-  override def onComplete(): Unit = ()
+  override def onComplete(): Unit = {
+    onComplete.trySuccess(())
+  }
 
   override def onNext(element: T): Unit = {
+    ReactiveStreamsCompliance.requireNonNullElement(element)
     requested -= 1
     requestMore()
   }
@@ -35,8 +44,7 @@ private[akka] class BlackholeSubscriber[T](highWatermark: Int) extends Subscribe
   protected def requestMore(): Unit =
     if (requested < lowWatermark) {
       val amount = highWatermark - requested
-      subscription.get().request(amount)
       requested += amount
+      subscription.request(amount)
     }
-
 }

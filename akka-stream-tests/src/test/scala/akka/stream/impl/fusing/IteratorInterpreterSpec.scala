@@ -7,21 +7,23 @@ import scala.collection.immutable
 import akka.stream.testkit.AkkaSpec
 import akka.util.ByteString
 import akka.stream.stage._
+import akka.stream.Supervision
 
 class IteratorInterpreterSpec extends AkkaSpec {
+  import Supervision.stoppingDecider
 
   "IteratorInterpreter" must {
 
     "work in the happy case" in {
       val itr = new IteratorInterpreter[Int, Int]((1 to 10).iterator, Seq(
-        Map((x: Int) ⇒ x + 1))).iterator
+        Map((x: Int) ⇒ x + 1, stoppingDecider))).iterator
 
       itr.toSeq should be(2 to 11)
     }
 
     "hasNext should not affect elements" in {
       val itr = new IteratorInterpreter[Int, Int]((1 to 10).iterator, Seq(
-        Map((x: Int) ⇒ x))).iterator
+        Map((x: Int) ⇒ x, stoppingDecider))).iterator
 
       itr.hasNext should be(true)
       itr.hasNext should be(true)
@@ -40,7 +42,7 @@ class IteratorInterpreterSpec extends AkkaSpec {
 
     "throw exceptions on empty iterator" in {
       val itr = new IteratorInterpreter[Int, Int](List(1).iterator, Seq(
-        Map((x: Int) ⇒ x))).iterator
+        Map((x: Int) ⇒ x, stoppingDecider))).iterator
 
       itr.next() should be(1)
       a[NoSuchElementException] should be thrownBy { itr.next() }
@@ -49,7 +51,7 @@ class IteratorInterpreterSpec extends AkkaSpec {
     "throw exceptions when chain fails" in {
       val itr = new IteratorInterpreter[Int, Int](List(1, 2, 3).iterator, Seq(
         new PushStage[Int, Int] {
-          override def onPush(elem: Int, ctx: Context[Int]): Directive = {
+          override def onPush(elem: Int, ctx: Context[Int]): SyncDirective = {
             if (elem == 2) ctx.fail(new ArithmeticException())
             else ctx.push(elem)
           }
@@ -64,7 +66,7 @@ class IteratorInterpreterSpec extends AkkaSpec {
     "throw exceptions when op in chain throws" in {
       val itr = new IteratorInterpreter[Int, Int](List(1, 2, 3).iterator, Seq(
         new PushStage[Int, Int] {
-          override def onPush(elem: Int, ctx: Context[Int]): Directive = {
+          override def onPush(elem: Int, ctx: Context[Int]): SyncDirective = {
             if (elem == 2) throw new ArithmeticException()
             else ctx.push(elem)
           }
@@ -78,7 +80,7 @@ class IteratorInterpreterSpec extends AkkaSpec {
 
     "work with an empty iterator" in {
       val itr = new IteratorInterpreter[Int, Int](Iterator.empty, Seq(
-        Map((x: Int) ⇒ x + 1))).iterator
+        Map((x: Int) ⇒ x + 1, stoppingDecider))).iterator
 
       itr.hasNext should be(false)
       a[NoSuchElementException] should be thrownBy { itr.next() }
@@ -118,12 +120,12 @@ class IteratorInterpreterSpec extends AkkaSpec {
   case class NaiveTake[T](count: Int) extends PushPullStage[T, T] {
     private var left: Int = count
 
-    override def onPush(elem: T, ctx: Context[T]): Directive = {
+    override def onPush(elem: T, ctx: Context[T]): SyncDirective = {
       left -= 1
       ctx.push(elem)
     }
 
-    override def onPull(ctx: Context[T]): Directive = {
+    override def onPull(ctx: Context[T]): SyncDirective = {
       if (left == 0) ctx.finish()
       else ctx.pull()
     }
@@ -135,7 +137,7 @@ class IteratorInterpreterSpec extends AkkaSpec {
     private var buf = ByteString.empty
     private var passthrough = false
 
-    override def onPush(elem: ByteString, ctx: Context[ByteString]): Directive = {
+    override def onPush(elem: ByteString, ctx: Context[ByteString]): SyncDirective = {
       if (passthrough) ctx.push(elem)
       else {
         buf = buf ++ elem
@@ -148,7 +150,7 @@ class IteratorInterpreterSpec extends AkkaSpec {
       }
     }
 
-    override def onPull(ctx: Context[ByteString]): Directive = {
+    override def onPull(ctx: Context[ByteString]): SyncDirective = {
       if (ctx.isFinishing) ctx.pushAndFinish(buf)
       else ctx.pull()
     }

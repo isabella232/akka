@@ -4,22 +4,22 @@
 package akka.stream.impl
 
 import scala.collection.immutable
-import akka.stream.MaterializerSettings
+import akka.stream.ActorMaterializerSettings
 import akka.stream.scaladsl.Source
-import akka.actor.Props
+import akka.actor.{ Deploy, Props }
 
 /**
  * INTERNAL API
  */
 private[akka] object PrefixAndTailImpl {
-  def props(settings: MaterializerSettings, takeMax: Int): Props =
-    Props(new PrefixAndTailImpl(settings, takeMax))
+  def props(settings: ActorMaterializerSettings, takeMax: Int): Props =
+    Props(new PrefixAndTailImpl(settings, takeMax)).withDeploy(Deploy.local)
 }
 
 /**
  * INTERNAL API
  */
-private[akka] class PrefixAndTailImpl(_settings: MaterializerSettings, val takeMax: Int)
+private[akka] class PrefixAndTailImpl(_settings: ActorMaterializerSettings, val takeMax: Int)
   extends MultiStreamOutputProcessor(_settings) {
 
   import MultiStreamOutputProcessor._
@@ -50,7 +50,7 @@ private[akka] class PrefixAndTailImpl(_settings: MaterializerSettings, val takeM
   }
 
   def emitEmptyTail(): Unit = {
-    primaryOutputs.enqueueOutputElement((taken, Source(EmptyPublisher[Any])))
+    primaryOutputs.enqueueOutputElement((taken, Source.empty))
     nextPhase(completedPhase)
   }
 
@@ -62,5 +62,5 @@ private[akka] class PrefixAndTailImpl(_settings: MaterializerSettings, val takeM
     nextPhase(streamTailPhase(substreamOutput))
   }
 
-  if (takeMax > 0) nextPhase(take) else nextPhase(takeEmpty)
+  if (takeMax > 0) initialPhase(1, take) else initialPhase(1, takeEmpty)
 }

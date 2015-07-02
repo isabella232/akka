@@ -3,37 +3,17 @@
  */
 package akka.stream.scaladsl
 
+import akka.stream.impl.StreamLayout
+import akka.stream.{ Outlet, Shape, OutPort, Graph, Attributes }
 import scala.collection.immutable
-import akka.stream.scaladsl.OperationAttributes._
-import akka.stream.impl.Ast
-import akka.stream.impl.Ast.Defaults._
-import akka.stream.impl.FlexiRouteImpl.RouteLogicFactory
+import akka.stream.impl.Junctions.FlexiRouteModule
+import akka.stream.impl.Stages.DefaultAttributes
 
 object FlexiRoute {
 
-  /**
-   * @see [[OutputPort]]
-   */
-  trait OutputHandle {
-    private[akka] def portIndex: Int
-  }
+  import akka.stream.impl.StreamLayout
 
-  /**
-   * An `OutputPort` can be connected to a [[Sink]] with the [[FlowGraphBuilder]].
-   * The `OutputPort` is also an [[OutputHandle]] which you use to define to which
-   * downstream output to emit an element.
-   */
-  class OutputPort[In, Out] private[akka] (override private[akka] val port: Int, parent: FlexiRoute[In])
-    extends JunctionOutPort[Out] with OutputHandle {
-
-    override private[akka] def vertex = parent.vertex
-
-    override private[akka] def portIndex: Int = port
-
-    override def toString: String = s"OutputPort($port)"
-  }
-
-  sealed trait DemandCondition
+  sealed trait DemandCondition[+T]
 
   /**
    * Demand condition for the [[RouteLogic#State]] that will be
@@ -44,10 +24,11 @@ object FlexiRoute {
    * has been completed. `IllegalArgumentException` is thrown if
    * that is not obeyed.
    */
-  final case class DemandFrom(output: OutputHandle) extends DemandCondition
+  final case class DemandFrom[+T](output: Outlet[T]) extends DemandCondition[Outlet[T]]
 
   object DemandFromAny {
-    def apply(outputs: immutable.Seq[OutputHandle]): DemandFromAny = new DemandFromAny(outputs: _*)
+    def apply(outputs: OutPort*): DemandFromAny = new DemandFromAny(outputs.to[immutable.Seq])
+    def apply(p: Shape): DemandFromAny = new DemandFromAny(p.outlets)
   }
   /**
    * Demand condition for the [[RouteLogic#State]] that will be
@@ -57,10 +38,11 @@ object FlexiRoute {
    * Cancelled and completed outputs are not used, i.e. it is allowed
    * to specify them in the list of `outputs`.
    */
-  final case class DemandFromAny(outputs: OutputHandle*) extends DemandCondition
+  final case class DemandFromAny(outputs: immutable.Seq[OutPort]) extends DemandCondition[OutPort]
 
   object DemandFromAll {
-    def apply(outputs: immutable.Seq[OutputHandle]): DemandFromAll = new DemandFromAll(outputs: _*)
+    def apply(outputs: OutPort*): DemandFromAll = new DemandFromAll(outputs.to[immutable.Seq])
+    def apply(p: Shape): DemandFromAll = new DemandFromAll(p.outlets)
   }
   /**
    * Demand condition for the [[RouteLogic#State]] that will be
@@ -70,57 +52,64 @@ object FlexiRoute {
    * Cancelled and completed outputs are not used, i.e. it is allowed
    * to specify them in the list of `outputs`.
    */
-  final case class DemandFromAll(outputs: OutputHandle*) extends DemandCondition
+  final case class DemandFromAll(outputs: immutable.Seq[OutPort]) extends DemandCondition[Unit]
 
   /**
    * The possibly stateful logic that reads from the input and enables emitting to downstream
-   * via the defined [[State]]. Handles completion, error and cancel via the defined
+   * via the defined [[State]]. Handles completion, failure and cancel via the defined
    * [[CompletionHandling]].
    *
    * Concrete instance is supposed to be created by implementing [[FlexiRoute#createRouteLogic]].
    */
   abstract class RouteLogic[In] {
-    def outputHandles(outputCount: Int): immutable.IndexedSeq[OutputHandle]
     def initialState: State[_]
     def initialCompletionHandling: CompletionHandling = defaultCompletionHandling
 
     /**
-     * Context that is passed to the functions of [[State]] and [[CompletionHandling]].
+     * This method is executed during the startup of this stage, before the processing of the elements
+     * begin.
+     */
+    def preStart(): Unit = ()
+
+    /**
+     * This method is executed during shutdown of this stage, after processing of elements stopped, or the
+     * stage failed.
+     */
+    def postStop(): Unit = ()
+
+    /**
+     * Context that is passed to the `onInput` function of [[State]].
      * The context provides means for performing side effects, such as emitting elements
      * downstream.
      */
-    trait RouteLogicContext[Out] {
+    trait RouteLogicContext extends RouteLogicContextBase {
       /**
-       * @return `true` if at least one element has been requested by the given downstream (output).
+       * Emit one element downstream. It is only allowed to `emit` at most one element to
+       * each output in response to `onInput`, `IllegalStateException` is thrown.
        */
-      def isDemandAvailable(output: OutputHandle): Boolean
+      def emit[Out](output: Outlet[Out])(elem: Out): Unit
+    }
 
-      /**
-       * Emit one element downstream. It is only allowed to `emit` when
-       * [[#isDemandAvailable]] is `true` for the given `output`, otherwise
-       * `IllegalArgumentException` is thrown.
-       */
-      def emit(output: OutputHandle, elem: Out): Unit
-
+    trait RouteLogicContextBase {
       /**
        * Complete the given downstream successfully.
        */
-      def complete(output: OutputHandle): Unit
+      def finish(output: OutPort): Unit
 
       /**
        * Complete all downstreams successfully and cancel upstream.
        */
-      def complete(): Unit
+      def finish(): Unit
 
       /**
        * Complete the given downstream with failure.
        */
-      def error(output: OutputHandle, cause: Throwable): Unit
+      def fail(output: OutPort, cause: Throwable): Unit
 
       /**
        * Complete all downstreams with failure and cancel upstream.
        */
-      def error(cause: Throwable): Unit
+      def fail(cause: Throwable): Unit
 
       /**
        * Replace current [[CompletionHandling]].
@@ -132,21 +121,21 @@ object FlexiRoute {
      * Definition of which outputs that must have requested elements and how to act
      * on the read elements. When an element has been read [[#onInput]] is called and
      * then it is ensured that the specified downstream outputs have requested at least
-     * one element, i.e. it is allowed to emit at least one element downstream with
-     * [[RouteLogicContext#emit]].
+     * one element, i.e. it is allowed to emit at most one element to each downstream
+     * output with [[RouteLogicContext#emit]].
      *
      * The `onInput` function is called when an `element` was read from upstream.
      * The function returns next behavior or [[#SameState]] to keep current behavior.
      */
-    sealed case class State[Out](val condition: DemandCondition)(
-      val onInput: (RouteLogicContext[Out], OutputHandle, In) ⇒ State[_])
+    sealed case class State[Out](condition: DemandCondition[Out])(
+      val onInput: (RouteLogicContext, Out, In) ⇒ State[_])
 
     /**
      * Return this from [[State]] `onInput` to use same state for next element.
      */
-    def SameState[In]: State[In] = sameStateInstance.asInstanceOf[State[In]]
+    def SameState[T]: State[T] = sameStateInstance.asInstanceOf[State[T]]
 
-    private val sameStateInstance = new State[Any](DemandFromAny(Nil))((_, _, _) ⇒
+    private val sameStateInstance = new State(DemandFromAny(Nil))((_, _, _) ⇒
       throw new UnsupportedOperationException("SameState.onInput should not be called")) {
 
       // unique instance, don't use case class
@@ -156,40 +145,43 @@ object FlexiRoute {
     }
 
     /**
-     * How to handle completion or error from upstream input and how to
+     * How to handle completion or failure from upstream input and how to
      * handle cancel from downstream output.
      *
-     * The `onComplete` function is called the upstream input was completed successfully.
+     * The `onUpstreamFinish` function is called the upstream input was completed successfully.
+     * The completion will be propagated downstreams unless this function throws an exception, in
+     * which case the streams will be completed with that failure.
+     *
+     * The `onUpstreamFailure` function is called when the upstream input was completed with failure.
+     * The failure will be propagated downstreams unless this function throws an exception, in
+     * which case the streams will be completed with that failure instead.
+     *
+     * The `onDownstreamFinish` function is called when a downstream output cancels.
      * It returns next behavior or [[#SameState]] to keep current behavior.
      *
-     * The `onError` function is called when the upstream input was completed with failure.
-     * It returns next behavior or [[#SameState]] to keep current behavior.
-     *
-     * The `onCancel` function is called when a downstream output cancels.
-     * It returns next behavior or [[#SameState]] to keep current behavior.
+     * It is not possible to emit elements from the completion handling, since completion
+     * handlers may be invoked at any time (without regard to downstream demand being available).
      */
     sealed case class CompletionHandling(
-      onComplete: RouteLogicContext[Any] ⇒ Unit,
-      onError: (RouteLogicContext[Any], Throwable) ⇒ Unit,
-      onCancel: (RouteLogicContext[Any], OutputHandle) ⇒ State[_])
+      onUpstreamFinish: RouteLogicContextBase ⇒ Unit,
+      onUpstreamFailure: (RouteLogicContextBase, Throwable) ⇒ Unit,
+      onDownstreamFinish: (RouteLogicContextBase, OutPort) ⇒ State[_])
 
     /**
      * When an output cancels it continues with remaining outputs.
-     * Error or completion from upstream are immediately propagated.
      */
     val defaultCompletionHandling: CompletionHandling = CompletionHandling(
-      onComplete = _ ⇒ (),
-      onError = (ctx, cause) ⇒ (),
-      onCancel = (ctx, _) ⇒ SameState)
+      onUpstreamFinish = _ ⇒ (),
+      onUpstreamFailure = (ctx, cause) ⇒ (),
+      onDownstreamFinish = (ctx, _) ⇒ SameState)
 
     /**
      * Completes as soon as any output cancels.
-     * Error or completion from upstream are immediately propagated.
      */
     val eagerClose: CompletionHandling = CompletionHandling(
-      onComplete = _ ⇒ (),
-      onError = (ctx, cause) ⇒ (),
-      onCancel = (ctx, _) ⇒ { ctx.complete(); SameState })
+      onUpstreamFinish = _ ⇒ (),
+      onUpstreamFailure = (ctx, cause) ⇒ (),
+      onDownstreamFinish = (ctx, _) ⇒ { ctx.finish(); SameState })
 
   }
 
@@ -197,9 +189,9 @@ object FlexiRoute {
 
 /**
  * Base class for implementing custom route junctions.
- * Such a junction always has one [[#in]] port and one or more output ports.
- * The output ports are to be defined in the concrete subclass and are created with
- * [[#createOutputPort]].
+ * Such a junction always has one `in` port and one or more `out` ports.
+ * The ports need to be defined by the concrete subclass by providing them as a constructor argument
+ * to the [[FlexiRoute]] base class.
  *
  * The concrete subclass must implement [[#createRouteLogic]] to define the [[FlexiRoute#RouteLogic]]
  * that will be used when reading input elements and emitting output elements.
@@ -207,65 +199,62 @@ object FlexiRoute {
  * must not hold mutable state, since it may be shared across several materialized ``FlowGraph``
  * instances.
  *
- * Note that a `FlexiRoute` with a specific name can only be used at one place (one vertex)
- * in the `FlowGraph`. If the `name` is not specified the `FlexiRoute` instance can only
- * be used at one place (one vertex) in the `FlowGraph`.
- *
- * @param name optional name of the junction in the [[FlowGraph]],
+ * @param ports ports that this junction exposes
+ * @param attributes optional attributes for this junction
  */
-abstract class FlexiRoute[In](override val attributes: OperationAttributes) extends RouteLogicFactory[In] {
-  import FlexiRoute._
-
-  def this(name: String) = this(OperationAttributes.name(name))
-  def this() = this(OperationAttributes.none)
-
-  private var outputCount = 0
-
-  // hide the internal vertex things from subclass, and make it possible to create new instance
-  private class RouteVertex(override val attributes: OperationAttributes) extends FlowGraphInternal.InternalVertex {
-    override def minimumInputCount = 1
-    override def maximumInputCount = 1
-    override def minimumOutputCount = 2
-    override def maximumOutputCount = outputCount
-
-    override private[akka] val astNode = Ast.FlexiRouteNode(FlexiRoute.this.asInstanceOf[FlexiRoute[Any]], flexiRoute and attributes)
-
-    final override private[scaladsl] def newInstance() = new RouteVertex(OperationAttributes.none)
-  }
-
-  private[scaladsl] val vertex: FlowGraphInternal.InternalVertex = new RouteVertex(attributes)
+abstract class FlexiRoute[In, S <: Shape](val shape: S, attributes: Attributes) extends Graph[S, Unit] {
+  import akka.stream.scaladsl.FlexiRoute._
 
   /**
-   * Input port of the `FlexiRoute` junction. A [[Source]] can be connected to this output
-   * with the [[FlowGraphBuilder]].
+   * INTERNAL API
    */
-  val in: JunctionInPort[In] = new JunctionInPort[In] {
-    override type NextT = Nothing
-    override private[akka] def next = NoNext
-    override private[akka] def vertex = FlexiRoute.this.vertex
-  }
+  private[stream] val module: StreamLayout.Module =
+    new FlexiRouteModule(shape, createRouteLogic, attributes and DefaultAttributes.flexiRoute)
 
   /**
-   * Concrete subclass is supposed to define one or more output ports and
-   * they are created by calling this method. Each [[FlexiRoute.OutputPort]] can be
-   * connected to a [[Sink]] with the [[FlowGraphBuilder]].
-   * The `OutputPort` is also an [[FlexiRoute.OutputHandle]] which you use to define to which
-   * downstream output to emit an element.
+   * This allows a type-safe mini-DSL for selecting one of several ports, very useful in
+   * conjunction with DemandFromAny(...):
+   *
+   * {{{
+   * State(DemandFromAny(p1, p2, p2)) { (ctx, out, element) =>
+   *   ctx.emit((p1 | p2 | p3)(out))(element)
+   * }
+   * }}}
+   *
+   * This will ensure that the either of the three ports would accept the type of `element`.
    */
-  protected final def createOutputPort[T](): OutputPort[In, T] = {
-    val port = outputCount
-    outputCount += 1
-    new OutputPort(port, parent = this)
+  implicit class PortUnion[L](left: Outlet[L]) {
+    def |[R <: L](right: Outlet[R]): InnerPortUnion[R] = new InnerPortUnion(Map((left, left.asInstanceOf[Outlet[R]]), (right, right)))
+    /*
+     * It would be nicer to use `Map[OutP, OutPort[_ <: T]]` to get rid of the casts,
+     * but unfortunately this kills the compiler (and quite violently so).
+     */
+    class InnerPortUnion[T] private[PortUnion] (ports: Map[OutPort, Outlet[T]]) {
+      def |[R <: T](right: Outlet[R]): InnerPortUnion[R] = new InnerPortUnion(ports.asInstanceOf[Map[OutPort, Outlet[R]]].updated(right, right))
+      def apply(p: OutPort) = ports get p match {
+        case Some(p) ⇒ p
+        case None    ⇒ throw new IllegalStateException(s"port $p was not among the allowed ones (${ports.keys.mkString(", ")})")
+      }
+      def all: Iterable[Outlet[T]] = ports.values
+    }
   }
+
+  type PortT = S
 
   /**
    * Create the stateful logic that will be used when reading input elements
    * and emitting output elements. Create a new instance every time.
    */
-  override def createRouteLogic(): RouteLogic[In]
+  def createRouteLogic(s: S): RouteLogic[In]
 
   override def toString = attributes.nameLifted match {
     case Some(n) ⇒ n
-    case None    ⇒ getClass.getSimpleName + "@" + Integer.toHexString(super.hashCode())
+    case None    ⇒ super.toString
   }
+
+  override def withAttributes(attr: Attributes): Graph[S, Unit] =
+    throw new UnsupportedOperationException(
+      "withAttributes not supported by default by FlexiRoute, subclass may override and implement it")
+
+  override def named(name: String): Graph[S, Unit] = withAttributes(Attributes.name(name))
 }

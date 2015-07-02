@@ -4,11 +4,8 @@
 package akka.stream.impl
 
 import java.util.concurrent.atomic.AtomicReference
-import akka.actor.ActorLogging
-import akka.actor.Cancellable
-
-import akka.actor.{ Actor, ActorRef }
-import akka.stream.MaterializerSettings
+import akka.actor._
+import akka.stream.ActorMaterializerSettings
 import org.reactivestreams.{ Publisher, Subscriber, Subscription }
 import scala.collection.mutable
 import scala.concurrent.duration.FiniteDuration
@@ -17,11 +14,11 @@ import scala.concurrent.duration.FiniteDuration
  * INTERNAL API
  */
 private[akka] object MultiStreamOutputProcessor {
-  case class SubstreamKey(id: Long)
-  case class SubstreamRequestMore(substream: SubstreamKey, demand: Long)
-  case class SubstreamCancel(substream: SubstreamKey)
-  case class SubstreamSubscribe(substream: SubstreamKey, subscriber: Subscriber[Any])
-  case class SubstreamSubscriptionTimeout(substream: SubstreamKey)
+  final case class SubstreamKey(id: Long)
+  final case class SubstreamRequestMore(substream: SubstreamKey, demand: Long) extends DeadLetterSuppression with NoSerializationVerificationNeeded
+  final case class SubstreamCancel(substream: SubstreamKey) extends DeadLetterSuppression with NoSerializationVerificationNeeded
+  final case class SubstreamSubscribe(substream: SubstreamKey, subscriber: Subscriber[Any]) extends DeadLetterSuppression with NoSerializationVerificationNeeded
+  final case class SubstreamSubscriptionTimeout(substream: SubstreamKey) extends DeadLetterSuppression with NoSerializationVerificationNeeded
 
   class SubstreamSubscription(val parent: ActorRef, val substreamKey: SubstreamKey) extends Subscription {
     override def request(elements: Long): Unit = parent ! SubstreamRequestMore(substreamKey, elements)
@@ -35,11 +32,13 @@ private[akka] object MultiStreamOutputProcessor {
     case object Open extends PublisherState
     final case class Attached(sub: Subscriber[Any]) extends PublisherState
     case object Completed extends CompletedState
+    case object Cancelled extends CompletedState
     final case class Failed(e: Throwable) extends CompletedState
   }
 
   class SubstreamOutput(val key: SubstreamKey, actor: ActorRef, pump: Pump, subscriptionTimeout: Cancellable)
     extends SimpleOutputs(actor, pump) with Publisher[Any] {
+    import ReactiveStreamsCompliance._
 
     import SubstreamOutput._
 
@@ -56,9 +55,16 @@ private[akka] object MultiStreamOutputProcessor {
       pump.pump()
     }
 
-    override def cancel(e: Throwable): Unit = {
+    override def error(e: Throwable): Unit = {
       if (!downstreamCompleted) {
         closePublisher(Failed(e))
+        downstreamCompleted = true
+      }
+    }
+
+    override def cancel(): Unit = {
+      if (!downstreamCompleted) {
+        closePublisher(Cancelled)
         downstreamCompleted = true
       }
     }
@@ -73,25 +79,34 @@ private[akka] object MultiStreamOutputProcessor {
     private def closePublisher(withState: CompletedState): Unit = {
       subscriptionTimeout.cancel()
       state.getAndSet(withState) match {
-        case Attached(sub)     ⇒ closeSubscriber(sub, withState)
         case _: CompletedState ⇒ throw new IllegalStateException("Attempted to double shutdown publisher")
-        case Open              ⇒ // No action needed
+        case Attached(sub) ⇒
+          if (subscriber eq null) tryOnSubscribe(sub, CancelledSubscription)
+          closeSubscriber(sub, withState)
+        case Open ⇒ // No action needed
       }
     }
 
     private def closeSubscriber(s: Subscriber[Any], withState: CompletedState): Unit = withState match {
-      case Completed ⇒ s.onComplete()
-      case Failed(e) ⇒ s.onError(e)
+      case Completed                ⇒ tryOnComplete(s)
+      case Cancelled                ⇒ // nothing to do
+      case Failed(e: SpecViolation) ⇒ // nothing to do
+      case Failed(e)                ⇒ tryOnError(s, e)
     }
 
     override def subscribe(s: Subscriber[_ >: Any]): Unit = {
+      requireNonNullSubscriber(s)
       subscriptionTimeout.cancel()
       if (state.compareAndSet(Open, Attached(s))) actor ! SubstreamSubscribe(key, s)
       else {
         state.get() match {
-          case _: Attached       ⇒ s.onError(new IllegalStateException("Substream publisher " + ReactiveStreamsCompliance.SupportsOnlyASingleSubscriber))
-          case c: CompletedState ⇒ closeSubscriber(s, c)
-          case Open              ⇒ throw new IllegalStateException("Publisher cannot become open after being used before")
+          case _: Attached | Cancelled ⇒
+            rejectAdditionalSubscriber(s, "Substream publisher")
+          case c: CompletedState ⇒
+            tryOnSubscribe(s, CancelledSubscription)
+            closeSubscriber(s, c)
+          case Open ⇒
+            throw new IllegalStateException("Publisher cannot become open after being used before")
         }
       }
     }
@@ -99,8 +114,9 @@ private[akka] object MultiStreamOutputProcessor {
     def attachSubscriber(s: Subscriber[Any]): Unit =
       if (subscriber eq null) {
         subscriber = s
-        subscriber.onSubscribe(subscription)
-      } else subscriber.onError(new IllegalStateException("Cannot subscribe two or more Subscribers to this Publisher"))
+        tryOnSubscribe(subscriber, subscription)
+      } else
+        rejectAdditionalSubscriber(s, "Substream publisher")
   }
 }
 
@@ -127,8 +143,17 @@ private[akka] trait MultiStreamOutputProcessorLike extends Pump with StreamSubsc
   }
 
   protected def invalidateSubstreamOutput(substream: SubstreamKey): Unit = {
-    completeSubstreamOutput(substream)
+    cancelSubstreamOutput(substream)
     pump()
+  }
+
+  protected def cancelSubstreamOutput(substream: SubstreamKey): Unit = {
+    substreamOutputs.get(substream) match {
+      case Some(sub) ⇒
+        sub.cancel()
+        substreamOutputs -= substream
+      case _ ⇒ // ignore, already completed...
+    }
   }
 
   protected def completeSubstreamOutput(substream: SubstreamKey): Unit = {
@@ -141,7 +166,7 @@ private[akka] trait MultiStreamOutputProcessorLike extends Pump with StreamSubsc
   }
 
   protected def failOutputs(e: Throwable): Unit = {
-    substreamOutputs.values foreach (_.cancel(e))
+    substreamOutputs.values foreach (_.error(e))
   }
 
   protected def finishOutputs(): Unit = {
@@ -149,10 +174,15 @@ private[akka] trait MultiStreamOutputProcessorLike extends Pump with StreamSubsc
   }
 
   val outputSubstreamManagement: Receive = {
-    case SubstreamRequestMore(key, demand) ⇒ substreamOutputs.get(key) match {
-      case Some(sub) ⇒ sub.enqueueOutputDemand(demand)
-      case _         ⇒ // ignore...
-    }
+    case SubstreamRequestMore(key, demand) ⇒
+      substreamOutputs.get(key) match {
+        case Some(sub) ⇒
+          if (demand < 1) // According to Reactive Streams Spec 3.9, with non-positive demand must yield onError
+            sub.error(ReactiveStreamsCompliance.numberOfElementsInRequestMustBePositiveException)
+          else
+            sub.enqueueOutputDemand(demand)
+        case _ ⇒ // ignore...
+      }
     case SubstreamSubscribe(key, subscriber) ⇒ substreamOutputs.get(key) match {
       case Some(sub) ⇒ sub.attachSubscriber(subscriber)
       case _         ⇒ // ignore...
@@ -161,12 +191,13 @@ private[akka] trait MultiStreamOutputProcessorLike extends Pump with StreamSubsc
       case Some(sub) if !sub.isAttached() ⇒ subscriptionTimedOut(sub)
       case _                              ⇒ // ignore...
     }
-    case SubstreamCancel(key) ⇒ invalidateSubstreamOutput(key)
+    case SubstreamCancel(key) ⇒
+      invalidateSubstreamOutput(key)
   }
 
   override protected def handleSubscriptionTimeout(target: Publisher[_], cause: Exception) = target match {
     case s: SubstreamOutput ⇒
-      s.cancel(cause)
+      s.error(cause)
       s.attachSubscriber(CancelingSubscriber)
     case _ ⇒ // ignore
   }
@@ -175,7 +206,7 @@ private[akka] trait MultiStreamOutputProcessorLike extends Pump with StreamSubsc
 /**
  * INTERNAL API
  */
-private[akka] abstract class MultiStreamOutputProcessor(_settings: MaterializerSettings) extends ActorProcessorImpl(_settings) with MultiStreamOutputProcessorLike {
+private[akka] abstract class MultiStreamOutputProcessor(_settings: ActorMaterializerSettings) extends ActorProcessorImpl(_settings) with MultiStreamOutputProcessorLike {
   private var _nextId = 0L
   protected def nextId(): Long = { _nextId += 1; _nextId }
 
@@ -191,7 +222,7 @@ private[akka] abstract class MultiStreamOutputProcessor(_settings: MaterializerS
     super.pumpFinished()
   }
 
-  override def activeReceive = primaryInputs.subreceive orElse primaryOutputs.subreceive orElse outputSubstreamManagement
+  override def activeReceive: Receive = primaryInputs.subreceive orElse primaryOutputs.subreceive orElse outputSubstreamManagement
 }
 
 /**
@@ -199,22 +230,31 @@ private[akka] abstract class MultiStreamOutputProcessor(_settings: MaterializerS
  */
 private[akka] object TwoStreamInputProcessor {
   class OtherActorSubscriber[T](val impl: ActorRef) extends Subscriber[T] {
-    override def onError(cause: Throwable): Unit = impl ! OtherStreamOnError(cause)
+    override def onError(cause: Throwable): Unit = {
+      ReactiveStreamsCompliance.requireNonNullException(cause)
+      impl ! OtherStreamOnError(cause)
+    }
     override def onComplete(): Unit = impl ! OtherStreamOnComplete
-    override def onNext(element: T): Unit = impl ! OtherStreamOnNext(element)
-    override def onSubscribe(subscription: Subscription): Unit = impl ! OtherStreamOnSubscribe(subscription)
+    override def onNext(element: T): Unit = {
+      ReactiveStreamsCompliance.requireNonNullElement(element)
+      impl ! OtherStreamOnNext(element)
+    }
+    override def onSubscribe(subscription: Subscription): Unit = {
+      ReactiveStreamsCompliance.requireNonNullSubscription(subscription)
+      impl ! OtherStreamOnSubscribe(subscription)
+    }
   }
 
-  case object OtherStreamOnComplete
-  case class OtherStreamOnNext(element: Any)
-  case class OtherStreamOnSubscribe(subscription: Subscription)
-  case class OtherStreamOnError(ex: Throwable)
+  case object OtherStreamOnComplete extends DeadLetterSuppression
+  final case class OtherStreamOnNext(element: Any) extends DeadLetterSuppression
+  final case class OtherStreamOnSubscribe(subscription: Subscription) extends DeadLetterSuppression
+  final case class OtherStreamOnError(ex: Throwable) extends DeadLetterSuppression
 }
 
 /**
  * INTERNAL API
  */
-private[akka] abstract class TwoStreamInputProcessor(_settings: MaterializerSettings, val other: Publisher[Any])
+private[akka] abstract class TwoStreamInputProcessor(_settings: ActorMaterializerSettings, val other: Publisher[Any])
   extends ActorProcessorImpl(_settings) {
   import akka.stream.impl.TwoStreamInputProcessor._
 
@@ -235,7 +275,7 @@ private[akka] abstract class TwoStreamInputProcessor(_settings: MaterializerSett
       case OtherStreamOnError(e)      ⇒ TwoStreamInputProcessor.this.onError(e)
     }
     override protected def completed: Actor.Receive = {
-      case OtherStreamOnSubscribe(_) ⇒ throw new IllegalStateException("Cannot subscribe shutdown subscriber")
+      case OtherStreamOnSubscribe(_) ⇒ throw ActorPublisher.NormalShutdownReason
     }
   }
 
@@ -257,17 +297,27 @@ private[akka] abstract class TwoStreamInputProcessor(_settings: MaterializerSett
 private[akka] object MultiStreamInputProcessor {
   case class SubstreamKey(id: Long)
 
-  class SubstreamSubscriber[T](val impl: ActorRef, key: SubstreamKey) extends Subscriber[T] {
-    override def onError(cause: Throwable): Unit = impl ! SubstreamOnError(key, cause)
+  class SubstreamSubscriber[T](val impl: ActorRef, key: SubstreamKey) extends AtomicReference[Subscription] with Subscriber[T] {
+    override def onError(cause: Throwable): Unit = {
+      ReactiveStreamsCompliance.requireNonNullException(cause)
+      impl ! SubstreamOnError(key, cause)
+    }
     override def onComplete(): Unit = impl ! SubstreamOnComplete(key)
-    override def onNext(element: T): Unit = impl ! SubstreamOnNext(key, element)
-    override def onSubscribe(subscription: Subscription): Unit = impl ! SubstreamStreamOnSubscribe(key, subscription)
+    override def onNext(element: T): Unit = {
+      ReactiveStreamsCompliance.requireNonNullElement(element)
+      impl ! SubstreamOnNext(key, element)
+    }
+    override def onSubscribe(subscription: Subscription): Unit = {
+      ReactiveStreamsCompliance.requireNonNullSubscription(subscription)
+      if (compareAndSet(null, subscription)) impl ! SubstreamStreamOnSubscribe(key, subscription)
+      else subscription.cancel()
+    }
   }
 
-  case class SubstreamOnComplete(key: SubstreamKey)
-  case class SubstreamOnNext(key: SubstreamKey, element: Any)
-  case class SubstreamOnError(key: SubstreamKey, e: Throwable)
-  case class SubstreamStreamOnSubscribe(key: SubstreamKey, subscription: Subscription)
+  case class SubstreamOnComplete(key: SubstreamKey) extends DeadLetterSuppression with NoSerializationVerificationNeeded
+  case class SubstreamOnNext(key: SubstreamKey, element: Any) extends DeadLetterSuppression with NoSerializationVerificationNeeded
+  case class SubstreamOnError(key: SubstreamKey, e: Throwable) extends DeadLetterSuppression with NoSerializationVerificationNeeded
+  case class SubstreamStreamOnSubscribe(key: SubstreamKey, subscription: Subscription) extends DeadLetterSuppression with NoSerializationVerificationNeeded
 
   class SubstreamInput(val key: SubstreamKey, bufferSize: Int, processor: MultiStreamInputProcessorLike, pump: Pump) extends BatchingInputBuffer(bufferSize, pump) {
     // Not driven directly
@@ -297,16 +347,19 @@ private[akka] trait MultiStreamInputProcessorLike extends Pump { this: Actor ⇒
   protected def inputBufferSize: Int
 
   private val substreamInputs = collection.mutable.Map.empty[SubstreamKey, SubstreamInput]
+  private val waitingForOnSubscribe = collection.mutable.Map.empty[SubstreamKey, SubstreamSubscriber[Any]]
 
   val inputSubstreamManagement: Receive = {
-    case SubstreamStreamOnSubscribe(key, subscription) ⇒ substreamInputs(key).substreamOnSubscribe(subscription)
-    case SubstreamOnNext(key, element)                 ⇒ substreamInputs(key).substreamOnNext(element)
-    case SubstreamOnComplete(key) ⇒ {
+    case SubstreamStreamOnSubscribe(key, subscription) ⇒
+      substreamInputs(key).substreamOnSubscribe(subscription)
+      waitingForOnSubscribe -= key
+    case SubstreamOnNext(key, element) ⇒
+      substreamInputs(key).substreamOnNext(element)
+    case SubstreamOnComplete(key) ⇒
       substreamInputs(key).substreamOnComplete()
       substreamInputs -= key
-    }
-    case SubstreamOnError(key, e) ⇒ substreamInputs(key).substreamOnError(e)
-
+    case SubstreamOnError(key, e) ⇒
+      substreamInputs(key).substreamOnError(e)
   }
 
   def createSubstreamInput(): SubstreamInput = {
@@ -318,7 +371,9 @@ private[akka] trait MultiStreamInputProcessorLike extends Pump { this: Actor ⇒
 
   def createAndSubscribeSubstreamInput(p: Publisher[Any]): SubstreamInput = {
     val inputs = createSubstreamInput()
-    p.subscribe(new SubstreamSubscriber(self, inputs.key))
+    val sub = new SubstreamSubscriber[Any](self, inputs.key)
+    waitingForOnSubscribe(inputs.key) = sub
+    p.subscribe(sub)
     inputs
   }
 
@@ -329,19 +384,31 @@ private[akka] trait MultiStreamInputProcessorLike extends Pump { this: Actor ⇒
   }
 
   protected def failInputs(e: Throwable): Unit = {
+    cancelWaitingForOnSubscribe()
     substreamInputs.values foreach (_.cancel())
   }
 
   protected def finishInputs(): Unit = {
+    cancelWaitingForOnSubscribe()
     substreamInputs.values foreach (_.cancel())
   }
+
+  private def cancelWaitingForOnSubscribe(): Unit =
+    waitingForOnSubscribe.valuesIterator.foreach { sub ⇒
+      sub.getAndSet(CancelledSubscription) match {
+        case null ⇒ // we were first
+        case subscription ⇒
+          // SubstreamOnSubscribe is still in flight and will not arrive
+          subscription.cancel()
+      }
+    }
 
 }
 
 /**
  * INTERNAL API
  */
-private[akka] abstract class MultiStreamInputProcessor(_settings: MaterializerSettings) extends ActorProcessorImpl(_settings) with MultiStreamInputProcessorLike {
+private[akka] abstract class MultiStreamInputProcessor(_settings: ActorMaterializerSettings) extends ActorProcessorImpl(_settings) with MultiStreamInputProcessorLike {
   private var _nextId = 0L
   protected def nextId(): Long = { _nextId += 1; _nextId }
 

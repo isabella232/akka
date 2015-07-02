@@ -5,8 +5,6 @@
 package docs.actor;
 
 import akka.actor.*;
-import akka.event.LoggingAdapter;
-import akka.event.Logging;
 import akka.japi.pf.ReceiveBuilder;
 import akka.testkit.ErrorFilter;
 import akka.testkit.EventFilter;

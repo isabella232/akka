@@ -3,14 +3,12 @@
  */
 package akka.stream.extra
 
-import scala.collection.immutable
 import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 import scala.language.existentials
-import akka.stream.scaladsl.OperationAttributes._
-import akka.stream.scaladsl.Source
-import akka.stream.scaladsl.Flow
+import akka.stream.Attributes._
+import akka.stream.scaladsl.{ Keep, Source, Flow }
 import akka.stream.stage._
 
 /**
@@ -25,18 +23,13 @@ private[akka] trait TimedOps {
    *
    * Measures time from receiving the first element and completion events - one for each subscriber of this `Flow`.
    */
-  def timed[I, O](flow: Source[I], measuredOps: Source[I] ⇒ Source[O], onComplete: FiniteDuration ⇒ Unit): Source[O] = {
+  def timed[I, O, Mat, Mat2](source: Source[I, Mat], measuredOps: Source[I, Mat] ⇒ Source[O, Mat2], onComplete: FiniteDuration ⇒ Unit): Source[O, Mat2] = {
     val ctx = new TimedFlowContext
 
-    val startTimed = (f: Source[I]) ⇒ f.transform(() ⇒ new StartTimedFlow(ctx))
-    val stopTimed = (f: Source[O]) ⇒ f.transform(() ⇒ new StopTimed(ctx, onComplete))
+    val startTimed = Flow[I].transform(() ⇒ new StartTimed(ctx)).named("startTimed")
+    val stopTimed = Flow[O].transform(() ⇒ new StopTimed(ctx, onComplete)).named("stopTimed")
 
-    val measured = ((s: Source[I]) ⇒ s) andThen
-      (_.section(name("startTimed"))(startTimed)) andThen
-      measuredOps andThen
-      (_.section(name("stopTimed"))(stopTimed))
-
-    measured(flow)
+    measuredOps(source.via(startTimed)).via(stopTimed)
   }
 
   /**
@@ -44,20 +37,15 @@ private[akka] trait TimedOps {
    *
    * Measures time from receiving the first element and completion events - one for each subscriber of this `Flow`.
    */
-  def timed[I, O, Out](flow: Flow[I, O], measuredOps: Flow[I, O] ⇒ Flow[O, Out], onComplete: FiniteDuration ⇒ Unit): Flow[O, Out] = {
+  def timed[I, O, Out, Mat, Mat2](flow: Flow[I, O, Mat], measuredOps: Flow[I, O, Mat] ⇒ Flow[I, Out, Mat2], onComplete: FiniteDuration ⇒ Unit): Flow[I, Out, Mat2] = {
     // todo is there any other way to provide this for Flow, without duplicating impl?
     // they do share a super-type (FlowOps), but all operations of FlowOps return path dependant type
     val ctx = new TimedFlowContext
 
-    val startTimed = (f: Flow[I, O]) ⇒ f.transform(() ⇒ new StartTimedFlow(ctx))
-    val stopTimed = (f: Flow[O, Out]) ⇒ f.transform(() ⇒ new StopTimed(ctx, onComplete))
+    val startTimed = Flow[O].transform(() ⇒ new StartTimed(ctx)).named("startTimed")
+    val stopTimed = Flow[Out].transform(() ⇒ new StopTimed(ctx, onComplete)).named("stopTimed")
 
-    val measured = ((f: Flow[I, O]) ⇒ f) andThen
-      (_.section(name("startTimed"))(startTimed)) andThen
-      measuredOps andThen
-      (_.section(name("stopTimed"))(stopTimed))
-
-    measured(flow)
+    measuredOps(flow.via(startTimed)).via(stopTimed)
   }
 
 }
@@ -74,21 +62,17 @@ private[akka] trait TimedIntervalBetweenOps {
   /**
    * Measures rolling interval between immediately subsequent `matching(o: O)` elements.
    */
-  def timedIntervalBetween[O](flow: Source[O], matching: O ⇒ Boolean, onInterval: FiniteDuration ⇒ Unit): Source[O] = {
-    flow.section(name("timedInterval")) {
-      _.transform(() ⇒ new TimedIntervalTransformer[O](matching, onInterval))
-    }
+  def timedIntervalBetween[O, Mat](source: Source[O, Mat], matching: O ⇒ Boolean, onInterval: FiniteDuration ⇒ Unit): Source[O, Mat] = {
+    val timedInterval = Flow[O].transform(() ⇒ new TimedInterval[O](matching, onInterval)).named("timedInterval")
+    source.via(timedInterval)
   }
 
   /**
    * Measures rolling interval between immediately subsequent `matching(o: O)` elements.
    */
-  def timedIntervalBetween[I, O](flow: Flow[I, O], matching: O ⇒ Boolean, onInterval: FiniteDuration ⇒ Unit): Flow[I, O] = {
-    // todo is there any other way to provide this for Flow / Duct, without duplicating impl?
-    // they do share a super-type (FlowOps), but all operations of FlowOps return path dependant type
-    flow.section(name("timedInterval")) {
-      _.transform(() ⇒ new TimedIntervalTransformer[O](matching, onInterval))
-    }
+  def timedIntervalBetween[I, O, Mat](flow: Flow[I, O, Mat], matching: O ⇒ Boolean, onInterval: FiniteDuration ⇒ Unit): Flow[I, O, Mat] = {
+    val timedInterval = Flow[O].transform(() ⇒ new TimedInterval[O](matching, onInterval)).named("timedInterval")
+    flow.via(timedInterval)
   }
 }
 
@@ -118,10 +102,10 @@ object Timed extends TimedOps with TimedIntervalBetweenOps {
     }
   }
 
-  final class StartTimedFlow[T](timedContext: TimedFlowContext) extends PushStage[T, T] {
+  final class StartTimed[T](timedContext: TimedFlowContext) extends PushStage[T, T] {
     private var started = false
 
-    override def onPush(elem: T, ctx: Context[T]): Directive = {
+    override def onPush(elem: T, ctx: Context[T]): SyncDirective = {
       if (!started) {
         timedContext.start()
         started = true
@@ -132,7 +116,7 @@ object Timed extends TimedOps with TimedIntervalBetweenOps {
 
   final class StopTimed[T](timedContext: TimedFlowContext, _onComplete: FiniteDuration ⇒ Unit) extends PushStage[T, T] {
 
-    override def onPush(elem: T, ctx: Context[T]): Directive = ctx.push(elem)
+    override def onPush(elem: T, ctx: Context[T]): SyncDirective = ctx.push(elem)
 
     override def onUpstreamFailure(cause: Throwable, ctx: Context[T]): TerminationDirective = {
       stopTime()
@@ -149,11 +133,11 @@ object Timed extends TimedOps with TimedIntervalBetweenOps {
 
   }
 
-  final class TimedIntervalTransformer[T](matching: T ⇒ Boolean, onInterval: FiniteDuration ⇒ Unit) extends PushStage[T, T] {
+  final class TimedInterval[T](matching: T ⇒ Boolean, onInterval: FiniteDuration ⇒ Unit) extends PushStage[T, T] {
     private var prevNanos = 0L
     private var matched = 0L
 
-    override def onPush(elem: T, ctx: Context[T]): Directive = {
+    override def onPush(elem: T, ctx: Context[T]): SyncDirective = {
       if (matching(elem)) {
         val d = updateInterval(elem)
 

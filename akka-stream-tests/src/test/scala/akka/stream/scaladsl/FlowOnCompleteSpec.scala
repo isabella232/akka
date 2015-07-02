@@ -7,26 +7,24 @@ import scala.concurrent.duration._
 import scala.util.{ Failure, Success }
 import scala.util.control.NoStackTrace
 
-import akka.stream.FlowMaterializer
-import akka.stream.MaterializerSettings
-import akka.stream.testkit.{ AkkaSpec, StreamTestKit }
-import akka.stream.testkit.AkkaSpec
-import akka.stream.testkit.ScriptedTest
+import akka.stream.ActorMaterializer
+import akka.stream.ActorMaterializerSettings
+import akka.stream.testkit._
+import akka.stream.testkit.Utils._
 import akka.testkit.TestProbe
 
 class FlowOnCompleteSpec extends AkkaSpec with ScriptedTest {
 
-  val settings = MaterializerSettings(system)
+  val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 16)
-    .withFanOutBuffer(initialSize = 1, maxSize = 16)
 
-  implicit val materializer = FlowMaterializer(settings)
+  implicit val materializer = ActorMaterializer(settings)
 
   "A Flow with onComplete" must {
 
-    "invoke callback on normal completion" in {
+    "invoke callback on normal completion" in assertAllStagesStopped {
       val onCompleteProbe = TestProbe()
-      val p = StreamTestKit.PublisherProbe[Int]()
+      val p = TestPublisher.manualProbe[Int]()
       Source(p).to(Sink.onComplete[Int](onCompleteProbe.ref ! _)).run()
       val proc = p.expectSubscription
       proc.expectRequest()
@@ -36,9 +34,9 @@ class FlowOnCompleteSpec extends AkkaSpec with ScriptedTest {
       onCompleteProbe.expectMsg(Success(()))
     }
 
-    "yield the first error" in {
+    "yield the first error" in assertAllStagesStopped {
       val onCompleteProbe = TestProbe()
-      val p = StreamTestKit.PublisherProbe[Int]()
+      val p = TestPublisher.manualProbe[Int]()
       Source(p).to(Sink.onComplete[Int](onCompleteProbe.ref ! _)).run()
       val proc = p.expectSubscription
       proc.expectRequest()
@@ -48,9 +46,9 @@ class FlowOnCompleteSpec extends AkkaSpec with ScriptedTest {
       onCompleteProbe.expectNoMsg(100.millis)
     }
 
-    "invoke callback for an empty stream" in {
+    "invoke callback for an empty stream" in assertAllStagesStopped {
       val onCompleteProbe = TestProbe()
-      val p = StreamTestKit.PublisherProbe[Int]()
+      val p = TestPublisher.manualProbe[Int]()
       Source(p).to(Sink.onComplete[Int](onCompleteProbe.ref ! _)).run()
       val proc = p.expectSubscription
       proc.expectRequest()
@@ -59,9 +57,9 @@ class FlowOnCompleteSpec extends AkkaSpec with ScriptedTest {
       onCompleteProbe.expectNoMsg(100.millis)
     }
 
-    "invoke callback after transform and foreach steps " in {
+    "invoke callback after transform and foreach steps " in assertAllStagesStopped {
       val onCompleteProbe = TestProbe()
-      val p = StreamTestKit.PublisherProbe[Int]()
+      val p = TestPublisher.manualProbe[Int]()
       import system.dispatcher // for the Future.onComplete
       val foreachSink = Sink.foreach[Int] {
         x ⇒ onCompleteProbe.ref ! ("foreach-" + x)

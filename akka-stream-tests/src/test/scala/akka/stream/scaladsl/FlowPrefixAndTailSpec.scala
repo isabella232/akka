@@ -4,50 +4,49 @@
 package akka.stream.scaladsl
 
 import scala.collection.immutable
-import scala.concurrent.Await
+import scala.concurrent.{ Future, Await }
 import scala.concurrent.duration._
+import scala.util.Try
 import scala.util.control.NoStackTrace
-
-import akka.stream.FlowMaterializer
-import akka.stream.MaterializerSettings
-import akka.stream.testkit.{ AkkaSpec, StreamTestKit }
-import akka.stream.testkit.StreamTestKit.SubscriberProbe
+import akka.stream.{ Attributes, ActorMaterializer, ActorMaterializerSettings }
+import org.reactivestreams.Subscriber
+import akka.stream.testkit._
+import akka.stream.testkit.Utils._
 
 class FlowPrefixAndTailSpec extends AkkaSpec {
 
-  val settings = MaterializerSettings(system)
+  val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 2)
-    .withFanOutBuffer(initialSize = 2, maxSize = 2)
 
-  implicit val materializer = FlowMaterializer(settings)
+  implicit val materializer = ActorMaterializer(settings)
 
   "PrefixAndTail" must {
 
     val testException = new Exception("test") with NoStackTrace
 
-    def newHeadSink = Sink.head[(immutable.Seq[Int], Source[Int])]
+    def newHeadSink = Sink.head[(immutable.Seq[Int], Source[Int, _])]
 
-    "work on empty input" in {
+    "work on empty input" in assertAllStagesStopped {
       val futureSink = newHeadSink
       val fut = Source.empty.prefixAndTail(10).runWith(futureSink)
       val (prefix, tailFlow) = Await.result(fut, 3.seconds)
       prefix should be(Nil)
-      val tailSubscriber = SubscriberProbe[Int]
+      val tailSubscriber = TestSubscriber.manualProbe[Int]
       tailFlow.to(Sink(tailSubscriber)).run()
-      tailSubscriber.expectComplete()
+      tailSubscriber.expectSubscriptionAndComplete()
     }
 
-    "work on short input" in {
+    "work on short input" in assertAllStagesStopped {
       val futureSink = newHeadSink
       val fut = Source(List(1, 2, 3)).prefixAndTail(10).runWith(futureSink)
       val (prefix, tailFlow) = Await.result(fut, 3.seconds)
       prefix should be(List(1, 2, 3))
-      val tailSubscriber = SubscriberProbe[Int]
+      val tailSubscriber = TestSubscriber.manualProbe[Int]
       tailFlow.to(Sink(tailSubscriber)).run()
-      tailSubscriber.expectComplete()
+      tailSubscriber.expectSubscriptionAndComplete()
     }
 
-    "work on longer inputs" in {
+    "work on longer inputs" in assertAllStagesStopped {
       val futureSink = newHeadSink
       val fut = Source(1 to 10).prefixAndTail(5).runWith(futureSink)
       val (takes, tail) = Await.result(fut, 3.seconds)
@@ -58,7 +57,7 @@ class FlowPrefixAndTailSpec extends AkkaSpec {
       Await.result(fut2, 3.seconds) should be(6 to 10)
     }
 
-    "handle zero take count" in {
+    "handle zero take count" in assertAllStagesStopped {
       val futureSink = newHeadSink
       val fut = Source(1 to 10).prefixAndTail(0).runWith(futureSink)
       val (takes, tail) = Await.result(fut, 3.seconds)
@@ -69,7 +68,7 @@ class FlowPrefixAndTailSpec extends AkkaSpec {
       Await.result(fut2, 3.seconds) should be(1 to 10)
     }
 
-    "handle negative take count" in {
+    "handle negative take count" in assertAllStagesStopped {
       val futureSink = newHeadSink
       val fut = Source(1 to 10).prefixAndTail(-1).runWith(futureSink)
       val (takes, tail) = Await.result(fut, 3.seconds)
@@ -80,20 +79,20 @@ class FlowPrefixAndTailSpec extends AkkaSpec {
       Await.result(fut2, 3.seconds) should be(1 to 10)
     }
 
-    "work if size of take is equal to stream size" in {
+    "work if size of take is equal to stream size" in assertAllStagesStopped {
       val futureSink = newHeadSink
       val fut = Source(1 to 10).prefixAndTail(10).runWith(futureSink)
       val (takes, tail) = Await.result(fut, 3.seconds)
       takes should be(1 to 10)
 
-      val subscriber = StreamTestKit.SubscriberProbe[Int]()
+      val subscriber = TestSubscriber.manualProbe[Int]()
       tail.to(Sink(subscriber)).run()
-      subscriber.expectCompletedOrSubscriptionFollowedByComplete()
+      subscriber.expectSubscriptionAndComplete()
     }
 
-    "handle onError when no substream open" in {
-      val publisher = StreamTestKit.PublisherProbe[Int]()
-      val subscriber = StreamTestKit.SubscriberProbe[(immutable.Seq[Int], Source[Int])]()
+    "handle onError when no substream open" in assertAllStagesStopped {
+      val publisher = TestPublisher.manualProbe[Int]()
+      val subscriber = TestSubscriber.manualProbe[(immutable.Seq[Int], Source[Int, _])]()
 
       Source(publisher).prefixAndTail(3).to(Sink(subscriber)).run()
 
@@ -109,9 +108,9 @@ class FlowPrefixAndTailSpec extends AkkaSpec {
       subscriber.expectError(testException)
     }
 
-    "handle onError when substream is open" in {
-      val publisher = StreamTestKit.PublisherProbe[Int]()
-      val subscriber = StreamTestKit.SubscriberProbe[(immutable.Seq[Int], Source[Int])]()
+    "handle onError when substream is open" in assertAllStagesStopped {
+      val publisher = TestPublisher.manualProbe[Int]()
+      val subscriber = TestSubscriber.manualProbe[(immutable.Seq[Int], Source[Int, _])]()
 
       Source(publisher).prefixAndTail(1).to(Sink(subscriber)).run()
 
@@ -127,7 +126,7 @@ class FlowPrefixAndTailSpec extends AkkaSpec {
       head should be(List(1))
       subscriber.expectComplete()
 
-      val substreamSubscriber = StreamTestKit.SubscriberProbe[Int]()
+      val substreamSubscriber = TestSubscriber.manualProbe[Int]()
       tail.to(Sink(substreamSubscriber)).run()
       substreamSubscriber.expectSubscription()
 
@@ -136,9 +135,9 @@ class FlowPrefixAndTailSpec extends AkkaSpec {
 
     }
 
-    "handle master stream cancellation" in {
-      val publisher = StreamTestKit.PublisherProbe[Int]()
-      val subscriber = StreamTestKit.SubscriberProbe[(immutable.Seq[Int], Source[Int])]()
+    "handle master stream cancellation" in assertAllStagesStopped {
+      val publisher = TestPublisher.manualProbe[Int]()
+      val subscriber = TestSubscriber.manualProbe[(immutable.Seq[Int], Source[Int, _])]()
 
       Source(publisher).prefixAndTail(3).to(Sink(subscriber)).run()
 
@@ -154,9 +153,9 @@ class FlowPrefixAndTailSpec extends AkkaSpec {
       upstream.expectCancellation()
     }
 
-    "handle substream cancellation" in {
-      val publisher = StreamTestKit.PublisherProbe[Int]()
-      val subscriber = StreamTestKit.SubscriberProbe[(immutable.Seq[Int], Source[Int])]()
+    "handle substream cancellation" in assertAllStagesStopped {
+      val publisher = TestPublisher.manualProbe[Int]()
+      val subscriber = TestSubscriber.manualProbe[(immutable.Seq[Int], Source[Int, _])]()
 
       Source(publisher).prefixAndTail(1).to(Sink(subscriber)).run()
 
@@ -172,12 +171,42 @@ class FlowPrefixAndTailSpec extends AkkaSpec {
       head should be(List(1))
       subscriber.expectComplete()
 
-      val substreamSubscriber = StreamTestKit.SubscriberProbe[Int]()
+      val substreamSubscriber = TestSubscriber.manualProbe[Int]()
       tail.to(Sink(substreamSubscriber)).run()
       substreamSubscriber.expectSubscription().cancel()
 
       upstream.expectCancellation()
 
+    }
+
+    "pass along early cancellation" in assertAllStagesStopped {
+      val up = TestPublisher.manualProbe[Int]()
+      val down = TestSubscriber.manualProbe[(immutable.Seq[Int], Source[Int, _])]()
+
+      val flowSubscriber = Source.subscriber[Int].prefixAndTail(1).to(Sink(down)).run()
+
+      val downstream = down.expectSubscription()
+      downstream.cancel()
+      up.subscribe(flowSubscriber)
+      val upsub = up.expectSubscription()
+      upsub.expectCancellation()
+    }
+
+    "work even if tail subscriber arrives after substream completion" in {
+      val pub = TestPublisher.manualProbe[Int]()
+      val sub = TestSubscriber.manualProbe[Int]()
+
+      val f = Source(pub).prefixAndTail(1).runWith(Sink.head)
+      val s = pub.expectSubscription()
+      s.sendNext(0)
+
+      val (_, tail) = Await.result(f, 3.seconds)
+
+      val tailPub = tail.runWith(Sink.publisher)
+      s.sendComplete()
+
+      tailPub.subscribe(sub)
+      sub.expectSubscriptionAndComplete()
     }
 
   }

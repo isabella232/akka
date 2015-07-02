@@ -5,20 +5,20 @@ package akka.stream.scaladsl
 
 import scala.concurrent.duration._
 
-import akka.stream.FlowMaterializer
-import akka.stream.testkit.AkkaSpec
-import akka.stream.testkit.StreamTestKit
+import akka.stream.ActorMaterializer
+import akka.stream.testkit._
+import akka.stream.testkit.Utils._
 
 class FlowTakeWithinSpec extends AkkaSpec {
 
-  implicit val materializer = FlowMaterializer()
+  implicit val materializer = ActorMaterializer()
 
   "A TakeWithin" must {
 
     "deliver elements within the duration, but not afterwards" in {
       val input = Iterator.from(1)
-      val p = StreamTestKit.PublisherProbe[Int]()
-      val c = StreamTestKit.SubscriberProbe[Int]()
+      val p = TestPublisher.manualProbe[Int]()
+      val c = TestSubscriber.manualProbe[Int]()
       Source(p).takeWithin(1.second).to(Sink(c)).run()
       val pSub = p.expectSubscription()
       val cSub = c.expectSubscription()
@@ -37,8 +37,8 @@ class FlowTakeWithinSpec extends AkkaSpec {
       c.expectNoMsg(200.millis)
     }
 
-    "deliver bufferd elements onComplete before the timeout" in {
-      val c = StreamTestKit.SubscriberProbe[Int]()
+    "deliver bufferd elements onComplete before the timeout" in assertAllStagesStopped {
+      val c = TestSubscriber.manualProbe[Int]()
       Source(1 to 3).takeWithin(1.second).to(Sink(c)).run()
       val cSub = c.expectSubscription()
       c.expectNoMsg(200.millis)

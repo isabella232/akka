@@ -3,23 +3,22 @@
  */
 package akka.stream.scaladsl
 
-import akka.stream.FlowMaterializer
-import akka.stream.MaterializerSettings
-import akka.stream.testkit.AkkaSpec
-import akka.stream.testkit.StreamTestKit
+import akka.stream.ActorMaterializer
+import akka.stream.ActorMaterializerSettings
+import akka.stream.testkit._
+import akka.stream.testkit.Utils._
 
 class SubscriberSinkSpec extends AkkaSpec {
 
-  val settings = MaterializerSettings(system)
+  val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 16)
-    .withFanOutBuffer(initialSize = 1, maxSize = 16)
 
-  implicit val materializer = FlowMaterializer(settings)
+  implicit val materializer = ActorMaterializer(settings)
 
   "A Flow with SubscriberSink" must {
 
-    "publish elements to the subscriber" in {
-      val c = StreamTestKit.SubscriberProbe[Int]()
+    "publish elements to the subscriber" in assertAllStagesStopped {
+      val c = TestSubscriber.manualProbe[Int]()
       Source(List(1, 2, 3)).to(Sink(c)).run()
       val s = c.expectSubscription()
       s.request(3)

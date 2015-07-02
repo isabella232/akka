@@ -4,9 +4,10 @@
 package akka.stream.scaladsl
 
 import akka.actor.{ ExtendedActorSystem, ActorIdentity, ActorRef, Identify }
-import akka.stream.{ FlowMaterializer, MaterializerSettings }
+import akka.stream.{ ActorMaterializer, ActorMaterializerSettings }
 import akka.stream.impl.SubscriptionTimeoutException
 import akka.stream.testkit._
+import akka.stream.testkit.Utils._
 import akka.util.Timeout
 
 import scala.concurrent.Await
@@ -30,19 +31,18 @@ class SubstreamSubscriptionTimeoutSpec(conf: String) extends AkkaSpec(conf) {
     this(300.millis)
   }
 
-  val settings = MaterializerSettings(system)
+  val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 2)
-    .withFanOutBuffer(initialSize = 2, maxSize = 2)
 
   implicit val dispatcher = system.dispatcher
-  implicit val materializer = FlowMaterializer(settings)
+  implicit val materializer = ActorMaterializer(settings)
 
   "groupBy" must {
 
-    "timeout and cancel substream publishers when no-one subscribes to them after some time (time them out)" in {
-      val publisherProbe = StreamTestKit.PublisherProbe[Int]()
+    "timeout and cancel substream publishers when no-one subscribes to them after some time (time them out)" in assertAllStagesStopped {
+      val publisherProbe = TestPublisher.manualProbe[Int]()
       val publisher = Source(publisherProbe).groupBy(_ % 3).runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+      val subscriber = TestSubscriber.manualProbe[(Int, Source[Int, _])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbe.expectSubscription()
@@ -56,16 +56,18 @@ class SubstreamSubscriptionTimeoutSpec(conf: String) extends AkkaSpec(conf) {
 
       val (_, s1) = subscriber.expectNext()
       // should not break normal usage
-      val s1SubscriberProbe = StreamTestKit.SubscriberProbe[Int]()
+      val s1SubscriberProbe = TestSubscriber.manualProbe[Int]()
       s1.runWith(Sink.publisher).subscribe(s1SubscriberProbe)
-      s1SubscriberProbe.expectSubscription().request(100)
+      val s1Subscription = s1SubscriberProbe.expectSubscription()
+      s1Subscription.request(100)
       s1SubscriberProbe.expectNext(1)
 
       val (_, s2) = subscriber.expectNext()
       // should not break normal usage
-      val s2SubscriberProbe = StreamTestKit.SubscriberProbe[Int]()
+      val s2SubscriberProbe = TestSubscriber.manualProbe[Int]()
       s2.runWith(Sink.publisher).subscribe(s2SubscriberProbe)
-      s2SubscriberProbe.expectSubscription().request(100)
+      val s2Subscription = s2SubscriberProbe.expectSubscription()
+      s2Subscription.request(100)
       s2SubscriberProbe.expectNext(2)
 
       val (_, s3) = subscriber.expectNext()
@@ -75,12 +77,14 @@ class SubstreamSubscriptionTimeoutSpec(conf: String) extends AkkaSpec(conf) {
 
       val f = s3.runWith(Sink.head).recover { case _: SubscriptionTimeoutException ⇒ "expected" }
       Await.result(f, 300.millis) should equal("expected")
+
+      upstreamSubscription.sendComplete()
     }
 
-    "timeout and stop groupBy parent actor if none of the substreams are actually consumed" in {
-      val publisherProbe = StreamTestKit.PublisherProbe[Int]()
+    "timeout and stop groupBy parent actor if none of the substreams are actually consumed" in assertAllStagesStopped {
+      val publisherProbe = TestPublisher.manualProbe[Int]()
       val publisher = Source(publisherProbe).groupBy(_ % 2).runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+      val subscriber = TestSubscriber.manualProbe[(Int, Source[Int, _])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbe.expectSubscription()
@@ -103,9 +107,9 @@ class SubstreamSubscriptionTimeoutSpec(conf: String) extends AkkaSpec(conf) {
     }
 
     "not timeout and cancel substream publishers when they have been subscribed to" in {
-      val publisherProbe = StreamTestKit.PublisherProbe[Int]()
+      val publisherProbe = TestPublisher.manualProbe[Int]()
       val publisher = Source(publisherProbe).groupBy(_ % 2).runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+      val subscriber = TestSubscriber.manualProbe[(Int, Source[Int, _])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbe.expectSubscription()
@@ -118,7 +122,7 @@ class SubstreamSubscriptionTimeoutSpec(conf: String) extends AkkaSpec(conf) {
 
       val (_, s1) = subscriber.expectNext()
       // should not break normal usage
-      val s1SubscriberProbe = StreamTestKit.SubscriberProbe[Int]()
+      val s1SubscriberProbe = TestSubscriber.manualProbe[Int]()
       s1.runWith(Sink.publisher).subscribe(s1SubscriberProbe)
       val s1Sub = s1SubscriberProbe.expectSubscription()
       s1Sub.request(1)
@@ -126,7 +130,7 @@ class SubstreamSubscriptionTimeoutSpec(conf: String) extends AkkaSpec(conf) {
 
       val (_, s2) = subscriber.expectNext()
       // should not break normal usage
-      val s2SubscriberProbe = StreamTestKit.SubscriberProbe[Int]()
+      val s2SubscriberProbe = TestSubscriber.manualProbe[Int]()
       s2.runWith(Sink.publisher).subscribe(s2SubscriberProbe)
       val s2Sub = s2SubscriberProbe.expectSubscription()
 
@@ -146,7 +150,7 @@ class SubstreamSubscriptionTimeoutSpec(conf: String) extends AkkaSpec(conf) {
   private def watchGroupByActor(flowNr: Int): ActorRef = {
     implicit val t = Timeout(300.millis)
     import akka.pattern.ask
-    val path = s"/user/$$a/flow-${flowNr}-1-groupBy"
+    val path = s"/user/$$a/flow-${flowNr}-1-publisherSource-groupBy"
     val gropByPath = system.actorSelection(path)
     val groupByActor = try {
       Await.result((gropByPath ? Identify("")).mapTo[ActorIdentity], 300.millis).ref.get

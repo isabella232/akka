@@ -4,21 +4,22 @@
 package akka.stream.testkit
 
 import akka.actor.ActorSystem
-import akka.stream.MaterializerSettings
+import akka.stream.ActorMaterializerSettings
 import akka.stream.scaladsl.{ Sink, Source, Flow }
+import akka.stream.testkit._
 import akka.stream.testkit.StreamTestKit._
 import org.reactivestreams.Publisher
 import org.scalatest.Matchers
 import scala.annotation.tailrec
 import scala.concurrent.duration._
 import scala.concurrent.forkjoin.ThreadLocalRandom
-import akka.stream.FlowMaterializer
+import akka.stream.ActorMaterializer
 
 trait ScriptedTest extends Matchers {
 
   class ScriptException(msg: String) extends RuntimeException(msg)
 
-  def toPublisher[In, Out]: (Source[Out], FlowMaterializer) ⇒ Publisher[Out] =
+  def toPublisher[In, Out]: (Source[Out, _], ActorMaterializer) ⇒ Publisher[Out] =
     (f, m) ⇒ f.runWith(Sink.publisher)(m)
 
   object Script {
@@ -37,7 +38,7 @@ trait ScriptedTest extends Matchers {
     }
   }
 
-  case class Script[In, Out](
+  final case class Script[In, Out](
     providedInputs: Vector[In],
     expectedOutputs: Vector[Out],
     jumps: Vector[Int],
@@ -81,8 +82,8 @@ trait ScriptedTest extends Matchers {
   }
 
   class ScriptRunner[In, Out](
-    op: Flow[In, In] ⇒ Flow[In, Out],
-    settings: MaterializerSettings,
+    op: Flow[In, In, _] ⇒ Flow[In, Out, _],
+    settings: ActorMaterializerSettings,
     script: Script[In, Out],
     maximumOverrun: Int,
     maximumRequest: Int,
@@ -121,15 +122,15 @@ trait ScriptedTest extends Matchers {
     def mayRequestMore: Boolean = remainingDemand > 0
 
     def shakeIt(): Boolean = {
-      val u = upstream.probe.receiveWhile(1.milliseconds) {
+      val u = upstream.receiveWhile(1.milliseconds) {
         case RequestMore(_, n) ⇒
           debugLog(s"operation requests $n")
           pendingRequests += n
           true
         case _ ⇒ false // Ignore
       }
-      val d = downstream.probe.receiveWhile(1.milliseconds) {
-        case OnNext(elem: Out) ⇒
+      val d = downstream.receiveWhile(1.milliseconds) {
+        case OnNext(elem: Out @unchecked) ⇒
           debugLog(s"operation produces [$elem]")
           if (outstandingDemand == 0) fail("operation produced while there was no demand")
           outstandingDemand -= 1
@@ -190,8 +191,8 @@ trait ScriptedTest extends Matchers {
 
   }
 
-  def runScript[In, Out](script: Script[In, Out], settings: MaterializerSettings, maximumOverrun: Int = 3, maximumRequest: Int = 3, maximumBuffer: Int = 3)(
-    op: Flow[In, In] ⇒ Flow[In, Out])(implicit system: ActorSystem): Unit = {
+  def runScript[In, Out](script: Script[In, Out], settings: ActorMaterializerSettings, maximumOverrun: Int = 3, maximumRequest: Int = 3, maximumBuffer: Int = 3)(
+    op: Flow[In, In, _] ⇒ Flow[In, Out, _])(implicit system: ActorSystem): Unit = {
     new ScriptRunner(op, settings, script, maximumOverrun, maximumRequest, maximumBuffer).run()
   }
 

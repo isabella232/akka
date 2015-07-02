@@ -10,13 +10,8 @@ import org.reactivestreams._
 
 class IterablePublisherTest extends AkkaPublisherVerification[Int] {
 
-  def createPublisher(elements: Long): Publisher[Int] = {
-    val iterable: immutable.Iterable[Int] =
-      if (elements == Long.MaxValue)
-        new immutable.Iterable[Int] { override def iterator = Iterator from 0 }
-      else
-        0 until elements.toInt
-
-    Source(iterable).runWith(Sink.publisher)
+  override def createPublisher(elements: Long): Publisher[Int] = {
+    Source(iterable(elements)).runWith(Sink.publisher)
   }
+
 }

@@ -3,13 +3,11 @@
  */
 package akka.stream.impl
 
-import scala.collection.immutable
+import akka.stream.scaladsl.FlexiRoute.RouteLogic
+import akka.stream.{ AbruptTerminationException, Shape, ActorMaterializerSettings }
 
-import akka.actor.Actor
-import akka.actor.ActorLogging
-import akka.actor.ActorRef
-import akka.actor.Props
-import akka.stream.MaterializerSettings
+import scala.collection.immutable
+import akka.actor._
 import org.reactivestreams.Subscription
 
 /**
@@ -17,14 +15,12 @@ import org.reactivestreams.Subscription
  */
 private[akka] object FanOut {
 
-  case class SubstreamRequestMore(id: Int, demand: Long)
-  case class SubstreamCancel(id: Int)
-  case class SubstreamSubscribePending(id: Int)
+  final case class SubstreamRequestMore(id: Int, demand: Long) extends DeadLetterSuppression with NoSerializationVerificationNeeded
+  final case class SubstreamCancel(id: Int) extends DeadLetterSuppression with NoSerializationVerificationNeeded
+  final case class SubstreamSubscribePending(id: Int) extends DeadLetterSuppression with NoSerializationVerificationNeeded
 
   class SubstreamSubscription(val parent: ActorRef, val id: Int) extends Subscription {
-    override def request(elements: Long): Unit =
-      if (elements <= 0) throw new IllegalArgumentException("The number of requested elements must be > 0")
-      else parent ! SubstreamRequestMore(id, elements)
+    override def request(elements: Long): Unit = parent ! SubstreamRequestMore(id, elements)
     override def cancel(): Unit = parent ! SubstreamCancel(id)
     override def toString = "SubstreamSubscription" + System.identityHashCode(this)
   }
@@ -33,7 +29,7 @@ private[akka] object FanOut {
     override def createSubscription(): Subscription = new SubstreamSubscription(actor, id)
   }
 
-  case class ExposedPublishers(publishers: immutable.Seq[ActorPublisher[Any]])
+  final case class ExposedPublishers(publishers: immutable.Seq[ActorPublisher[Any]]) extends DeadLetterSuppression with NoSerializationVerificationNeeded
 
   class OutputBunch(outputCount: Int, impl: ActorRef, pump: Pump) {
     private var bunchCancelled = false
@@ -49,6 +45,15 @@ private[akka] object FanOut {
     private val completed = Array.ofDim[Boolean](outputCount)
     private val errored = Array.ofDim[Boolean](outputCount)
 
+    override def toString: String =
+      s"""|OutputBunch
+          |  marked:    ${marked.mkString(", ")}
+          |  pending:   ${pending.mkString(", ")}
+          |  errored:   ${errored.mkString(", ")}
+          |  completed: ${completed.mkString(", ")}
+          |  cancelled: ${cancelled.mkString(", ")}
+          |    mark=$markedCount pend=$markedPending depl=$markedCancelled pref=$preferredId unmark=$unmarkCancelled""".stripMargin
+
     private var unmarkCancelled = true
 
     private var preferredId = 0
@@ -58,6 +63,8 @@ private[akka] object FanOut {
     def isCompleted(output: Int): Boolean = completed(output)
 
     def isCancelled(output: Int): Boolean = cancelled(output)
+
+    def isErrored(output: Int): Boolean = errored(output)
 
     def complete(): Unit =
       if (!bunchCancelled) {
@@ -88,7 +95,7 @@ private[akka] object FanOut {
 
     def error(output: Int, e: Throwable): Unit =
       if (!errored(output) && !cancelled(output) && !completed(output)) {
-        outputs(output).cancel(e)
+        outputs(output).error(e)
         errored(output) = true
         unmarkOutput(output)
       }
@@ -176,6 +183,16 @@ private[akka] object FanOut {
 
     def onCancel(output: Int): Unit = ()
 
+    def demandAvailableFor(id: Int) = new TransferState {
+      override def isCompleted: Boolean = cancelled(id) || completed(id) || errored(id)
+      override def isReady: Boolean = pending(id)
+    }
+
+    def demandOrCancelAvailableFor(id: Int) = new TransferState {
+      override def isCompleted: Boolean = false
+      override def isReady: Boolean = pending(id) || cancelled(id)
+    }
+
     /**
      * Will only transfer an element when all marked outputs
      * have demand, and will complete as soon as any of the marked
@@ -205,9 +222,13 @@ private[akka] object FanOut {
         }
 
       case SubstreamRequestMore(id, demand) ⇒
-        if (marked(id) && !pending(id)) markedPending += 1
-        pending(id) = true
-        outputs(id).subreceive(RequestMore(null, demand))
+        if (demand < 1) // According to Reactive Streams Spec 3.9, with non-positive demand must yield onError
+          error(id, ReactiveStreamsCompliance.numberOfElementsInRequestMustBePositiveException)
+        else {
+          if (marked(id) && !pending(id)) markedPending += 1
+          pending(id) = true
+          outputs(id).subreceive(RequestMore(null, demand))
+        }
       case SubstreamCancel(id) ⇒
         if (unmarkCancelled) {
           unmarkOutput(id)
@@ -227,10 +248,10 @@ private[akka] object FanOut {
 /**
  * INTERNAL API
  */
-private[akka] abstract class FanOut(val settings: MaterializerSettings, val outputPorts: Int) extends Actor with ActorLogging with Pump {
+private[akka] abstract class FanOut(val settings: ActorMaterializerSettings, val outputCount: Int) extends Actor with ActorLogging with Pump {
   import FanOut._
 
-  protected val outputBunch = new OutputBunch(outputPorts, self, this)
+  protected val outputBunch = new OutputBunch(outputCount, self, this)
   protected val primaryInputs: Inputs = new BatchingInputBuffer(settings.maxInputBufferSize, this) {
     override def onError(e: Throwable): Unit = fail(e)
   }
@@ -244,15 +265,16 @@ private[akka] abstract class FanOut(val settings: MaterializerSettings, val outp
   override def pumpFailed(e: Throwable): Unit = fail(e)
 
   protected def fail(e: Throwable): Unit = {
-    log.error(e, "failure during processing") // FIXME: escalate to supervisor instead
+    if (settings.debugLogging)
+      log.debug("fail due to: {}", e.getMessage)
     primaryInputs.cancel()
     outputBunch.cancel(e)
-    context.stop(self)
+    pump()
   }
 
   override def postStop(): Unit = {
     primaryInputs.cancel()
-    outputBunch.cancel(new IllegalStateException("Processor actor terminated abruptly"))
+    outputBunch.cancel(AbruptTerminationException(self))
   }
 
   override def postRestart(reason: Throwable): Unit = {
@@ -260,25 +282,25 @@ private[akka] abstract class FanOut(val settings: MaterializerSettings, val outp
     throw new IllegalStateException("This actor cannot be restarted")
   }
 
-  def receive = primaryInputs.subreceive orElse outputBunch.subreceive
-
+  def receive = primaryInputs.subreceive.orElse[Any, Unit](outputBunch.subreceive)
 }
 
 /**
  * INTERNAL API
  */
 private[akka] object Broadcast {
-  def props(settings: MaterializerSettings, outputPorts: Int): Props =
-    Props(new Broadcast(settings, outputPorts))
+  def props(settings: ActorMaterializerSettings, eagerCancel: Boolean, outputPorts: Int): Props =
+    Props(new Broadcast(settings, outputPorts, eagerCancel)).withDeploy(Deploy.local)
 }
 
 /**
  * INTERNAL API
  */
-private[akka] class Broadcast(_settings: MaterializerSettings, _outputPorts: Int) extends FanOut(_settings, _outputPorts) {
+private[akka] class Broadcast(_settings: ActorMaterializerSettings, _outputPorts: Int, eagerCancel: Boolean) extends FanOut(_settings, _outputPorts) {
+  outputBunch.unmarkCancelledOutputs(!eagerCancel)
   outputBunch.markAllOutputs()
 
-  nextPhase(TransferPhase(primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs) { () ⇒
+  initialPhase(1, TransferPhase(primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs) { () ⇒
     val elem = primaryInputs.dequeueInputElement()
     outputBunch.enqueueMarked(elem)
   })
@@ -288,14 +310,14 @@ private[akka] class Broadcast(_settings: MaterializerSettings, _outputPorts: Int
  * INTERNAL API
  */
 private[akka] object Balance {
-  def props(settings: MaterializerSettings, outputPorts: Int, waitForAllDownstreams: Boolean): Props =
-    Props(new Balance(settings, outputPorts, waitForAllDownstreams))
+  def props(settings: ActorMaterializerSettings, outputPorts: Int, waitForAllDownstreams: Boolean): Props =
+    Props(new Balance(settings, outputPorts, waitForAllDownstreams)).withDeploy(Deploy.local)
 }
 
 /**
  * INTERNAL API
  */
-private[akka] class Balance(_settings: MaterializerSettings, _outputPorts: Int, waitForAllDownstreams: Boolean) extends FanOut(_settings, _outputPorts) {
+private[akka] class Balance(_settings: ActorMaterializerSettings, _outputPorts: Int, waitForAllDownstreams: Boolean) extends FanOut(_settings, _outputPorts) {
   outputBunch.markAllOutputs()
 
   val runningPhase = TransferPhase(primaryInputs.NeedsInput && outputBunch.AnyOfMarkedOutputs) { () ⇒
@@ -304,28 +326,28 @@ private[akka] class Balance(_settings: MaterializerSettings, _outputPorts: Int, 
   }
 
   if (waitForAllDownstreams)
-    nextPhase(TransferPhase(primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs) { () ⇒
+    initialPhase(1, TransferPhase(primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs) { () ⇒
       nextPhase(runningPhase)
     })
   else
-    nextPhase(runningPhase)
+    initialPhase(1, runningPhase)
 }
 
 /**
  * INTERNAL API
  */
 private[akka] object Unzip {
-  def props(settings: MaterializerSettings): Props =
-    Props(new Unzip(settings))
+  def props(settings: ActorMaterializerSettings): Props =
+    Props(new Unzip(settings)).withDeploy(Deploy.local)
 }
 
 /**
  * INTERNAL API
  */
-private[akka] class Unzip(_settings: MaterializerSettings) extends FanOut(_settings, outputPorts = 2) {
+private[akka] class Unzip(_settings: ActorMaterializerSettings) extends FanOut(_settings, outputCount = 2) {
   outputBunch.markAllOutputs()
 
-  nextPhase(TransferPhase(primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs) { () ⇒
+  initialPhase(1, TransferPhase(primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs) { () ⇒
     primaryInputs.dequeueInputElement() match {
       case (a, b) ⇒
         outputBunch.enqueue(0, a)
@@ -341,4 +363,12 @@ private[akka] class Unzip(_settings: MaterializerSettings) extends FanOut(_setti
             s"can only handle Tuple2 and akka.japi.Pair!")
     }
   })
+}
+
+/**
+ * INTERNAL API
+ */
+private[akka] object FlexiRoute {
+  def props[T, S <: Shape](settings: ActorMaterializerSettings, ports: S, routeLogic: RouteLogic[T]): Props =
+    Props(new FlexiRouteImpl(settings, ports, routeLogic)).withDeploy(Deploy.local)
 }

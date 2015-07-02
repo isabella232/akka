@@ -5,20 +5,19 @@ package akka.stream.scaladsl
 
 import scala.concurrent.duration._
 
-import akka.stream.FlowMaterializer
-import akka.stream.testkit.AkkaSpec
-import akka.stream.testkit.StreamTestKit
+import akka.stream.ActorMaterializer
+import akka.stream.testkit._
 
 class FlowDropWithinSpec extends AkkaSpec {
 
-  implicit val materializer = FlowMaterializer()
+  implicit val materializer = ActorMaterializer()
 
   "A DropWithin" must {
 
     "deliver elements after the duration, but not before" in {
       val input = Iterator.from(1)
-      val p = StreamTestKit.PublisherProbe[Int]()
-      val c = StreamTestKit.SubscriberProbe[Int]()
+      val p = TestPublisher.manualProbe[Int]()
+      val c = TestSubscriber.manualProbe[Int]()
       Source(p).dropWithin(1.second).to(Sink(c)).run()
       val pSub = p.expectSubscription
       val cSub = c.expectSubscription

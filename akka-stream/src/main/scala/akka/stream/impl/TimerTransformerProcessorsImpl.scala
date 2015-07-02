@@ -4,21 +4,21 @@
 package akka.stream.impl
 
 import java.util.LinkedList
-import akka.stream.MaterializerSettings
+import akka.stream.ActorMaterializerSettings
 import akka.stream.TimerTransformer
 import scala.util.control.NonFatal
-import akka.actor.Props
+import akka.actor.{ Deploy, Props }
 
 private[akka] object TimerTransformerProcessorsImpl {
-  def props(settings: MaterializerSettings, transformer: TimerTransformer[Any, Any]): Props =
-    Props(new TimerTransformerProcessorsImpl(settings, transformer))
+  def props(settings: ActorMaterializerSettings, transformer: TimerTransformer[Any, Any]): Props =
+    Props(new TimerTransformerProcessorsImpl(settings, transformer)).withDeploy(Deploy.local)
 }
 
 /**
  * INTERNAL API
  */
 private[akka] class TimerTransformerProcessorsImpl(
-  _settings: MaterializerSettings,
+  _settings: ActorMaterializerSettings,
   transformer: TimerTransformer[Any, Any])
   extends ActorProcessorImpl(_settings) with Emit {
   import TimerTransformer._
@@ -27,7 +27,7 @@ private[akka] class TimerTransformerProcessorsImpl(
 
   override def preStart(): Unit = {
     super.preStart()
-    nextPhase(running)
+    initialPhase(1, running)
     transformer.start(context)
   }
 
@@ -66,7 +66,7 @@ private[akka] class TimerTransformerProcessorsImpl(
     override def inputsAvailable: Boolean = !queue.isEmpty
   }
 
-  override def activeReceive = super.activeReceive orElse schedulerInputs.subreceive
+  override def activeReceive = super.activeReceive.orElse[Any, Unit](schedulerInputs.subreceive)
 
   object RunningCondition extends TransferState {
     def isReady = {

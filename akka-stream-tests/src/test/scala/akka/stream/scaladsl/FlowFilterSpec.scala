@@ -5,16 +5,14 @@ package akka.stream.scaladsl
 
 import scala.concurrent.forkjoin.ThreadLocalRandom.{ current ⇒ random }
 
-import akka.stream.FlowMaterializer
-import akka.stream.MaterializerSettings
-import akka.stream.testkit.{ AkkaSpec, StreamTestKit }
-import akka.stream.testkit.ScriptedTest
+import akka.stream.ActorMaterializer
+import akka.stream.ActorMaterializerSettings
+import akka.stream.testkit._
 
 class FlowFilterSpec extends AkkaSpec with ScriptedTest {
 
-  val settings = MaterializerSettings(system)
+  val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 16)
-    .withFanOutBuffer(initialSize = 1, maxSize = 16)
 
   "A Filter" must {
 
@@ -24,12 +22,11 @@ class FlowFilterSpec extends AkkaSpec with ScriptedTest {
     }
 
     "not blow up with high request counts" in {
-      val settings = MaterializerSettings(system)
+      val settings = ActorMaterializerSettings(system)
         .withInputBuffer(initialSize = 1, maxSize = 1)
-        .withFanOutBuffer(initialSize = 1, maxSize = 1)
-      implicit val materializer = FlowMaterializer(settings)
+      implicit val materializer = ActorMaterializer(settings)
 
-      val probe = StreamTestKit.SubscriberProbe[Int]()
+      val probe = TestSubscriber.manualProbe[Int]()
       Source(List.fill(1000)(0) ::: List(1)).filter(_ != 0).runWith(Sink(probe))
 
       val subscription = probe.expectSubscription()

@@ -3,10 +3,11 @@
  */
 package akka.stream.extra
 
-import akka.stream.{ MaterializerSettings, FlowMaterializer }
+import akka.stream.{ ActorMaterializerSettings, ActorMaterializer }
 import akka.stream.scaladsl.{ Source, Flow }
 import akka.stream.scaladsl.Sink
-import akka.stream.testkit.{ AkkaSpec, ScriptedTest, StreamTestKit }
+import akka.stream.testkit._
+import akka.stream.testkit.Utils._
 import akka.testkit.TestProbe
 import org.reactivestreams.{ Publisher, Subscriber }
 
@@ -14,11 +15,10 @@ class FlowTimedSpec extends AkkaSpec with ScriptedTest {
 
   import scala.concurrent.duration._
 
-  val settings = MaterializerSettings(system)
+  val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 16)
-    .withFanOutBuffer(initialSize = 1, maxSize = 16)
 
-  implicit val materializer = FlowMaterializer(settings)
+  implicit val materializer = ActorMaterializer(settings)
 
   "Timed Source" must {
 
@@ -73,12 +73,12 @@ class FlowTimedSpec extends AkkaSpec with ScriptedTest {
   "Timed Flow" must {
     import akka.stream.extra.Implicits.TimedFlowDsl
 
-    "measure time it between elements matching a predicate" in {
+    "measure time it between elements matching a predicate" in assertAllStagesStopped {
       val probe = TestProbe()
 
-      val flow: Flow[Int, Long] = Flow[Int].map(_.toLong).timedIntervalBetween(in ⇒ in % 2 == 1, d ⇒ probe.ref ! d)
+      val flow: Flow[Int, Long, _] = Flow[Int].map(_.toLong).timedIntervalBetween(in ⇒ in % 2 == 1, d ⇒ probe.ref ! d)
 
-      val c1 = StreamTestKit.SubscriberProbe[Long]()
+      val c1 = TestSubscriber.manualProbe[Long]()
       Source(List(1, 2, 3)).via(flow).runWith(Sink(c1))
 
       val s = c1.expectSubscription()
@@ -92,11 +92,11 @@ class FlowTimedSpec extends AkkaSpec with ScriptedTest {
       info(s"Got duration (first): $duration")
     }
 
-    "measure time from start to complete, by wrapping operations" in {
+    "measure time from start to complete, by wrapping operations" in assertAllStagesStopped {
       val probe = TestProbe()
 
       // making sure the types come out as expected
-      val flow: Flow[Int, String] =
+      val flow: Flow[Int, String, _] =
         Flow[Int].
           timed(_.
             map(_.toDouble).
@@ -106,7 +106,7 @@ class FlowTimedSpec extends AkkaSpec with ScriptedTest {
 
       val (flowIn: Subscriber[Int], flowOut: Publisher[String]) = flow.runWith(Source.subscriber[Int], Sink.publisher[String])
 
-      val c1 = StreamTestKit.SubscriberProbe[String]()
+      val c1 = TestSubscriber.manualProbe[String]()
       val c2 = flowOut.subscribe(c1)
 
       val p = Source(0 to 100).runWith(Sink.publisher)
@@ -123,4 +123,3 @@ class FlowTimedSpec extends AkkaSpec with ScriptedTest {
   }
 
 }
-

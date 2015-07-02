@@ -4,16 +4,16 @@
 package akka.stream.scaladsl
 
 import akka.actor.ActorSystem
-import akka.stream.FlowMaterializer
-import akka.stream.MaterializerSettings
-import akka.stream.testkit.{ AkkaSpec, StreamTestKit }
+import akka.stream.ActorMaterializer
+import akka.stream.ActorMaterializerSettings
+import akka.stream.testkit.{ AkkaSpec, TestSubscriber }
 import org.reactivestreams.Subscriber
 import org.scalatest.Matchers
 
 class FlowAppendSpec extends AkkaSpec with River {
 
-  val settings = MaterializerSettings(system)
-  implicit val materializer = FlowMaterializer(settings)
+  val settings = ActorMaterializerSettings(system)
+  implicit val materializer = ActorMaterializer(settings)
 
   "Flow" should {
     "append Flow" in riverOf[String] { subscriber ⇒
@@ -49,13 +49,15 @@ trait River { self: Matchers ⇒
   val otherFlow = Flow[Int].map(_.toString)
 
   def riverOf[T](flowConstructor: Subscriber[T] ⇒ Unit)(implicit system: ActorSystem) = {
-    val subscriber = StreamTestKit.SubscriberProbe[T]()
+    val subscriber = TestSubscriber.manualProbe[T]()
 
     flowConstructor(subscriber)
 
     val subscription = subscriber.expectSubscription()
     subscription.request(elements.size)
-    subscriber.probe.receiveN(elements.size) should be(elements.map(_.toString).map(StreamTestKit.OnNext(_)))
+    elements.foreach { el ⇒
+      subscriber.expectNext() shouldBe el.toString
+    }
     subscription.request(1)
     subscriber.expectComplete()
   }

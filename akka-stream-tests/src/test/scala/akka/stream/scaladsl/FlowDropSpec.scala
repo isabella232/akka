@@ -5,19 +5,16 @@ package akka.stream.scaladsl
 
 import scala.concurrent.forkjoin.ThreadLocalRandom.{ current ⇒ random }
 
-import akka.stream.FlowMaterializer
-import akka.stream.MaterializerSettings
-import akka.stream.testkit.AkkaSpec
-import akka.stream.testkit.ScriptedTest
-import akka.stream.testkit.StreamTestKit
+import akka.stream.ActorMaterializer
+import akka.stream.ActorMaterializerSettings
+import akka.stream.testkit._
 
 class FlowDropSpec extends AkkaSpec with ScriptedTest {
 
-  val settings = MaterializerSettings(system)
+  val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 16)
-    .withFanOutBuffer(initialSize = 1, maxSize = 16)
 
-  implicit val materializer = FlowMaterializer(settings)
+  implicit val materializer = ActorMaterializer(settings)
 
   "A Drop" must {
 
@@ -30,7 +27,7 @@ class FlowDropSpec extends AkkaSpec with ScriptedTest {
     }
 
     "not drop anything for negative n" in {
-      val probe = StreamTestKit.SubscriberProbe[Int]()
+      val probe = TestSubscriber.manualProbe[Int]()
       Source(List(1, 2, 3)).drop(-1).to(Sink(probe)).run()
       probe.expectSubscription().request(10)
       probe.expectNext(1)
