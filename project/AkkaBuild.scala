@@ -136,32 +136,11 @@ object AkkaBuild extends Build {
     )
   ) configs (MultiJvm)
 
-  lazy val atmos = Project(
-    id = "atmos",
-    base = file("atmos"),
-    dependencies = Seq(allTests % "test->test;multi-jvm->multi-jvm"),
-    settings = defaultSettings ++ multiJvmSettings ++ Seq(
-      fork in Test := true,
-      definedTests in Test <<= definedTests in allTests in Test,
-      libraryDependencies += "org.aspectj" % "aspectjweaver" % "1.7.2",
-      libraryDependencies += "com.typesafe.atmos" % "trace-akka-2.2.0-RC1_2.10" % "1.2.0-M5" excludeAll(ExclusionRule(organization = "com.typesafe.akka")),
-      resolvers += "Typesafe Repo" at "http://repo.typesafe.com/typesafe/releases/",
-      javaOptions in Test <++= (update) map { (u) =>
-        val f = u.matching(configurationFilter("compile") && moduleFilter(name = "aspectjweaver")).head
-        Seq("-javaagent:" + f.getAbsolutePath, "-Dorg.aspectj.tracing.factory=default")
-      },
-      definedTests in MultiJvm <++= definedTests in (allTests, MultiJvm),
-      scalatestOptions in MultiJvm <<= scalatestOptions in (allTests, MultiJvm),
-      multiTestOptions in MultiJvm <<= (multiTestOptions in MultiJvm, javaOptions in Test) map { (multiOptions, testOptions) =>
-        multiOptions.copy(jvm = multiOptions.jvm ++ testOptions)
-      }
-    )
-  ) configs (MultiJvm)
-
   lazy val actor = Project(
     id = "akka-actor",
     base = file("akka-actor"),
-    settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.actor ++ Seq(
+    settings = defaultSettings ++ formatSettings ++ scaladocSettings ++ javadocSettings ++ OSGi.actor ++
+      spray.boilerplate.BoilerplatePlugin.Boilerplate.settings ++ Seq(
       // to fix scaladoc generation
       fullClasspath in doc in Compile <<= fullClasspath in Compile,
       libraryDependencies ++= Dependencies.actor,
@@ -206,7 +185,7 @@ object AkkaBuild extends Build {
     settings = defaultSettings ++ Seq(
       libraryDependencies ++= Dependencies.testkit ++ Dependencies.Compile.metricsAll,
       publishArtifact in Compile := false
-    ) ++ settings ++ jmhSettings
+    ) ++ settings ++ formatSettings ++ jmhSettings
   )
 
   lazy val actorTests = Project(
@@ -566,7 +545,6 @@ object AkkaBuild extends Build {
       previousArtifact := None
     )
   )
-
   lazy val streamTests = Project(
     id = "akka-stream-tests-experimental",
     base = file("akka-stream-tests"),
@@ -668,7 +646,7 @@ object AkkaBuild extends Build {
     aggregate = Seq(camelSampleJava, camelSampleScala, mainSampleJava, mainSampleScala,
           remoteSampleJava, remoteSampleScala, clusterSampleJava, clusterSampleScala,
           fsmSampleScala, persistenceSampleJava, persistenceSampleScala,
-          multiNodeSampleScala, helloKernelSample, osgiDiningHakkersSample)
+          multiNodeSampleScala, osgiDiningHakkersSample)
   )
 
   lazy val camelSampleJava = Project(
@@ -706,12 +684,16 @@ object AkkaBuild extends Build {
     settings = sampleSettings
   )
 
+  /* FIXME helloKernelSample is not included due to conflicting dependency to
+           bouncycastle openpgp from sbt-native-packager and sbt-pgp
+           java.lang.NoSuchMethodError: org.bouncycastle.openpgp.PGPSecretKeyRing
   lazy val helloKernelSample = Project(
     id = "akka-sample-hello-kernel",
     base = file("akka-samples/akka-sample-hello-kernel"),
     dependencies = Seq(kernel),
     settings = sampleSettings
   )
+  */
 
   lazy val remoteSampleJava = Project(
     id = "akka-sample-remote-java",
@@ -1124,7 +1106,6 @@ object AkkaBuild extends Build {
         .orElse { sLog.value.warn("Java 8 installation has not been found. Java 8 tasks will not be run."); None }
         .map(dirName => file(dirName.trim))
     },
-
     validatePullRequestTask,
     validatePullRequest <<= validatePullRequest.dependsOn(test in Test),
     // add reportBinaryIssues to validatePullRequest on minor version maintenance branch
@@ -1313,53 +1294,12 @@ object AkkaBuild extends Build {
   lazy val mimaIgnoredProblems = {
     import com.typesafe.tools.mima.core._
     Seq(
-      // add filters here, see release-2.2 branch
-      FilterAnyProblem("akka.remote.testconductor.Terminate"),
-      FilterAnyProblem("akka.remote.testconductor.TerminateMsg"),
-      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.testconductor.Conductor.shutdown"),
-      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.testkit.MultiNodeSpec.akka$remote$testkit$MultiNodeSpec$$deployer"),
-      FilterAnyProblem("akka.remote.EndpointManager$Pass"),
-      FilterAnyProblem("akka.remote.EndpointManager$EndpointRegistry"),
-      FilterAnyProblem("akka.remote.EndpointWriter"),
-      FilterAnyProblem("akka.remote.EndpointWriter$StopReading"),
-      FilterAnyProblem("akka.remote.EndpointWriter$State"),
-      FilterAnyProblem("akka.remote.EndpointWriter$TakeOver"),
-
-      // Change of internal message by #15109
-      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor#GotUid.copy"),
-      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor#GotUid.this"),
-      ProblemFilters.exclude[MissingTypesProblem]("akka.remote.ReliableDeliverySupervisor$GotUid$"),
-      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor#GotUid.apply"),
-
-      // Change of private method to protected by #15212
-      ProblemFilters.exclude[MissingMethodProblem]("akka.persistence.snapshot.local.LocalSnapshotStore.akka$persistence$snapshot$local$LocalSnapshotStore$$save"),
-
-      // Changes in akka-stream-experimental are not binary compatible - still source compatible (2.3.3 -> 2.3.4)
-      // Adding `PersistentActor.persistAsync`
-      // Adding `PersistentActor.defer`
-      // Changes in akka-persistence-experimental in #13944
-      // Changes in private LevelDB Store by #13962
-      // Renamed `processorId` to `persistenceId`
-      ProblemFilters.excludePackage("akka.persistence"),
-
-      // Adding wildcardFanOut to internal message ActorSelectionMessage by #13992
-      FilterAnyProblem("akka.actor.ActorSelectionMessage$"),
-      FilterAnyProblem("akka.actor.ActorSelectionMessage"),
-      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ContainerFormats#SelectionEnvelopeOrBuilder.hasWildcardFanOut"),
-      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ContainerFormats#SelectionEnvelopeOrBuilder.getWildcardFanOut"),
-
-      // Adding expectMsg overload to testkit #15425
-      ProblemFilters.exclude[MissingMethodProblem]("akka.testkit.TestKitBase.expectMsg"),
-
-      // Adding akka.japi.Option.getOrElse #15383
-      ProblemFilters.exclude[MissingMethodProblem]("akka.japi.Option.getOrElse"),
-
-      // Change to internal API to fix #15991
-      ProblemFilters.exclude[MissingClassProblem]("akka.io.TcpConnection$UpdatePendingWrite$"),
-      ProblemFilters.exclude[MissingClassProblem]("akka.io.TcpConnection$UpdatePendingWrite"),
-
-      // Change to optimize use of ForkJoin with Akka's Mailbox
-      ProblemFilters.exclude[MissingMethodProblem]("akka.dispatch.Mailbox.status")
+      // issue #17554
+      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor.maxResendRate"),
+      ProblemFilters.exclude[MissingMethodProblem]("akka.remote.ReliableDeliverySupervisor.resendLimit"),
+      
+      // toString is available on any object, mima is confused due to a generated toString appearing #17722
+      ProblemFilters.exclude[MissingMethodProblem]("akka.japi.Pair.toString")
     )
   }
 
@@ -1371,19 +1311,12 @@ object AkkaBuild extends Build {
 
   def akkaPreviousArtifact(id: String): Def.Initialize[Option[sbt.ModuleID]] = Def.setting {
     if (enableMiMa) {
-      // Note: This is a little gross because we don't have a 2.3.0 release on Scala 2.11.x
-      // This should be expanded if there are more deviations.
-      val version: String = 
-        scalaBinaryVersion.value match {
-          case "2.11" => "2.3.2"
-          case _ =>      "2.3.0"
-        }
       val fullId = crossVersion.value match {
          case _ : CrossVersion.Binary => id + "_" + scalaBinaryVersion.value
          case _ : CrossVersion.Full => id + "_" + scalaVersion.value
-         case CrossVersion.Disabled => id 
+         case CrossVersion.Disabled => id
        }
-      Some(organization.value % fullId % version) // the artifact to compare binary compatibility with
+      Some(organization.value % fullId % "2.3.11") // the artifact to compare binary compatibility with
     }
     else None
   }
@@ -1494,7 +1427,7 @@ object AkkaBuild extends Build {
       val packageName = "scala.*"
       val ScalaVersion = """(\d+)\.(\d+)\..*""".r
       val ScalaVersion(epoch, major) = version
-      versionedImport(packageName, s"$epoch.$major", s"$epoch.${major+1}")
+      versionedImport(packageName, s"$epoch.$major", s"$epoch.${major.toInt+1}")
     }
     def optionalResolution(packageName: String) = "%s;resolution:=optional".format(packageName)
     def versionedImport(packageName: String, lower: String, upper: String) = s"""$packageName;version="[$lower,$upper)""""
@@ -1510,7 +1443,7 @@ object Dependencies {
   import DependencyHelpers.ScalaVersionDependentModuleID._
 
   object Versions {
-    val crossScala = Seq("2.10.4", "2.11.4")
+    val crossScala = Seq("2.10.4", "2.11.5")
     val scala = crossScala.head
     val scalaStmVersion  = System.getProperty("akka.build.scalaStmVersion", "0.7")
     val scalaZeroMQVersion = System.getProperty("akka.build.scalaZeroMQVersion", "0.0.7")

@@ -333,6 +333,10 @@ trait ActorRefFactory {
   /**
    * Stop the actor pointed to by the given [[akka.actor.ActorRef]]; this is
    * an asynchronous operation, i.e. involves a message send.
+   * If this method is applied to the `self` reference from inside an Actor
+   * then that Actor is guaranteed to not process any further messages after
+   * this call; please note that the processing of the current message will
+   * continue, this method does not immediately terminate this actor.
    */
   def stop(actor: ActorRef): Unit
 }
@@ -370,7 +374,6 @@ private[akka] object LocalActorRefProvider {
     def receive = {
       case Terminated(_)    ⇒ context.stop(self)
       case StopChild(child) ⇒ context.stop(child)
-      case m                ⇒ context.system.deadLetters forward DeadLetter(m, sender(), self)
     }
 
     // guardian MUST NOT lose its children during restart
@@ -402,13 +405,11 @@ private[akka] object LocalActorRefProvider {
       case RegisterTerminationHook if sender() != context.system.deadLetters ⇒
         terminationHooks += sender()
         context watch sender()
-      case m ⇒ context.system.deadLetters forward DeadLetter(m, sender(), self)
     }
 
     def terminating: Receive = {
       case Terminated(a)       ⇒ stopWhenAllTerminationHooksDone(a)
       case TerminationHookDone ⇒ stopWhenAllTerminationHooksDone(sender())
-      case m                   ⇒ context.system.deadLetters forward DeadLetter(m, sender(), self)
     }
 
     def stopWhenAllTerminationHooksDone(remove: ActorRef): Unit = {

@@ -166,6 +166,9 @@ private[remote] object ReliableDeliverySupervisor {
   case object AttemptSysMsgRedelivery
   case class GotUid(uid: Int, remoteAddres: Address)
 
+  case object IsIdle
+  case object Idle
+
   def props(
     handleOrActive: Option[AkkaProtocolHandle],
     localAddress: Address,
@@ -194,25 +197,18 @@ private[remote] class ReliableDeliverySupervisor(
   import ReliableDeliverySupervisor._
   import context.dispatcher
 
-  var autoResendTimer: Option[Cancellable] = None
-
-  def scheduleAutoResend(): Unit = if (resendBuffer.nacked.nonEmpty || resendBuffer.nonAcked.nonEmpty) {
-    if (autoResendTimer.isEmpty)
-      autoResendTimer = Some(context.system.scheduler.scheduleOnce(settings.SysResendTimeout, self, AttemptSysMsgRedelivery))
-  }
-
-  def rescheduleAutoResend(): Unit = {
-    autoResendTimer.foreach(_.cancel())
-    autoResendTimer = None
-    scheduleAutoResend()
-  }
+  val autoResendTimer = context.system.scheduler.schedule(
+    settings.SysResendTimeout, settings.SysResendTimeout, self, AttemptSysMsgRedelivery)
 
   override val supervisorStrategy = OneForOneStrategy(loggingEnabled = false) {
     case e @ (_: AssociationProblem) ⇒ Escalate
     case NonFatal(e) ⇒
-      log.warning("Association with remote system [{}] has failed, address is now gated for [{}] ms. Reason is: [{}].",
-        remoteAddress, settings.RetryGateClosedFor.toMillis, e.getMessage)
+      val causedBy = if (e.getCause == null) "" else s"Caused by: [${e.getCause.getMessage}]"
+      log.warning("Association with remote system [{}] has failed, address is now gated for [{}] ms. Reason: [{}] {}",
+        remoteAddress, settings.RetryGateClosedFor.toMillis, e.getMessage, causedBy)
       uidConfirmed = false // Need confirmation of UID again
+      if ((resendBuffer.nacked.nonEmpty || resendBuffer.nonAcked.nonEmpty) && bailoutAt.isEmpty)
+        bailoutAt = Some(Deadline.now + settings.InitialSysMsgDeliveryTimeout)
       context.become(gated)
       currentHandle = None
       context.parent ! StoppedReading(self)
@@ -222,16 +218,12 @@ private[remote] class ReliableDeliverySupervisor(
   var currentHandle: Option[AkkaProtocolHandle] = handleOrActive
 
   var resendBuffer: AckedSendBuffer[Send] = _
-  var lastCumulativeAck: SeqNo = _
   var seqCounter: Long = _
-  var pendingAcks = Vector.empty[Ack]
 
   def reset() {
     resendBuffer = new AckedSendBuffer[Send](settings.SysMsgBufferSize)
-    scheduleAutoResend()
-    lastCumulativeAck = SeqNo(-1)
     seqCounter = 0L
-    pendingAcks = Vector.empty
+    bailoutAt = None
   }
 
   reset()
@@ -244,7 +236,7 @@ private[remote] class ReliableDeliverySupervisor(
 
   var writer: ActorRef = createWriter()
   var uid: Option[Int] = handleOrActive map { _.handshakeInfo.uid }
-  val bailoutAt: Deadline = Deadline.now + settings.InitialSysMsgDeliveryTimeout
+  var bailoutAt: Option[Deadline] = None
   // Processing of Acks has to be delayed until the UID after a reconnect is discovered. Depending whether the
   // UID matches the expected one, pending Acks can be processed, or must be dropped. It is guaranteed that for
   // any inbound connections (calling createWriter()) the first message from that connection is GotUid() therefore
@@ -252,11 +244,6 @@ private[remote] class ReliableDeliverySupervisor(
   // If we already have an inbound handle then UID is initially confirmed.
   // (This actor is never restarted)
   var uidConfirmed: Boolean = uid.isDefined
-
-  def unstashAcks(): Unit = {
-    pendingAcks foreach (self ! _)
-    pendingAcks = Vector.empty
-  }
 
   override def postStop(): Unit = {
     // All remaining messages in the buffer has to be delivered to dead letters. It is important to clear the sequence
@@ -267,6 +254,7 @@ private[remote] class ReliableDeliverySupervisor(
     // the remote system later.
     (resendBuffer.nacked ++ resendBuffer.nonAcked) foreach { s ⇒ context.system.deadLetters ! s.copy(seqOpt = None) }
     receiveBuffers.remove(Link(localAddress, remoteAddress))
+    autoResendTimer.cancel()
   }
 
   override def postRestart(reason: Throwable): Unit = {
@@ -280,24 +268,19 @@ private[remote] class ReliableDeliverySupervisor(
       resendAll()
       writer ! FlushAndStop
       context.become(flushWait)
+    case IsIdle ⇒ // Do not reply, we will Terminate soon, or send a GotUid
     case s: Send ⇒
       handleSend(s)
     case ack: Ack ⇒
-      if (!uidConfirmed) pendingAcks = pendingAcks :+ ack
-      else {
+      // If we are not sure about the UID just ignore the ack. Ignoring is fine.
+      if (uidConfirmed) {
         try resendBuffer = resendBuffer.acknowledge(ack)
         catch {
           case NonFatal(e) ⇒
-            throw new InvalidAssociationException(s"Error encountered while processing system message acknowledgement $resendBuffer $ack", e)
+            throw new HopelessAssociation(localAddress, remoteAddress, uid,
+              new IllegalStateException(s"Error encountered while processing system message " +
+                s"acknowledgement buffer: $resendBuffer ack: $ack", e))
         }
-
-        if (lastCumulativeAck < ack.cumulativeAck) {
-          lastCumulativeAck = ack.cumulativeAck
-          // Cumulative ack is progressing, we might not need to resend non-acked messages yet.
-          // If this progression stops, the timer will eventually kick in, since scheduleAutoResend
-          // does not cancel existing timers (see the "else" case).
-          rescheduleAutoResend()
-        } else scheduleAutoResend()
 
         resendNacked()
       }
@@ -310,11 +293,11 @@ private[remote] class ReliableDeliverySupervisor(
         context.system.scheduler.scheduleOnce(settings.SysResendTimeout, self, AttemptSysMsgRedelivery)
       context.become(idle)
     case g @ GotUid(receivedUid, _) ⇒
+      bailoutAt = None
       context.parent ! g
       // New system that has the same address as the old - need to start from fresh state
       uidConfirmed = true
       if (uid.exists(_ != receivedUid)) reset()
-      else unstashAcks()
       uid = Some(receivedUid)
       resendAll()
 
@@ -325,6 +308,7 @@ private[remote] class ReliableDeliverySupervisor(
   def gated: Receive = {
     case Terminated(_) ⇒
       context.system.scheduler.scheduleOnce(settings.RetryGateClosedFor, self, Ungate)
+    case IsIdle ⇒ sender() ! Idle
     case Ungate ⇒
       if (resendBuffer.nonAcked.nonEmpty || resendBuffer.nacked.nonEmpty) {
         // If we talk to a system we have not talked to before (or has given up talking to in the past) stop
@@ -332,13 +316,14 @@ private[remote] class ReliableDeliverySupervisor(
         // remote address at the EndpointManager level stopping this actor. In case the remote system becomes reachable
         // again it will be immediately quarantined due to out-of-sync system message buffer and becomes quarantined.
         // In other words, this action is safe.
-        if (!uidConfirmed && bailoutAt.isOverdue())
-          throw new InvalidAssociation(localAddress, remoteAddress,
+        if (bailoutAt.exists(_.isOverdue()))
+          throw new HopelessAssociation(localAddress, remoteAddress, uid,
             new java.util.concurrent.TimeoutException("Delivery of system messages timed out and they were dropped."))
         writer = createWriter()
         // Resending will be triggered by the incoming GotUid message after the connection finished
         context.become(receive)
       } else context.become(idle)
+    case AttemptSysMsgRedelivery               ⇒ // Ignore
     case s @ Send(msg: SystemMessage, _, _, _) ⇒ tryBuffer(s.copy(seqOpt = Some(nextSeq())))
     case s: Send                               ⇒ context.system.deadLetters ! s
     case EndpointWriter.FlushAndStop           ⇒ context.stop(self)
@@ -348,21 +333,25 @@ private[remote] class ReliableDeliverySupervisor(
   }
 
   def idle: Receive = {
+    case IsIdle ⇒ sender() ! Idle
     case s: Send ⇒
       writer = createWriter()
       // Resending will be triggered by the incoming GotUid message after the connection finished
       handleSend(s)
       context.become(receive)
     case AttemptSysMsgRedelivery ⇒
-      writer = createWriter()
-      // Resending will be triggered by the incoming GotUid message after the connection finished
-      context.become(receive)
+      if (resendBuffer.nacked.nonEmpty || resendBuffer.nonAcked.nonEmpty) {
+        writer = createWriter()
+        // Resending will be triggered by the incoming GotUid message after the connection finished
+        context.become(receive)
+      }
     case EndpointWriter.FlushAndStop ⇒ context.stop(self)
     case EndpointWriter.StopReading(w, replyTo) ⇒
       replyTo ! EndpointWriter.StoppedReading(w)
   }
 
   def flushWait: Receive = {
+    case IsIdle ⇒ // Do not reply, we will Terminate soon, which will do the inbound connection unstashing
     case Terminated(_) ⇒
       // Clear buffer to prevent sending system messages to dead letters -- at this point we are shutting down
       // and don't really know if they were properly delivered or not.
@@ -376,16 +365,17 @@ private[remote] class ReliableDeliverySupervisor(
       val sequencedSend = send.copy(seqOpt = Some(nextSeq()))
       tryBuffer(sequencedSend)
       // If we have not confirmed the remote UID we cannot transfer the system message at this point just buffer it.
-      // GotUid will kick resendAll() causing the messages to be properly written
-      if (uidConfirmed) writer ! sequencedSend
+      // GotUid will kick resendAll() causing the messages to be properly written.
+      // Flow control by not sending more when we already have many outstanding.
+      if (uidConfirmed && resendBuffer.nonAcked.size <= settings.SysResendLimit)
+        writer ! sequencedSend
     } else writer ! send
 
   private def resendNacked(): Unit = resendBuffer.nacked foreach { writer ! _ }
 
   private def resendAll(): Unit = {
     resendNacked()
-    resendBuffer.nonAcked foreach { writer ! _ }
-    rescheduleAutoResend()
+    resendBuffer.nonAcked.take(settings.SysResendLimit) foreach { writer ! _ }
   }
 
   private def tryBuffer(s: Send): Unit =
@@ -471,7 +461,7 @@ private[remote] object EndpointWriter {
 
   case class OutboundAck(ack: Ack)
 
-  // These settings are not configurable because wrong configuration will break the auto-tuning 
+  // These settings are not configurable because wrong configuration will break the auto-tuning
   private val SendBufferBatchSize = 5
   private val MinAdaptiveBackoffNanos = 300000L // 0.3 ms
   private val MaxAdaptiveBackoffNanos = 2000000L // 2 ms
@@ -720,7 +710,7 @@ private[remote] class EndpointWriter(
   val writing: Receive = {
     case s: Send ⇒
       if (!writeSend(s)) {
-        if (s.seqOpt.isEmpty) enqueueInBuffer(s)
+        enqueueInBuffer(s)
         scheduleBackoffTimer()
         context.become(buffering)
       }
@@ -809,6 +799,8 @@ private[remote] class EndpointWriter(
       context.stop(self)
     case OutboundAck(ack) ⇒
       lastAck = Some(ack)
+      if (ackDeadline.isOverdue())
+        trySendPureAck()
     case AckIdleCheckTimer   ⇒ // Ignore
     case FlushAndStopTimeout ⇒ // ignore
     case BackoffTimer        ⇒ // ignore

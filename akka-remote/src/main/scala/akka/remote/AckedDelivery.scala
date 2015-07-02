@@ -99,7 +99,11 @@ case class AckedSendBuffer[T <: HasSequenceNumber](
    * @return An updated buffer containing the remaining unacknowledged messages
    */
   def acknowledge(ack: Ack): AckedSendBuffer[T] = {
-    val newNacked = (nacked ++ nonAcked) filter { m ⇒ ack.nacks(m.seq) }
+    if (ack.cumulativeAck > maxSeq)
+      throw new IllegalArgumentException(s"Highest SEQ so far was $maxSeq but cumulative ACK is ${ack.cumulativeAck}")
+    val newNacked =
+      if (ack.nacks.isEmpty) Vector.empty
+      else (nacked ++ nonAcked) filter { m ⇒ ack.nacks(m.seq) }
     if (newNacked.size < ack.nacks.size) throw new ResendUnfulfillableException
     else this.copy(
       nonAcked = nonAcked.filter { m ⇒ m.seq > ack.cumulativeAck },
@@ -121,7 +125,7 @@ case class AckedSendBuffer[T <: HasSequenceNumber](
     this.copy(nonAcked = this.nonAcked :+ msg, maxSeq = msg.seq)
   }
 
-  override def toString = nonAcked.map(_.seq).mkString("[", ", ", "]")
+  override def toString = s"[$maxSeq ${nonAcked.map(_.seq).mkString("{", ", ", "}")}]"
 }
 
 /**
@@ -179,7 +183,8 @@ case class AckedReceiveBuffer[T <: HasSequenceNumber](
       prev = bufferedMsg.seq
     }
 
-    (this.copy(buf = buf filterNot deliver.contains, lastDelivered = updatedLastDelivered), deliver, ack)
+    val newBuf = if (deliver.isEmpty) buf else buf.filterNot(deliver.contains)
+    (this.copy(buf = newBuf, lastDelivered = updatedLastDelivered), deliver, ack)
   }
 
   /**
