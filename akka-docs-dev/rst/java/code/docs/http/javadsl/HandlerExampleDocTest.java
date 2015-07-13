@@ -4,6 +4,7 @@
 
 package docs.http.javadsl;
 
+import akka.dispatch.Futures;
 import akka.http.javadsl.model.HttpRequest;
 import akka.http.javadsl.server.*;
 import akka.http.javadsl.server.values.Parameters;
@@ -12,7 +13,7 @@ import akka.http.javadsl.testkit.JUnitRouteTest;
 import akka.http.javadsl.testkit.TestRoute;
 import org.junit.Test;
 
-public class HandlerExampleSpec extends JUnitRouteTest {
+public class HandlerExampleDocTest extends JUnitRouteTest {
     @Test
     public void testSimpleHandler() {
         //#simple-handler-example-full
@@ -20,7 +21,7 @@ public class HandlerExampleSpec extends JUnitRouteTest {
             //#simple-handler
             Handler handler = new Handler() {
                 @Override
-                public RouteResult handle(RequestContext ctx) {
+                public RouteResult apply(RequestContext ctx) {
                     return ctx.complete("This was a " + ctx.request().method().value()  +
                             " request to "+ctx.request().getUri());
                 }
@@ -60,23 +61,23 @@ public class HandlerExampleSpec extends JUnitRouteTest {
     public void testCalculator() {
         //#handler2-example-full
         class TestHandler extends akka.http.javadsl.server.AllDirectives {
-            RequestVal<Integer> xParam = Parameters.intValue("x");
-            RequestVal<Integer> yParam = Parameters.intValue("y");
+            final RequestVal<Integer> xParam = Parameters.intValue("x");
+            final RequestVal<Integer> yParam = Parameters.intValue("y");
 
-            RequestVal<Integer> xSegment = PathMatchers.integerNumber();
-            RequestVal<Integer> ySegment = PathMatchers.integerNumber();
+            final RequestVal<Integer> xSegment = PathMatchers.integerNumber();
+            final RequestVal<Integer> ySegment = PathMatchers.integerNumber();
 
             //#handler2
-            Handler2<Integer, Integer> multiply =
+            final Handler2<Integer, Integer> multiply =
                 new Handler2<Integer, Integer>() {
                     @Override
-                    public RouteResult handle(RequestContext ctx, Integer x, Integer y) {
+                    public RouteResult apply(RequestContext ctx, Integer x, Integer y) {
                         int result = x * y;
                         return ctx.complete("x * y = " + result);
                     }
                 };
 
-            Route multiplyXAndYParam = handleWith(xParam, yParam, multiply);
+            final Route multiplyXAndYParam = handleWith2(xParam, yParam, multiply);
             //#handler2
 
             Route createRoute() {
@@ -87,7 +88,7 @@ public class HandlerExampleSpec extends JUnitRouteTest {
                                 multiplyXAndYParam
                             ),
                             path("path-multiply", xSegment, ySegment).route(
-                                handleWith(xSegment, ySegment, multiply)
+                                handleWith2(xSegment, ySegment, multiply)
                             )
                         )
                     )
@@ -124,7 +125,7 @@ public class HandlerExampleSpec extends JUnitRouteTest {
                 return ctx.complete("x * y = " + result);
             }
 
-            Route multiplyXAndYParam = handleWith(this, "multiply", xParam, yParam);
+            Route multiplyXAndYParam = handleWith2(xParam, yParam, this::multiply);
             //#reflective
 
             Route createRoute() {
@@ -135,7 +136,7 @@ public class HandlerExampleSpec extends JUnitRouteTest {
                                 multiplyXAndYParam
                             ),
                             path("path-multiply", xSegment, ySegment).route(
-                                handleWith(this, "multiply", xSegment, ySegment)
+                                handleWith2(xSegment, ySegment, this::multiply)
                             )
                         )
                     )

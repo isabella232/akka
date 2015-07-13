@@ -3,14 +3,14 @@
  */
 
 import akka.http.javadsl.server.HandlerBindingTest;
-import docs.http.javadsl.server.HandlerExampleSpec;
+import docs.http.javadsl.server.HandlerExampleTest;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
 @RunWith(Suite.class)
 @Suite.SuiteClasses({
         HandlerBindingTest.class,
-        HandlerExampleSpec.class
+        HandlerExampleTest.class
 })
 public class AllJavaTests {
 }
