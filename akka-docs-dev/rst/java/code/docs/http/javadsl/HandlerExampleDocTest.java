@@ -4,7 +4,6 @@
 
 package docs.http.javadsl;
 
-import akka.dispatch.Futures;
 import akka.http.javadsl.model.HttpRequest;
 import akka.http.javadsl.server.*;
 import akka.http.javadsl.server.values.Parameters;
@@ -64,8 +63,8 @@ public class HandlerExampleDocTest extends JUnitRouteTest {
             final RequestVal<Integer> xParam = Parameters.intValue("x");
             final RequestVal<Integer> yParam = Parameters.intValue("y");
 
-            final RequestVal<Integer> xSegment = PathMatchers.integerNumber();
-            final RequestVal<Integer> ySegment = PathMatchers.integerNumber();
+            final RequestVal<Integer> xSegment = PathMatchers.intValue();
+            final RequestVal<Integer> ySegment = PathMatchers.intValue();
 
             //#handler2
             final Handler2<Integer, Integer> multiply =
@@ -115,8 +114,8 @@ public class HandlerExampleDocTest extends JUnitRouteTest {
             RequestVal<Integer> xParam = Parameters.intValue("x");
             RequestVal<Integer> yParam = Parameters.intValue("y");
 
-            RequestVal<Integer> xSegment = PathMatchers.integerNumber();
-            RequestVal<Integer> ySegment = PathMatchers.integerNumber();
+            RequestVal<Integer> xSegment = PathMatchers.intValue();
+            RequestVal<Integer> ySegment = PathMatchers.intValue();
 
 
             //#reflective

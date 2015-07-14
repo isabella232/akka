@@ -4,6 +4,8 @@
 Basics and working with Flows
 #############################
 
+.. _core-concepts-scala:
+
 Core concepts
 =============
 
@@ -40,6 +42,8 @@ Streams will not use blocking calls but asynchronous message passing to exchange
 will use asynchronous means to slow down a fast producer, without blocking its thread. This is a thread-pool friendly
 design, since entities that need to wait (a fast producer waiting on a slow consumer) will not block the thread but
 can hand it back for further use to an underlying thread-pool.
+
+.. _defining-and-running-streams-scala:
 
 Defining and running streams
 ----------------------------
@@ -214,6 +218,8 @@ which will be running on the thread pools they have been configured to run on - 
 .. note::
    Reusing *instances* of linear computation stages (Source, Sink, Flow) inside FlowGraphs is legal,
    yet will materialize that stage multiple times.
+
+.. _flow-combine-mat-scala:
 
 Combining materialized values
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
