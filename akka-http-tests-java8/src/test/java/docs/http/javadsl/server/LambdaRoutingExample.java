@@ -2,9 +2,8 @@
  * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package docs.http.javadsl;
+package docs.http.javadsl.server;
 
-import akka.actor.ActorSystem;
 import akka.dispatch.Futures;
 import akka.http.javadsl.server.*;
 import akka.http.javadsl.server.values.Parameter;
@@ -13,15 +12,12 @@ import akka.http.javadsl.server.values.PathMatcher;
 import akka.http.javadsl.server.values.PathMatchers;
 import scala.concurrent.Future;
 
-import java.io.IOException;
-import java.util.concurrent.Callable;
-
 public class LambdaRoutingExample extends HttpApp {
     static Parameter<Integer> x = Parameters.intValue("x");
     static Parameter<Integer> y = Parameters.intValue("y");
 
-    static PathMatcher<Integer> xSegment = PathMatchers.integerNumber();
-    static PathMatcher<Integer> ySegment = PathMatchers.integerNumber();
+    static PathMatcher<Integer> xSegment = PathMatchers.intValue();
+    static PathMatcher<Integer> ySegment = PathMatchers.intValue();
 
     public static RouteResult multiply(RequestContext ctx, int x, int y) {
         int result = x * y;
@@ -42,7 +38,7 @@ public class LambdaRoutingExample extends HttpApp {
                 ),
                 // matches paths like this: /add?x=42&y=23
                 path("add").route(
-                    handleWith2(x, y, LambdaRoutingExample::multiply)
+                    handleWith2(x, y, LambdaRoutingExample::add)
                 ),
                 path("subtract").route(
                     handleWith2(x, y, this::subtract)
