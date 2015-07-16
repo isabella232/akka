@@ -7,25 +7,27 @@ package akka.http.scaladsl
 import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.{ Collection ⇒ JCollection }
-import javax.net.ssl.{ SSLParameters, SSLContext }
-import com.typesafe.config.Config
-import scala.util.Try
-import scala.util.control.NonFatal
-import scala.collection.{ JavaConverters, immutable }
-import scala.concurrent.{ ExecutionContext, Promise, Future }
-import akka.japi
+import javax.net.ssl.{ SSLContext, SSLParameters }
+
+import akka.actor._
 import akka.event.LoggingAdapter
+import akka.http._
+import akka.http.impl.engine.client._
+import akka.http.impl.engine.server._
+import akka.http.impl.util.StreamUtils
+import akka.http.scaladsl.model._
+import akka.http.scaladsl.model.headers.Host
+import akka.http.scaladsl.util.FastFuture
+import akka.japi
 import akka.stream.Materializer
 import akka.stream.io._
 import akka.stream.scaladsl._
-import akka.http.impl.util.StreamUtils
-import akka.http.impl.engine.client._
-import akka.http.impl.engine.server._
-import akka.http.scaladsl.util.FastFuture
-import akka.http.scaladsl.model.headers.Host
-import akka.http.scaladsl.model._
-import akka.http._
-import akka.actor._
+import com.typesafe.config.Config
+
+import scala.collection.immutable
+import scala.concurrent.{ ExecutionContext, Future, Promise }
+import scala.util.Try
+import scala.util.control.NonFatal
 
 class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.Extension {
 
@@ -94,7 +96,15 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
       }
 
     bind(interface, port, settings, httpsContext, log)
-      .mapAsyncUnordered(settings.maxConnections)(handleOneConnection)
+      .mapAsyncUnordered(settings.maxConnections) { connection ⇒
+        handleOneConnection(connection).recoverWith {
+          // Ignore incoming errors from the connection as they will cancel the binding.
+          // As far as it is known currently, these errors can only happen if a TCP error bubbles up
+          // from the TCP layer through the HTTP layer to the Http.IncomingConnection.flow.
+          // See https://github.com/akka/akka/issues/17992
+          case NonFatal(_) ⇒ Future.successful(())
+        }(fm.executionContext)
+      }
       .to(Sink.ignore)
       .run()
   }
@@ -389,8 +399,9 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
    * method call the respective connection pools will be restarted and not contribute to the returned future.
    */
   def shutdownAllConnectionPools(): Future[Unit] = {
-    import scala.collection.JavaConverters._
     import system.dispatcher
+
+    import scala.collection.JavaConverters._
     val gateways = hostPoolCache.values().asScala
     system.log.info("Initiating orderly shutdown of all active host connections pools...")
     Future.sequence(gateways.map(_.flatMap(_.shutdown()))).map(_ ⇒ ())
@@ -567,7 +578,7 @@ object Http extends ExtensionId[HttpExt] with ExtensionIdProvider {
     new HttpExt(system.settings.config getConfig "akka.http")(system)
 }
 
-import JavaConverters._
+import scala.collection.JavaConverters._
 
 //# https-context-impl
 case class HttpsContext(sslContext: SSLContext,

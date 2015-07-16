@@ -14,8 +14,7 @@ import akka.stream.Attributes._
 import akka.stream._
 import akka.stream.impl.{ ActorPublisherSource, StreamLayout }
 import akka.util.ByteString
-import org.reactivestreams.Publisher
-import org.reactivestreams.Subscriber
+import org.reactivestreams.{ Processor, Publisher, Subscriber }
 import scala.annotation.unchecked.uncheckedVariance
 import scala.collection.JavaConverters._
 import scala.concurrent.{ Promise, Future }
@@ -147,12 +146,6 @@ object Source {
     new Source(scaladsl.Source.single(element))
 
   /**
-   * Create a `Source` with the given elements.
-   */
-  def elements[T](elems: T*): Source[T, Unit] =
-    new Source(scaladsl.Source(() ⇒ elems.iterator))
-
-  /**
    * Create a `Source` that will continually emit the given element.
    */
   def repeat[T](element: T): Source[T, Unit] =
@@ -186,6 +179,9 @@ object Source {
    * Depending on the defined [[akka.stream.OverflowStrategy]] it might drop elements if
    * there is no space available in the buffer.
    *
+   * The strategy [[akka.stream.OverflowStrategy.backpressure]] is not supported, and an
+   * IllegalArgument("Backpressure overflowStrategy not supported") will be thrown if it is passed as argument.
+   *
    * The buffer can be disabled by using `bufferSize` of 0 and then received messages are dropped
    * if there is no demand from downstream. When `bufferSize` is 0 the `overflowStrategy` does
    * not matter.
@@ -212,6 +208,14 @@ object Source {
    */
   def concat[T, M1, M2](first: Graph[SourceShape[T], M1], second: Graph[SourceShape[T], M2]): Source[T, (M1, M2)] =
     new Source(scaladsl.Source.concat(first, second))
+
+  /**
+   * Concatenates two sources so that the first element
+   * emitted by the second source is emitted after the last element of the first
+   * source.
+   */
+  def concatMat[T, M1, M2, M3](first: Graph[SourceShape[T], M1], second: Graph[SourceShape[T], M2], combine: function.Function2[M1, M2, M3]): Source[T, M3] =
+    new Source(scaladsl.Source.concatMat(first, second)(combinerToScala(combine)))
 
   /**
    * A graph with the shape of a source logically is a source, this method makes
@@ -321,6 +325,14 @@ class Source[+Out, +Mat](delegate: scaladsl.Source[Out, Mat]) extends Graph[Sour
    */
   def map[T](f: function.Function[Out, T]): javadsl.Source[T, Mat] =
     new Source(delegate.map(f.apply))
+
+  /**
+   * Recover allows to send last element on failure and gracefully complete the stream
+   * Since the underlying failure signal onError arrives out-of-band, it might jump over existing elements.
+   * This stage can recover the failure signal, but not the skipped elements, which will be dropped.
+   */
+  def recover[T >: Out](pf: PartialFunction[Throwable, T]): javadsl.Source[T, Mat] =
+    new Source(delegate.recover(pf))
 
   /**
    * Transform each input element into a sequence of output elements that is
@@ -517,9 +529,16 @@ class Source[+Out, +Mat](delegate: scaladsl.Source[Out, Mat]) extends Graph[Sour
     new Source(delegate.transform(() ⇒ mkStage.create()))
 
   /**
-   * Takes up to `n` elements from the stream and returns a pair containing a strict sequence of the taken element
+   * Takes up to `n` elements from the stream (less than `n` only if the upstream completes before emitting `n` elements)
+   * and returns a pair containing a strict sequence of the taken element
    * and a stream representing the remaining elements. If ''n'' is zero or negative, then this will return a pair
    * of an empty collection and a stream containing the whole upstream unchanged.
+   *
+   * In case of an upstream error, depending on the current state
+   *  - the master stream signals the error if less than `n` elements has been seen, and therefore the substream
+   *    has not yet been emitted
+   *  - the tail substream signals the error after the prefix and tail has been emitted by the main stream
+   *    (at that point the main stream has already completed)
    */
   def prefixAndTail(n: Int): javadsl.Source[akka.japi.Pair[java.util.List[Out @uncheckedVariance], javadsl.Source[Out @uncheckedVariance, Unit]], Mat] =
     new Source(delegate.prefixAndTail(n).map { case (taken, tail) ⇒ akka.japi.Pair(taken.asJava, tail.asJava) })

@@ -7,7 +7,10 @@ import akka.event.LoggingAdapter
 import akka.stream._
 import akka.japi.{ Util, Pair }
 import akka.japi.function
+import akka.stream.impl.Stages.Recover
 import akka.stream.scaladsl
+import akka.stream.scaladsl.{ Keep, Sink, Source }
+import org.reactivestreams.{ Subscription, Publisher, Subscriber, Processor }
 import scala.annotation.unchecked.uncheckedVariance
 import scala.collection.immutable
 import scala.concurrent.Future
@@ -30,6 +33,9 @@ object Flow {
   /** Create a `Flow` which can process elements of type `T`. */
   def create[T](): javadsl.Flow[T, T, Unit] =
     adapt(scaladsl.Flow[T])
+
+  def create[I, O](processorFactory: function.Creator[Processor[I, O]]): javadsl.Flow[I, O, Unit] =
+    adapt(scaladsl.Flow(() ⇒ processorFactory.create()))
 
   /** Create a `Flow` which can process elements of type `T`. */
   def of[T](clazz: Class[T]): javadsl.Flow[T, T, Unit] =
@@ -72,12 +78,41 @@ class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) extends Graph
 
   /**
    * Transform this [[Flow]] by appending the given processing steps.
+   *
+   * {{{
+   *     +----------------------------+
+   *     | Resulting Flow             |
+   *     |                            |
+   *     |  +------+        +------+  |
+   *     |  |      |        |      |  |
+   * In ~~> | this | ~Out~> | flow | ~~> T
+   *     |  |      |        |      |  |
+   *     |  +------+        +------+  |
+   *     +----------------------------+
+   * }}}
+   *
+   * The materialized value of the combined [[Flow]] will be the materialized
+   * value of the current flow (ignoring the other Flow’s value), use
+   * [[Flow#viaMat viaMat]] if a different strategy is needed.
    */
   def via[T, M](flow: Graph[FlowShape[Out, T], M]): javadsl.Flow[In, T, Mat] =
     new Flow(delegate.via(flow))
 
   /**
    * Transform this [[Flow]] by appending the given processing steps.
+   * {{{
+   *     +----------------------------+
+   *     | Resulting Flow             |
+   *     |                            |
+   *     |  +------+        +------+  |
+   *     |  |      |        |      |  |
+   * In ~~> | this | ~Out~> | flow | ~~> T
+   *     |  |      |        |      |  |
+   *     |  +------+        +------+  |
+   *     +----------------------------+
+   * }}}
+   * The `combine` function is used to compose the materialized values of this flow and that
+   * flow into the materialized value of the resulting Flow.
    */
   def viaMat[T, M, M2](flow: Graph[FlowShape[Out, T], M], combine: function.Function2[Mat, M, M2]): javadsl.Flow[In, T, M2] =
     new Flow(delegate.viaMat(flow)(combinerToScala(combine)))
@@ -211,11 +246,11 @@ class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) extends Graph
    * downstream may run in parallel and may complete in any order, but the elements that
    * are emitted downstream are in the same order as received from upstream.
    *
-   * If the group by function `f` throws an exception or if the `Future` is completed
+   * If the function `f` throws an exception or if the `Future` is completed
    * with failure and the supervision decision is [[akka.stream.Supervision#stop]]
    * the stream will be completed with failure.
    *
-   * If the group by function `f` throws an exception or if the `Future` is completed
+   * If the function `f` throws an exception or if the `Future` is completed
    * with failure and the supervision decision is [[akka.stream.Supervision#resume]] or
    * [[akka.stream.Supervision#restart]] the element is dropped and the stream continues.
    *
@@ -241,11 +276,11 @@ class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) extends Graph
    * as soon as it is ready, i.e. it is possible that the elements are not emitted downstream
    * in the same order as received from upstream.
    *
-   * If the group by function `f` throws an exception or if the `Future` is completed
+   * If the function `f` throws an exception or if the `Future` is completed
    * with failure and the supervision decision is [[akka.stream.Supervision#stop]]
    * the stream will be completed with failure.
    *
-   * If the group by function `f` throws an exception or if the `Future` is completed
+   * If the function `f` throws an exception or if the `Future` is completed
    * with failure and the supervision decision is [[akka.stream.Supervision#resume]] or
    * [[akka.stream.Supervision#restart]] the element is dropped and the stream continues.
    *
@@ -435,6 +470,23 @@ class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) extends Graph
   def dropWhile(p: function.Predicate[Out]): javadsl.Flow[In, Out, Mat] = new Flow(delegate.dropWhile(p.test))
 
   /**
+   * Recover allows to send last element on failure and gracefully complete the stream
+   * Since the underlying failure signal onError arrives out-of-band, it might jump over existing elements.
+   * This stage can recover the failure signal, but not the skipped elements, which will be dropped.
+   *
+   * '''Emits when''' element is available from the upstream or upstream is failed and pf returns an element
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' upstream completes or upstream failed with exception pf can handle
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   */
+  def recover[T >: Out](pf: PartialFunction[Throwable, T]): javadsl.Flow[In, T, Mat] =
+    new Flow(delegate.recover(pf))
+
+  /**
    * Terminate processing (and cancel the upstream publisher) after the given
    * number of elements. Due to input buffering some elements may have been
    * requested from upstream publishers that will then not be processed downstream
@@ -558,9 +610,16 @@ class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) extends Graph
     new Flow(delegate.transform(() ⇒ mkStage.create()))
 
   /**
-   * Takes up to `n` elements from the stream and returns a pair containing a strict sequence of the taken element
+   * Takes up to `n` elements from the stream (less than `n` only if the upstream completes before emitting `n` elements)
+   * and returns a pair containing a strict sequence of the taken element
    * and a stream representing the remaining elements. If ''n'' is zero or negative, then this will return a pair
    * of an empty collection and a stream containing the whole upstream unchanged.
+   *
+   * In case of an upstream error, depending on the current state
+   *  - the master stream signals the error if less than `n` elements has been seen, and therefore the substream
+   *    has not yet been emitted
+   *  - the tail substream signals the error after the prefix and tail has been emitted by the main stream
+   *    (at that point the main stream has already completed)
    *
    * '''Emits when''' the configured number of prefix elements are available. Emits this prefix, and the rest
    * as a substream
@@ -802,6 +861,16 @@ class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) extends Graph
   def log(name: String): javadsl.Flow[In, Out, Mat] =
     this.log(name, javaIdentityFunction[Out], null)
 
+  /**
+   * Converts this Flow to a [[RunnableGraph]] that materializes to a Reactive Streams [[org.reactivestreams.Processor]]
+   * which implements the operations encapsulated by this Flow. Every materialization results in a new Processor
+   * instance, i.e. the returned [[RunnableGraph]] is reusable.
+   *
+   * @return A [[RunnableGraph]] that materializes to a Processor when run() is called on it.
+   */
+  def toProcessor: RunnableGraph[Processor[In @uncheckedVariance, Out @uncheckedVariance]] = {
+    new RunnableGraphAdapter(delegate.toProcessor)
+  }
 }
 
 /**

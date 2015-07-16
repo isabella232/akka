@@ -3,14 +3,20 @@
  */
 package akka.stream.scaladsl
 
-import akka.actor.ActorSystem
-import akka.stream.impl.SplitDecision._
+import scala.language.higherKinds
+
 import akka.event.LoggingAdapter
-import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
+import akka.stream.impl.Stages.{ Recover, MaterializingStageFactory, StageModule }
 import akka.stream.impl.StreamLayout.{ EmptyModule, Module }
 import akka.stream._
 import akka.stream.Attributes._
+import akka.stream.stage._
+import akka.stream.impl.{ Stages, StreamLayout }
+import akka.stream.impl.SplitDecision._
+import akka.stream.impl.Stages.{ DirectProcessor, MaterializingStageFactory, StageModule }
+import akka.stream.impl.StreamLayout.{ EmptyModule, Module }
 import akka.util.Collections.EmptyImmutableSeq
+import org.reactivestreams.{ Subscription, Publisher, Subscriber, Processor }
 import org.reactivestreams.Processor
 import scala.annotation.implicitNotFound
 import scala.annotation.unchecked.uncheckedVariance
@@ -74,7 +80,7 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
       val flowCopy = flow.module.carbonCopy
       new Flow(
         module
-          .growConnect(flowCopy, shape.outlet, flowCopy.shape.inlets.head, combine)
+          .fuse(flowCopy, shape.outlet, flowCopy.shape.inlets.head, combine)
           .replaceShape(FlowShape(shape.inlet, flowCopy.shape.outlets.head)))
     }
   }
@@ -120,7 +126,7 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
       val sinkCopy = sink.module.carbonCopy
       new Sink(
         module
-          .growConnect(sinkCopy, shape.outlet, sinkCopy.shape.inlets.head, combine)
+          .fuse(sinkCopy, shape.outlet, sinkCopy.shape.inlets.head, combine)
           .replaceShape(SinkShape(shape.inlet)))
     }
   }
@@ -162,9 +168,9 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
     val flowCopy = flow.module.carbonCopy
     RunnableGraph(
       module
-        .grow(flowCopy, combine)
-        .connect(shape.outlet, flowCopy.shape.inlets.head)
-        .connect(flowCopy.shape.outlets.head, shape.inlet))
+        .compose(flowCopy, combine)
+        .wire(shape.outlet, flowCopy.shape.inlets.head)
+        .wire(flowCopy.shape.outlets.head, shape.inlet))
   }
 
   /**
@@ -207,9 +213,9 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
     val ins = copy.shape.inlets
     val outs = copy.shape.outlets
     new Flow(module
-      .grow(copy, combine)
-      .connect(shape.outlet, ins(0))
-      .connect(outs(1), shape.inlet)
+      .compose(copy, combine)
+      .wire(shape.outlet, ins(0))
+      .wire(outs(1), shape.inlet)
       .replaceShape(FlowShape(ins(1), outs(0))))
   }
 
@@ -247,18 +253,18 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
     //No need to copy here, op is a fresh instance
     if (op.isInstanceOf[Stages.Identity]) this.asInstanceOf[Repr[U, Mat]]
     else if (this.isIdentity) new Flow(op).asInstanceOf[Repr[U, Mat]]
-    else new Flow(module.growConnect(op, shape.outlet, op.inPort).replaceShape(FlowShape(shape.inlet, op.outPort)))
+    else new Flow(module.fuse(op, shape.outlet, op.inPort).replaceShape(FlowShape(shape.inlet, op.outPort)))
   }
 
   private[stream] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
     if (this.isIdentity) new Flow(op).asInstanceOf[Repr[U, Mat2]]
-    else new Flow(module.growConnect(op, shape.outlet, op.inPort, Keep.right).replaceShape(FlowShape(shape.inlet, op.outPort)))
+    else new Flow(module.fuse(op, shape.outlet, op.inPort, Keep.right).replaceShape(FlowShape(shape.inlet, op.outPort)))
   }
 
   private[akka] def andThenMat[U, Mat2, O >: Out](processorFactory: () ⇒ (Processor[O, U], Mat2)): Repr[U, Mat2] = {
     val op = Stages.DirectProcessor(processorFactory.asInstanceOf[() ⇒ (Processor[Any, Any], Any)])
     if (this.isIdentity) new Flow(op).asInstanceOf[Repr[U, Mat2]]
-    else new Flow[In, U, Mat2](module.growConnect(op, shape.outlet, op.inPort, Keep.right).replaceShape(FlowShape(shape.inlet, op.outPort)))
+    else new Flow[In, U, Mat2](module.fuse(op, shape.outlet, op.inPort, Keep.right).replaceShape(FlowShape(shape.inlet, op.outPort)))
   }
 
   /**
@@ -266,10 +272,9 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
    * operation has no effect on an empty Flow (because the attributes apply
    * only to the contained processing stages).
    */
-  override def withAttributes(attr: Attributes): Repr[Out, Mat] = {
+  override def withAttributes(attr: Attributes): Repr[Out, Mat] =
     if (this.module eq EmptyModule) this
-    else new Flow(module.withAttributes(attr).wrap())
-  }
+    else new Flow(module.withAttributes(attr).nest())
 
   override def named(name: String): Repr[Out, Mat] = withAttributes(Attributes.name(name))
 
@@ -278,18 +283,44 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
    * the materialized values of the `Source` and `Sink`, e.g. the `Subscriber` of a of a [[Source#subscriber]] and
    * and `Publisher` of a [[Sink#publisher]].
    */
-  def runWith[Mat1, Mat2](source: Graph[SourceShape[In], Mat1], sink: Graph[SinkShape[Out], Mat2])(implicit materializer: Materializer): (Mat1, Mat2) = {
+  def runWith[Mat1, Mat2](source: Graph[SourceShape[In], Mat1], sink: Graph[SinkShape[Out], Mat2])(implicit materializer: Materializer): (Mat1, Mat2) =
     Source.wrap(source).via(this).toMat(sink)(Keep.both).run()
+
+  /**
+   * Converts this Flow to a [[RunnableGraph]] that materializes to a Reactive Streams [[org.reactivestreams.Processor]]
+   * which implements the operations encapsulated by this Flow. Every materialization results in a new Processor
+   * instance, i.e. the returned [[RunnableGraph]] is reusable.
+   *
+   * @return A [[RunnableGraph]] that materializes to a Processor when run() is called on it.
+   */
+  def toProcessor: RunnableGraph[Processor[In @uncheckedVariance, Out @uncheckedVariance]] = {
+    Source.subscriber[In].via(this).toMat(Sink.publisher[Out])(Keep.both[Subscriber[In], Publisher[Out]])
+      .mapMaterializedValue {
+        case (sub, pub) ⇒ new Processor[In, Out] {
+          override def onError(t: Throwable): Unit = sub.onError(t)
+          override def onSubscribe(s: Subscription): Unit = sub.onSubscribe(s)
+          override def onComplete(): Unit = sub.onComplete()
+          override def onNext(t: In): Unit = sub.onNext(t)
+          override def subscribe(s: Subscriber[_ >: Out]): Unit = pub.subscribe(s)
+        }
+      }
   }
 
   /** Converts this Scala DSL element to it's Java DSL counterpart. */
   def asJava: javadsl.Flow[In, Out, Mat] = new javadsl.Flow(this)
-
 }
 
 object Flow extends FlowApply {
 
   private def shape[I, O](name: String): FlowShape[I, O] = FlowShape(Inlet(name + ".in"), Outlet(name + ".out"))
+
+  /**
+   * Creates a Flow from a Reactive Streams [[org.reactivestreams.Processor]]
+   */
+  def apply[I, O](processorFactory: () ⇒ Processor[I, O]): Flow[I, O, Unit] = {
+    val untypedFactory = processorFactory.asInstanceOf[() ⇒ Processor[Any, Any]]
+    Flow[I].andThen(DirectProcessor(() ⇒ (untypedFactory(), ())))
+  }
 
   /**
    * Helper to create `Flow` without a [[Source]] or a [[Sink]].
@@ -334,7 +365,7 @@ case class RunnableGraph[+Mat](private[stream] val module: StreamLayout.Module) 
   def run()(implicit materializer: Materializer): Mat = materializer.materialize(this)
 
   override def withAttributes(attr: Attributes): RunnableGraph[Mat] =
-    new RunnableGraph(module.withAttributes(attr).wrap)
+    new RunnableGraph(module.withAttributes(attr).nest)
 
   override def named(name: String): RunnableGraph[Mat] = withAttributes(Attributes.name(name))
 
@@ -349,6 +380,22 @@ trait FlowOps[+Out, +Mat] {
   type Repr[+O, +M] <: FlowOps[O, M]
 
   private final val _identity = (x: Any) ⇒ x
+
+  /**
+   * Recover allows to send last element on failure and gracefully complete the stream
+   * Since the underlying failure signal onError arrives out-of-band, it might jump over existing elements.
+   * This stage can recover the failure signal, but not the skipped elements, which will be dropped.
+   *
+   * '''Emits when''' element is available from the upstream or upstream is failed and pf returns an element
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' upstream completes or upstream failed with exception pf can handle
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   */
+  def recover[T >: Out](pf: PartialFunction[Throwable, T]): Repr[T, Mat] = andThen(Recover(pf.asInstanceOf[PartialFunction[Any, Any]]))
 
   /**
    * Transform this stream by applying the given function to each of the elements
@@ -393,11 +440,11 @@ trait FlowOps[+Out, +Mat] {
    * These Futures may complete in any order, but the elements that
    * are emitted downstream are in the same order as received from upstream.
    *
-   * If the group by function `f` throws an exception or if the `Future` is completed
+   * If the function `f` throws an exception or if the `Future` is completed
    * with failure and the supervision decision is [[akka.stream.Supervision.Stop]]
    * the stream will be completed with failure.
    *
-   * If the group by function `f` throws an exception or if the `Future` is completed
+   * If the function `f` throws an exception or if the `Future` is completed
    * with failure and the supervision decision is [[akka.stream.Supervision.Resume]] or
    * [[akka.stream.Supervision.Restart]] the element is dropped and the stream continues.
    *
@@ -423,11 +470,11 @@ trait FlowOps[+Out, +Mat] {
    * as soon as it is ready, i.e. it is possible that the elements are not emitted downstream
    * in the same order as received from upstream.
    *
-   * If the group by function `f` throws an exception or if the `Future` is completed
+   * If the function `f` throws an exception or if the `Future` is completed
    * with failure and the supervision decision is [[akka.stream.Supervision.Stop]]
    * the stream will be completed with failure.
    *
-   * If the group by function `f` throws an exception or if the `Future` is completed
+   * If the function `f` throws an exception or if the `Future` is completed
    * with failure and the supervision decision is [[akka.stream.Supervision.Resume]] or
    * [[akka.stream.Supervision.Restart]] the element is dropped and the stream continues.
    *
@@ -779,9 +826,16 @@ trait FlowOps[+Out, +Mat] {
     andThenMat(MaterializingStageFactory(mkStageAndMaterialized))
 
   /**
-   * Takes up to `n` elements from the stream and returns a pair containing a strict sequence of the taken element
+   * Takes up to `n` elements from the stream (less than `n` only if the upstream completes before emitting `n` elements)
+   * and returns a pair containing a strict sequence of the taken element
    * and a stream representing the remaining elements. If ''n'' is zero or negative, then this will return a pair
    * of an empty collection and a stream containing the whole upstream unchanged.
+   *
+   * In case of an upstream error, depending on the current state
+   *  - the master stream signals the error if less than `n` elements has been seen, and therefore the substream
+   *    has not yet been emitted
+   *  - the tail substream signals the error after the prefix and tail has been emitted by the main stream
+   *    (at that point the main stream has already completed)
    *
    * '''Emits when''' the configured number of prefix elements are available. Emits this prefix, and the rest
    * as a substream

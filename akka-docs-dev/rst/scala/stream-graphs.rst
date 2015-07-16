@@ -30,6 +30,7 @@ Akka Streams currently provide these junctions (for a detailed list see :ref:`st
 
  - ``Broadcast[T]`` – *(1 input, N outputs)* given an input element emits to each output
  - ``Balance[T]`` – *(1 input, N outputs)* given an input element emits to one of its output ports
+ - ``UnzipWith[In,A,B,...]`` – *(1 input, N outputs)* takes a function of 1 input that given a value for each input emits N output elements (where N <= 20)
  - ``UnZip[A,B]`` – *(1 input, 2 outputs)* splits a stream of ``(A,B)`` tuples into two streams, one of type ``A`` and one of type ``B``
  - ``FlexiRoute[In]`` – *(1 input, N outputs)* enables writing custom fan out elements using a simple DSL
 
@@ -275,8 +276,8 @@ Cycles in bounded flow graphs need special considerations to avoid potential dea
 This section shows several examples of problems that can arise from the presence of feedback arcs in stream processing
 graphs.
 
-The first example demonstrates a graph that contains a naïve cycle (the presence of cycles is enabled by calling
-``allowCycles()`` on the builder). The graph takes elements from the source, prints them, then broadcasts those elements
+The first example demonstrates a graph that contains a naïve cycle.
+The graph takes elements from the source, prints them, then broadcasts those elements
 to a consumer (we just used ``Sink.ignore`` for now) and to a feedback arc that is merged back into the main stream via
 a ``Merge`` junction.
 

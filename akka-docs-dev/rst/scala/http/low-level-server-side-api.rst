@@ -12,6 +12,7 @@ It sports the following features:
 - Full support for `HTTP pipelining`_
 - Full support for asynchronous HTTP streaming including "chunked" transfer encoding accessible through an idiomatic API
 - Optional SSL/TLS encryption
+- Websocket support
 
 .. _HTTP persistent connections: http://en.wikipedia.org/wiki/HTTP_persistent_connection
 .. _HTTP pipelining: http://en.wikipedia.org/wiki/HTTP_pipelining
@@ -26,7 +27,7 @@ The server-side components of Akka HTTP are split into two layers:
 The low-level server (1) is scoped with a clear focus on the essential functionality of an HTTP/1.1 server:
 
 - Connection management
-- Parsing messages and headers
+- Parsing and rendering of messages and headers
 - Timeout management (for requests and connections)
 - Response ordering (for transparent pipelining support)
 

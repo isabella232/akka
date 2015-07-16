@@ -189,9 +189,11 @@ public class TwitterStreamQuickstartDocTest {
   }
 
   static abstract class Example1 {
+    //#first-sample
     //#materializer-setup
     final ActorSystem system = ActorSystem.create("reactive-tweets");
     final Materializer mat = ActorMaterializer.create(system);
+    //#first-sample
     //#materializer-setup
   }
 
@@ -207,17 +209,22 @@ public class TwitterStreamQuickstartDocTest {
       //#backpressure-by-readline
     }
   }
-  
-  
+
+
   final Materializer mat = ActorMaterializer.create(system);
-  
+
   @Test
   public void demonstrateFilterAndMap() {
+    final SilenceSystemOut.System System = SilenceSystemOut.get();
+
+    //#first-sample
+
     //#authors-filter-map
     final Source<Author, BoxedUnit> authors =
       tweets
         .filter(t -> t.hashtags().contains(AKKA))
         .map(t -> t.author);
+    //#first-sample
     //#authors-filter-map
 
     new Object() {
@@ -239,8 +246,11 @@ public class TwitterStreamQuickstartDocTest {
       //#authors-collect
     };
 
+    //#first-sample
+
     //#authors-foreachsink-println
     authors.runWith(Sink.foreach(a -> System.out.println(a)), mat);
+    //#first-sample
     //#authors-foreachsink-println
 
     //#authors-foreach-println

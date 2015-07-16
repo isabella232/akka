@@ -5,8 +5,11 @@
 package akka.http.scaladsl.server
 package directives
 
-import java.io.{ File, FileInputStream }
-import java.net.URL
+import java.io.File
+import java.net.{ URI, URL }
+
+import akka.stream.ActorAttributes
+import akka.stream.io.{ InputStreamSource, SynchronousFileSource }
 
 import scala.annotation.tailrec
 import akka.actor.ActorSystem
@@ -51,7 +54,8 @@ trait FileAndResourceDirectives {
             extractSettings { settings ⇒
               complete {
                 HttpEntity.Default(contentType, file.length,
-                  StreamUtils.fromInputStreamSource(new FileInputStream(file), settings.fileIODispatcher))
+                  SynchronousFileSource(file)
+                    .withAttributes(ActorAttributes.dispatcher(settings.fileIODispatcher)))
               }
             }
           }
@@ -88,7 +92,8 @@ trait FileAndResourceDirectives {
                 extractSettings { settings ⇒
                   complete {
                     HttpEntity.Default(contentType, length,
-                      StreamUtils.fromInputStreamSource(url.openStream(), settings.fileIODispatcher))
+                      InputStreamSource(() ⇒ url.openStream())
+                        .withAttributes(ActorAttributes.dispatcher(settings.fileIODispatcher)))
                   }
                 }
               }
@@ -202,12 +207,11 @@ object FileAndResourceDirectives extends FileAndResourceDirectives {
         if (file.isDirectory) None
         else Some(ResourceFile(url, file.length(), file.lastModified()))
       case "jar" ⇒
-        val jarFile = url.getFile
-        val startIndex = if (jarFile.startsWith("file:")) 5 else 0
-        val bangIndex = jarFile.indexOf("!")
-        val jarFilePath = jarFile.substring(startIndex, bangIndex)
-        val resourcePath = jarFile.substring(bangIndex + 2)
-        val jar = new java.util.zip.ZipFile(jarFilePath)
+        val path = new URI(url.getPath).getPath // remove "file:" prefix and normalize whitespace
+        val bangIndex = path.indexOf('!')
+        val filePath = path.substring(0, bangIndex)
+        val resourcePath = path.substring(bangIndex + 2)
+        val jar = new java.util.zip.ZipFile(filePath)
         try {
           val entry = jar.getEntry(resourcePath)
           Option(jar.getInputStream(entry)) map { is ⇒

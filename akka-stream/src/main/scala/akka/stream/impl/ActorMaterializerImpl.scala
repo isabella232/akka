@@ -10,6 +10,7 @@ import akka.dispatch.Dispatchers
 import akka.pattern.ask
 import akka.stream.actor.ActorSubscriber
 import akka.stream.impl.GenJunctions.ZipWithModule
+import akka.stream.impl.GenJunctions.UnzipWithModule
 import akka.stream.impl.Junctions._
 import akka.stream.impl.StreamLayout.Module
 import akka.stream.impl.fusing.ActorInterpreter
@@ -68,7 +69,7 @@ private[akka] case class ActorMaterializerImpl(
   override def materialize[Mat](runnableGraph: Graph[ClosedShape, Mat]): Mat = {
     if (haveShutDown.get())
       throw new IllegalStateException("Attempted to call materialize() after the ActorMaterializer has been shut down.")
-    if (StreamLayout.Debug) runnableGraph.module.validate()
+    if (StreamLayout.Debug) StreamLayout.validate(runnableGraph.module)
 
     val session = new MaterializerSession(runnableGraph.module) {
       private val flowName = createFlowName()
@@ -178,8 +179,8 @@ private[akka] case class ActorMaterializerImpl(
               case BalanceModule(shape, waitForDownstreams, _) ⇒
                 (Balance.props(effectiveSettings, shape.outArray.size, waitForDownstreams), shape.in, shape.outArray.toSeq)
 
-              case UnzipModule(shape, _) ⇒
-                (Unzip.props(effectiveSettings), shape.in, shape.outlets)
+              case unzip: UnzipWithModule ⇒
+                (unzip.props(effectiveSettings), unzip.inPorts.head, unzip.shape.outlets)
             }
             val impl = actorOf(props, stageName(effectiveAttributes), effectiveSettings.dispatcher)
             val size = outs.size
@@ -299,8 +300,6 @@ private[akka] object ActorProcessorFactory {
     val settings = materializer.effectiveSettings(att)
     def interp(s: Stage[_, _]): (Props, Unit) = (ActorInterpreter.props(settings, List(s), materializer, att), ())
     op match {
-      case Identity(_)                ⇒ throw new AssertionError("Identity cannot end up in ActorProcessorFactory")
-      case Fused(ops, _)              ⇒ (ActorInterpreter.props(settings, ops, materializer, att), ())
       case Map(f, _)                  ⇒ interp(fusing.Map(f, settings.supervisionDecider))
       case Filter(p, _)               ⇒ interp(fusing.Filter(p, settings.supervisionDecider))
       case Drop(n, _)                 ⇒ interp(fusing.Drop(n))
@@ -310,14 +309,16 @@ private[akka] object ActorProcessorFactory {
       case Collect(pf, _)             ⇒ interp(fusing.Collect(pf, settings.supervisionDecider))
       case Scan(z, f, _)              ⇒ interp(fusing.Scan(z, f, settings.supervisionDecider))
       case Fold(z, f, _)              ⇒ interp(fusing.Fold(z, f, settings.supervisionDecider))
-      case Expand(s, f, _)            ⇒ interp(fusing.Expand(s, f))
-      case Conflate(s, f, _)          ⇒ interp(fusing.Conflate(s, f, settings.supervisionDecider))
-      case Buffer(n, s, _)            ⇒ interp(fusing.Buffer(n, s))
-      case MapConcat(f, _)            ⇒ interp(fusing.MapConcat(f, settings.supervisionDecider))
-      case MapAsync(p, f, _)          ⇒ interp(fusing.MapAsync(p, f, settings.supervisionDecider))
-      case MapAsyncUnordered(p, f, _) ⇒ interp(fusing.MapAsyncUnordered(p, f, settings.supervisionDecider))
-      case Grouped(n, _)              ⇒ interp(fusing.Grouped(n))
-      case Log(n, e, l, _)            ⇒ interp(fusing.Log(n, e, l))
+      case Recover(pf, _)             ⇒ (ActorInterpreter.props(settings, List(fusing.Recover(pf)), materializer, att), ())
+      case Scan(z, f, _)              ⇒ (ActorInterpreter.props(settings, List(fusing.Scan(z, f, settings.supervisionDecider)), materializer, att), ())
+      case Expand(s, f, _)            ⇒ (ActorInterpreter.props(settings, List(fusing.Expand(s, f)), materializer, att), ())
+      case Conflate(s, f, _)          ⇒ (ActorInterpreter.props(settings, List(fusing.Conflate(s, f, settings.supervisionDecider)), materializer, att), ())
+      case Buffer(n, s, _)            ⇒ (ActorInterpreter.props(settings, List(fusing.Buffer(n, s)), materializer, att), ())
+      case MapConcat(f, _)            ⇒ (ActorInterpreter.props(settings, List(fusing.MapConcat(f, settings.supervisionDecider)), materializer, att), ())
+      case MapAsync(p, f, _)          ⇒ (ActorInterpreter.props(settings, List(fusing.MapAsync(p, f, settings.supervisionDecider)), materializer, att), ())
+      case MapAsyncUnordered(p, f, _) ⇒ (ActorInterpreter.props(settings, List(fusing.MapAsyncUnordered(p, f, settings.supervisionDecider)), materializer, att), ())
+      case Grouped(n, _)              ⇒ (ActorInterpreter.props(settings, List(fusing.Grouped(n)), materializer, att), ())
+      case Log(n, e, l, _)            ⇒ (ActorInterpreter.props(settings, List(fusing.Log(n, e, l)), materializer, att), ())
       case GroupBy(f, _)              ⇒ (GroupByProcessorImpl.props(settings, f), ())
       case PrefixAndTail(n, _)        ⇒ (PrefixAndTailImpl.props(settings, n), ())
       case Split(d, _)                ⇒ (SplitWhereProcessorImpl.props(settings, d), ())
@@ -328,6 +329,7 @@ private[akka] object ActorProcessorFactory {
         val s_m = mkStageAndMat()
         (ActorInterpreter.props(settings, List(s_m._1), materializer, att), s_m._2)
       case DirectProcessor(p, m) ⇒ throw new AssertionError("DirectProcessor cannot end up in ActorProcessorFactory")
+      case Identity(_)           ⇒ throw new AssertionError("Identity cannot end up in ActorProcessorFactory")
     }
   }
 

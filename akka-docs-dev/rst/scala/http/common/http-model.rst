@@ -72,8 +72,8 @@ Here are some examples how to construct an ``HttpResponse``:
 .. includecode:: ../../code/docs/http/scaladsl/ModelSpec.scala
    :include: construct-response
 
-In addition to the simple ``HttpEntity`` constructors create an entity from a fixed ``String`` or ``ByteString`` shown
-as here the Akka HTTP model defines a number of subclasses of ``HttpEntity`` which allow body data to be specified as a
+In addition to the simple ``HttpEntity`` constructors which create an entity from a fixed ``String`` or ``ByteString``
+as shown here the Akka HTTP model defines a number of subclasses of ``HttpEntity`` which allow body data to be specified as a
 stream of bytes.
 
 
@@ -93,9 +93,9 @@ HttpEntity.Strict
 
 HttpEntity.Default
   The general, unchunked HTTP/1.1 message entity.
-  It has a known length and presents its data as a ``Source[ByteString]`` which can only materialized once.
+  It has a known length and presents its data as a ``Source[ByteString]`` which can be only materialized once.
   It is an error if the provided source doesn't produce exactly as many bytes as specified.
-  On the wire, a ``Strict`` entity and a ``Default`` entity cannot be distinguished.
+  The distinction of ``Strict`` and ``Default`` is an API-only one. One the wire, both kinds of entities look the same.
 
 
 HttpEntity.Chunked

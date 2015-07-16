@@ -216,7 +216,7 @@ public class PathDirectivesTest extends JUnitRouteTest {
 
     @Test
     public void testIntegerMatcher() {
-        PathMatcher<Integer> age = PathMatchers.integerNumber();
+        PathMatcher<Integer> age = PathMatchers.intValue();
 
         TestRoute route =
             testRoute(
@@ -233,15 +233,15 @@ public class PathDirectivesTest extends JUnitRouteTest {
     public void testTwoVals() {
         // tests that `x` and `y` have different identities which is important for
         // retrieving the values
-        PathMatcher<Integer> x = PathMatchers.integerNumber();
-        PathMatcher<Integer> y = PathMatchers.integerNumber();
+        PathMatcher<Integer> x = PathMatchers.intValue();
+        PathMatcher<Integer> y = PathMatchers.intValue();
 
         TestRoute route =
             testRoute(
                 path("multiply", x, "with", y).route(
-                    handleWith(x, y, new Handler2<Integer, Integer>() {
+                    handleWith2(x, y, new Handler2<Integer, Integer>() {
                         @Override
-                        public RouteResult handle(RequestContext ctx, Integer x, Integer y) {
+                        public RouteResult apply(RequestContext ctx, Integer x, Integer y) {
                             return ctx.complete(String.format("%d * %d = %d", x, y, x * y));
                         }
                     })
@@ -254,7 +254,7 @@ public class PathDirectivesTest extends JUnitRouteTest {
 
     @Test
     public void testHexIntegerMatcher() {
-        PathMatcher<Integer> color = PathMatchers.hexIntegerNumber();
+        PathMatcher<Integer> color = PathMatchers.hexIntValue();
 
         TestRoute route =
             testRoute(
@@ -267,7 +267,7 @@ public class PathDirectivesTest extends JUnitRouteTest {
 
     @Test
     public void testLongMatcher() {
-        PathMatcher<Long> bigAge = PathMatchers.longNumber();
+        PathMatcher<Long> bigAge = PathMatchers.longValue();
 
         TestRoute route =
             testRoute(
@@ -280,7 +280,7 @@ public class PathDirectivesTest extends JUnitRouteTest {
 
     @Test
     public void testHexLongMatcher() {
-        PathMatcher<Long> code = PathMatchers.hexLongNumber();
+        PathMatcher<Long> code = PathMatchers.hexLongValue();
 
         TestRoute route =
             testRoute(
