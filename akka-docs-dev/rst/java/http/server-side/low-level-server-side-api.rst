@@ -62,7 +62,7 @@ Starting and Stopping
 On the most basic level an Akka HTTP server is bound by invoking the ``bind`` method of the `akka.http.javadsl.Http`_
 extension:
 
-.. includecode:: ../../code/docs/http/javadsl/HttpServerExampleDocTest.java
+.. includecode:: ../../code/docs/http/javadsl/server/HttpServerExampleDocTest.java
    :include: binding-example
 
 Arguments to the ``Http().bind`` method specify the interface and port to bind to and register interest in handling
@@ -99,7 +99,7 @@ Requests are handled by calling one of the ``handleWithXXX`` methods with a hand
 
 Here is a complete example:
 
-.. includecode:: ../../code/docs/http/javadsl/HttpServerExampleDocTest.java
+.. includecode:: ../../code/docs/http/javadsl/server/HttpServerExampleDocTest.java
   :include: full-server-example
 
 In this example, a request is handled by transforming the request stream with a function ``Function<HttpRequest, HttpResponse>``
@@ -138,8 +138,8 @@ Server-Side HTTPS Support
 
 Akka HTTP supports TLS encryption on the server-side as well as on the :ref:`client-side <clientSideHTTPS-java>`.
 
-The central vehicle for configuring encryption is the ``HttpsContext``, which can be created using ``HttpsContext.create``
-which is defined like this:
+The central vehicle for configuring encryption is the ``HttpsContext``, which can be created using
+the static method ``HttpsContext.create`` which is defined like this:
 
 .. includecode:: /../../akka-http-core/src/main/java/akka/http/javadsl/HttpsContext.java
    :include: http-context-creation
@@ -149,8 +149,20 @@ optional ``httpsContext`` parameter, which can receive the HTTPS configuration i
 instance.
 If defined encryption is enabled on all accepted connections. Otherwise it is disabled (which is the default).
 
+.. _http-server-layer-java:
 
 Stand-Alone HTTP Layer Usage
 ----------------------------
 
-// TODO
+Due to its Reactive-Streams-based nature the Akka HTTP layer is fully detachable from the underlying TCP
+interface. While in most applications this "feature" will not be crucial it can be useful in certain cases to be able
+to "run" the HTTP layer (and, potentially, higher-layers) against data that do not come from the network but rather
+some other source. Potential scenarios where this might be useful include tests, debugging or low-level event-sourcing
+(e.g by replaying network traffic).
+
+On the server-side the stand-alone HTTP layer forms a ``BidiFlow<HttpResponse, SslTlsOutbound, SslTlsInbound, HttpRequest, BoxedUnit>``,
+that is a stage that "upgrades" a potentially encrypted raw connection to the HTTP level.
+
+You create an instance of the layer by calling one of the two overloads of the ``Http.get(system).serverLayer`` method,
+which also allows for varying degrees of configuration. Note, that the returned instance is not reusable and can only
+be materialized once.

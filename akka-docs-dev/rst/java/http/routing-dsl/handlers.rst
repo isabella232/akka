@@ -64,7 +64,8 @@ about the number of handled arguments easier. For example, a :class:`Handler1[St
 ``Function2[RequestContext, String, RouteResult]``. You can think of handlers as hot-dogs, where each ``T``
 type represents a sausage, put between the "buns" which are ``RequestContext`` and ``RouteResult``.
 
-In Java 8 handlers can be provided as function literals or method references. The example from before then looks like this:
+In Java 8 handlers can be provided as function literals or method references. The previous example can then be written
+like this:
 
 .. includecode:: /../../akka-http-tests-java8/src/test/java/docs/http/javadsl/server/HandlerExampleDocTest.java
    :include: handler2-java8-example-full
@@ -76,11 +77,9 @@ In Java 8 handlers can be provided as function literals or method references. Th
   if one type of a handler does not match the given values, *all* possible candidates would be printed in the error message
   (22 of them), instead of just the one arity-matching method, pointing out that the type does not match.
 
-   We opted for better error messages as we feel this is more helpful when developing applications,
-   instead of having one overloaded method which looks nice when everything works, but procudes hard to read error
-   messages if something does not match up.
-
-
+  We opted for better error messages as we feel this is more helpful when developing applications,
+  instead of having one overloaded method which looks nice when everything works, but procudes hard to read error
+  messages if something does not match up.
 
 Providing Handlers by Reflection
 --------------------------------
@@ -102,4 +101,42 @@ static methods. The referenced method must be publicly accessible.
 Deferring Result Creation
 -------------------------
 
-TODO
+Sometimes a handler cannot directly complete the request but needs to do some processing asynchronously. In this case
+the completion of a request needs to be deferred until the result has been generated. This is supported by the routing
+DSL in two ways: either you can use one of the ``handleWithAsyncN`` methods passing an ``AsyncHandlerN`` which
+returns a ``Future<RouteResult>``, i.e. an eventual ``RouteResult``, or you can also use a regular handler as shown
+above and use ``RequestContext.completeWith`` for completion which takes an ``Future<RouteResult>`` as an argument.
+
+This is demonstrated in the following example. Consider a asynchronous service defined like this
+(making use of Java 8 lambdas):
+
+.. includecode:: /../../akka-http-tests-java8/src/test/java/docs/http/javadsl/server/HandlerExampleDocTest.java
+  :include: async-service-definition
+
+Here the calculator runs the actual calculation in the background and only eventually returns the result. The HTTP
+service should provide a front-end to that service without having to block while waiting for the results. As explained
+above this can be done in two ways.
+
+First, you can use ``handleWithAsyncN`` to be able to return a ``Future<RouteResult>``:
+
+.. includecode:: /../../akka-http-tests-java8/src/test/java/docs/http/javadsl/server/HandlerExampleDocTest.java
+  :include: async-handler-1
+
+The handler invokes the service and then maps the calculation result to a ``RouteResult`` using ``Future.map`` and
+returns the resulting ``Future<RouteResult>``.
+
+Otherwise, you can also still use ``handleWithN`` and use ``RequestContext.completeWith`` to "convert" a
+``Future<RouteResult>`` into a ``RouteResult`` as shown here:
+
+.. includecode:: /../../akka-http-tests-java8/src/test/java/docs/http/javadsl/server/HandlerExampleDocTest.java
+  :include: async-handler-2
+
+Using this style, you can decide in your handler if you want to return a direct synchronous result or if you need
+to defer completion.
+
+Both alternatives will not block and show the same runtime behavior.
+
+Here's the complete example:
+
+.. includecode:: /../../akka-http-tests-java8/src/test/java/docs/http/javadsl/server/HandlerExampleDocTest.java
+  :include: async-example-full

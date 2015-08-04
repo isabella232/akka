@@ -13,7 +13,7 @@ Overview
 Since akka-http-core provides the central HTTP data structures you will find the following import in quite a
 few places around the code base (and probably your own code as well):
 
-.. includecode:: ../code/docs/http/javadsl/ModelSpec.java
+.. includecode:: ../code/docs/http/javadsl/ModelDocTest.java
    :include: import-model
 
 This brings all of the most relevant types in scope, mainly:
@@ -50,7 +50,7 @@ An ``HttpRequest`` consists of
 
 Here are some examples how to construct an ``HttpRequest``:
 
-.. includecode:: ../code/docs/http/javadsl/ModelSpec.java
+.. includecode:: ../code/docs/http/javadsl/ModelDocTest.java
    :include: construct-request
 
 In its basic form ``HttpRequest.create`` creates an empty default GET request without headers which can then be
@@ -71,7 +71,7 @@ An ``HttpResponse`` consists of
 
 Here are some examples how to construct an ``HttpResponse``:
 
-.. includecode:: ../code/docs/http/javadsl/ModelSpec.java
+.. includecode:: ../code/docs/http/javadsl/ModelDocTest.java
    :include: construct-response
 
 In addition to the simple ``HttpEntities.create`` methods which create an entity from a fixed ``String`` or ``ByteString``
@@ -136,9 +136,9 @@ The class ``HttpEntities`` contains static methods to create entities from commo
 
 You can use the ``isX` methods of ``HttpEntity`` to find out of which subclass an entity is if you want to provide
 special handling for each of the subtypes. However, in many cases a recipient of an ``HttpEntity`` doesn't care about
-of which subtype an entity is (and how data is transported exactly on the HTTP layer). Therefore, a general
-``HttpEntity::getDataBytes: Source<ByteString, ?>`` is provided which allows access to the data of an entity regardless
-of its concrete subtype.
+of which subtype an entity is (and how data is transported exactly on the HTTP layer). Therefore, the general method
+``HttpEntity.getDataBytes()`` is provided which returns a ``Source<ByteString, ?>`` that allows access to the data of an
+entity regardless of its concrete subtype.
 
 .. note::
 
@@ -159,6 +159,29 @@ of its concrete subtype.
   Therefore you must make sure that you always consume the entity data, even in the case that you are not actually
   interested in it!
 
+Special processing for HEAD requests
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+`RFC 7230`_ defines very clear rules for the entity length of HTTP messages.
+
+Especially this rule requires special treatment in Akka HTTP:
+
+ Any response to a HEAD request and any response with a 1xx
+ (Informational), 204 (No Content), or 304 (Not Modified) status
+ code is always terminated by the first empty line after the
+ header fields, regardless of the header fields present in the
+ message, and thus cannot contain a message body.
+
+Responses to HEAD requests introduce the complexity that `Content-Length` or `Transfer-Encoding` headers
+can be present but the entity is empty. This is modeled by allowing `HttpEntityDefault` and `HttpEntityChunked`
+to be used for HEAD responses with an empty data stream.
+
+Also, when a HEAD response has an `HttpEntityCloseDelimited` entity the Akka HTTP implementation will *not* close the
+connection after the response has been sent. This allows the sending of HEAD responses without `Content-Length`
+header across persistent HTTP connections.
+
+.. _RFC 7230: http://tools.ietf.org/html/rfc7230#section-3.3.3
+
 
 Header Model
 ------------
@@ -169,7 +192,7 @@ as a ``RawHeader`` (which is essentially a String/String name/value pair).
 
 See these examples of how to deal with headers:
 
-.. includecode:: ../code/docs/http/javadsl/ModelSpec.java
+.. includecode:: ../code/docs/http/javadsl/ModelDocTest.java
    :include: headers
 
 

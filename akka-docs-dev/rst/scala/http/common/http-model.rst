@@ -133,9 +133,9 @@ The ``HttpEntity`` companion object contains several helper constructors to crea
 
 You can pattern match over the subtypes of ``HttpEntity`` if you want to provide special handling for each of the
 subtypes. However, in many cases a recipient of an ``HttpEntity`` doesn't care about of which subtype an entity is
-(and how data is transported exactly on the HTTP layer). Therefore, a general
-``HttpEntity::dataBytes: Source[ByteString, Any]`` is provided which allows access to the data of an entity regardless
-of its concrete subtype.
+(and how data is transported exactly on the HTTP layer). Therefore, the general method ``HttpEntity.dataBytes`` is
+provided which returns a ``Source[ByteString, Any]`` that allows access to the data of an entity regardless of its
+concrete subtype.
 
 .. note::
 
@@ -156,6 +156,28 @@ of its concrete subtype.
   Therefore you must make sure that you always consume the entity data, even in the case that you are not actually
   interested in it!
 
+Special processing for HEAD requests
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+`RFC 7230`_ defines very clear rules for the entity length of HTTP messages.
+
+Especially this rule requires special treatment in Akka HTTP:
+
+ Any response to a HEAD request and any response with a 1xx
+ (Informational), 204 (No Content), or 304 (Not Modified) status
+ code is always terminated by the first empty line after the
+ header fields, regardless of the header fields present in the
+ message, and thus cannot contain a message body.
+
+Responses to HEAD requests introduce the complexity that `Content-Length` or `Transfer-Encoding` headers
+can be present but the entity is empty. This is modeled by allowing `HttpEntity.Default` and `HttpEntity.Chunked`
+to be used for HEAD responses with an empty data stream.
+
+Also, when a HEAD response has an `HttpEntity.CloseDelimited` entity the Akka HTTP implementation will *not* close the
+connection after the response has been sent. This allows the sending of HEAD responses without `Content-Length`
+header across persistent HTTP connections.
+
+.. _RFC 7230: http://tools.ietf.org/html/rfc7230#section-3.3.3
 
 Header Model
 ------------

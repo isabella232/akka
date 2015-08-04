@@ -2,16 +2,13 @@
  * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package docs.http.javadsl;
+package docs.http.javadsl.server;
 
-import akka.http.javadsl.model.HttpRequest;
 import akka.http.javadsl.model.StatusCodes;
 import akka.http.javadsl.server.*;
-import akka.http.javadsl.server.values.Parameters;
 import akka.http.javadsl.server.values.PathMatcher;
 import akka.http.javadsl.server.values.PathMatchers;
 import akka.http.javadsl.testkit.JUnitRouteTest;
-import akka.http.javadsl.testkit.TestRoute;
 import org.junit.Test;
 
 public class PathDirectiveExampleTest extends JUnitRouteTest {
@@ -81,10 +78,5 @@ public class PathDirectiveExampleTest extends JUnitRouteTest {
             )
         );
         //#path-examples
-    }
-
-    // FIXME: remove once #17988 is merged
-    public static <T> Route handleWith1(RequestVal<T> val, Object o) {
-        return null;
     }
 }

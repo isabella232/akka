@@ -1,4 +1,4 @@
-.. _ConnectionLevelApi:
+.. _connection-level-api:
 
 Connection-Level Client-Side API
 ================================
@@ -11,9 +11,8 @@ highest flexibility at the cost of providing the least convenience.
 Opening HTTP Connections
 ------------------------
 
-With the connection-level API you open a new HTTP connection by materializing a ``Flow`` returned by the
-``Http().outgoingConnection(...)`` method. The target endpoint to which a connection is to be opened needs to be
-specified as an argument to ``Http().outgoingConnection(...)``. Here is an example:
+With the connection-level API you open a new HTTP connection to a target endpoint by materializing a ``Flow``
+returned by the ``Http().outgoingConnection(...)`` method. Here is an example:
 
 .. includecode:: ../../code/docs/http/scaladsl/HttpClientExampleSpec.scala
    :include: outgoing-connection-example
@@ -51,7 +50,7 @@ Closing Connections
 -------------------
 
 Akka HTTP actively closes an established connection upon reception of a response containing ``Connection: close`` header.
-Of course the connection can also be closed by the server.
+The connection can also be closed by the server.
 
 An application can actively trigger the closing of the connection by completing the request stream. In this case the
 underlying TCP connection will be closed when the last pending response has been received.
@@ -68,4 +67,16 @@ However, akka-stream should soon provide such a feature.
 Stand-Alone HTTP Layer Usage
 ----------------------------
 
-// TODO
+Due to its Reactive-Streams-based nature the Akka HTTP layer is fully detachable from the underlying TCP
+interface. While in most applications this "feature" will not be crucial it can be useful in certain cases to be able
+to "run" the HTTP layer (and, potentially, higher-layers) against data that do not come from the network but rather
+some other source. Potential scenarios where this might be useful include tests, debugging or low-level event-sourcing
+(e.g by replaying network traffic).
+
+On the client-side the stand-alone HTTP layer forms a ``BidiStage`` that is defined like this:
+
+.. includecode2:: /../../akka-http-core/src/main/scala/akka/http/scaladsl/Http.scala
+   :snippet: client-layer
+
+You create an instance of ``Http.ClientLayer`` by calling one of the two overloads of the ``Http().clientLayer`` method,
+which also allows for varying degrees of configuration.
