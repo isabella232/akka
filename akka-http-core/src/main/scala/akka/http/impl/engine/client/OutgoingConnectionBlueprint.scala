@@ -66,6 +66,7 @@ private[http] object OutgoingConnectionBlueprint {
 
     import ParserOutput._
     val responsePrep = Flow[List[ResponseOutput]]
+      .via(printEvent("responsePrepIn"))
       .transform(StreamUtils.recover { case x: ResponseParsingError ⇒ x.error :: Nil }) // FIXME after #16565
       .mapConcat(identityFunc)
       .splitWhen(x ⇒ x.isInstanceOf[MessageStart] || x == MessageEnd)
@@ -75,6 +76,7 @@ private[http] object OutgoingConnectionBlueprint {
           HttpResponse(statusCode, headers, createEntity(entityParts), protocol)
         case (MessageStartError(_, info), _) ⇒ throw IllegalResponseException(info)
       }
+      .via(printEvent("responsePrepIn"))
 
     FlowGraph.partial() { implicit b ⇒
       import FlowGraph.Implicits._
@@ -88,7 +90,7 @@ private[http] object OutgoingConnectionBlueprint {
       val wrapTls = b.add(Flow[ByteString].map(SendBytes))
       terminationMerge.out ~> requestRendering ~> logger ~> wrapTls
 
-      val unwrapTls = b.add(Flow[SslTlsInbound].collect { case SessionBytes(_, bytes) ⇒ bytes })
+      val unwrapTls = b.add(Flow[SslTlsInbound].via(printEvent("dataIn")).collect { case SessionBytes(_, bytes) ⇒ bytes })
       unwrapTls ~> responseParsingMerge.in0
 
       methodBypassFanout.out(0) ~> terminationMerge.in0

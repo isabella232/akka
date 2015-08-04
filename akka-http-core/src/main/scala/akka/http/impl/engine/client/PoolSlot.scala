@@ -91,6 +91,7 @@ private object PoolSlot {
     var inflightRequests = immutable.Queue.empty[RequestContext]
     val runnableGraph = Source.actorPublisher[HttpRequest](Props(new FlowInportActor(self)).withDeploy(Deploy.local))
       .via(connectionFlow)
+      .via(akka.http.impl.util.printEvent("connectionFlowOut"))
       .toMat(Sink.actorSubscriber[HttpResponse](Props(new FlowOutportActor(self)).withDeploy(Deploy.local)))(Keep.both)
 
     def requestStrategy = ZeroRequestStrategy

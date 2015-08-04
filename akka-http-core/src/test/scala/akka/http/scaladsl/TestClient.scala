@@ -5,12 +5,14 @@
 package akka.http.scaladsl
 
 import com.typesafe.config.{ Config, ConfigFactory }
-import scala.util.{ Failure, Success }
+import scala.util._
 import akka.actor.{ UnhandledMessage, ActorSystem }
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{ Sink, Source }
 import akka.http.scaladsl.model._
 import akka.http.impl.util._
+import scala.concurrent._
+import scala.concurrent.duration._
 
 object TestClient extends App {
   val testConf: Config = ConfigFactory.parseString("""
@@ -20,12 +22,27 @@ object TestClient extends App {
   implicit val system = ActorSystem("ServerTest", testConf)
   implicit val fm = ActorMaterializer()
   import system.dispatcher
-
-  installEventStreamLoggerFor[UnhandledMessage]
-
   val host = "github.com"
 
-  fetchServerVersion1()
+  try {
+    installEventStreamLoggerFor[UnhandledMessage]
+
+    val request =
+      HttpRequest(uri = "https://www.google.com:80/")
+    def runOne(): Future[Try[HttpResponse]] =
+      Source.single((request, ()))
+        .via(Http(system).cachedHostConnectionPoolTls[Unit]("www.google.com", 80))
+        .runWith(Sink.head).map(_._1)
+    //Http().singleRequest(request).map(r ⇒ Try(r))
+
+    Await.result(runOne(), 10.seconds)
+
+    fetchServerVersion1()
+  } catch {
+    case e ⇒
+      e.printStackTrace()
+      shutdown()
+  }
 
   //  Console.readLine()
   //  system.shutdown()

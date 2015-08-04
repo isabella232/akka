@@ -462,6 +462,7 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
                                    gatewayFuture: Future[PoolGateway])(
                                      implicit fm: Materializer): Flow[(HttpRequest, T), (Try[HttpResponse], T), HostConnectionPool] =
     clientFlow[T](hcps.setup.settings)(_ -> gatewayFuture)
+      .via(akka.http.impl.util.printEvent("clientFlowOut"))
       .mapMaterializedValue(_ ⇒ HostConnectionPool(hcps)(gatewayFuture))
 
   private def clientFlow[T](settings: ConnectionPoolSettings)(f: HttpRequest ⇒ (HttpRequest, Future[PoolGateway]))(

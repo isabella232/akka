@@ -36,7 +36,7 @@ private[akka] object SslTlsCipherActor {
             role: Role,
             closing: Closing,
             hostInfo: Option[(String, Int)]): Props =
-    Props(new SslTlsCipherActor(settings, sslContext, firstSession, tracing, role, closing, hostInfo)).withDeploy(Deploy.local)
+    Props(new SslTlsCipherActor(settings, sslContext, firstSession, tracing = true, role, closing, hostInfo)).withDeploy(Deploy.local)
 
   final val TransportIn = 0
   final val TransportOut = 0
