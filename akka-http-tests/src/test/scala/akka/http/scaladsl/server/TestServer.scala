@@ -5,11 +5,15 @@
 package akka.http.scaladsl.server
 
 import akka.http.scaladsl.marshallers.xml.ScalaXmlSupport
+import akka.http.scaladsl.model.ws.Message
 import akka.http.scaladsl.server.directives.UserCredentials
+import akka.stream.scaladsl.{ Keep, Source, Sink, Flow }
 import com.typesafe.config.{ ConfigFactory, Config }
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.http.scaladsl.Http
+
+import scala.concurrent.Promise
 
 object TestServer extends App {
   val testConf: Config = ConfigFactory.parseString("""
@@ -21,6 +25,8 @@ object TestServer extends App {
 
   import ScalaXmlSupport._
   import Directives._
+
+  val pipePromise = Promise[Flow[Message, Message, Unit]]()
 
   def auth: AuthenticatorPF[String] = {
     case p @ UserCredentials.Provided(name) if p.verifySecret(name + "-password") ⇒ name
@@ -41,6 +47,17 @@ object TestServer extends App {
         } ~
         path("crash") {
           complete(sys.error("BOOM!"))
+        } ~
+        path("ws-relay-1") {
+          val (first, second) = activeBidiPair[Message]()
+          pipePromise.success(second)
+
+          handleWebsocketMessages(first)
+        } ~
+        path("ws-relay-2") {
+          onSuccess(pipePromise.future) { second ⇒
+            handleWebsocketMessages(second)
+          }
         }
     } ~ pathPrefix("inner")(getFromResourceDirectory("someDir"))
   }, interface = "localhost", port = 8080)
@@ -62,4 +79,19 @@ object TestServer extends App {
         </ul>
       </body>
     </html>
+
+  def activePipe[T](): (Sink[T, Unit], Source[T, Unit]) = {
+    val (sub, pub) =
+      Source.subscriber[T].toMat(Sink.publisher[T])(Keep.both).run()
+
+    (Sink(sub), Source(pub))
+  }
+  def activeBidiPair[T](): (Flow[T, T, Unit], Flow[T, T, Unit]) = {
+    val (inSink, inSource) = activePipe[T]()
+    val (outSink, outSource) = activePipe[T]()
+
+    // cross the links
+    (Flow.wrap(inSink, outSource)(Keep.none),
+      Flow.wrap(outSink, inSource)(Keep.none))
+  }
 }
