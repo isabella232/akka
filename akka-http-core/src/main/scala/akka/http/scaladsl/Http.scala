@@ -25,6 +25,7 @@ import akka.japi
 import akka.stream.Materializer
 import akka.stream.io._
 import akka.stream.scaladsl._
+import akka.util.ByteString
 import com.typesafe.config.Config
 
 import scala.collection.immutable
@@ -210,11 +211,17 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
                                   log: LoggingAdapter): Flow[HttpRequest, HttpResponse, Future[OutgoingConnection]] = {
     val hostHeader = if (port == (if (httpsContext.isEmpty) 80 else 443)) Host(host) else Host(host, port)
     val layer = clientLayer(hostHeader, settings, log)
+    layer.joinMat(_outgoingTlsConnectionLayer(host, port, localAddress, settings, httpsContext, log))(Keep.right)
+  }
+
+  private def _outgoingTlsConnectionLayer(host: String, port: Int, localAddress: Option[InetSocketAddress],
+                                          settings: ClientConnectionSettings, httpsContext: Option[HttpsContext],
+                                          log: LoggingAdapter): Flow[SslTlsOutbound, SslTlsInbound, Future[OutgoingConnection]] = {
     val tlsStage = sslTlsStage(httpsContext, Client, Some(host -> port))
     val transportFlow = Tcp().outgoingConnection(new InetSocketAddress(host, port), localAddress,
       settings.socketOptions, halfClose = true, settings.connectingTimeout, settings.idleTimeout)
 
-    layer.atop(tlsStage).joinMat(transportFlow) { (_, tcpConnFuture) ⇒
+    tlsStage.joinMat(transportFlow) { (_, tcpConnFuture) ⇒
       import system.dispatcher
       tcpConnFuture map { tcpConn ⇒ OutgoingConnection(tcpConn.localAddress, tcpConn.remoteAddress) }
     }
@@ -409,11 +416,58 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
       case e: IllegalUriException ⇒ FastFuture.failed(e)
     }
 
+  /**
+   * Constructs a [[WebsocketClientLayer]] stage using the configured default [[ClientConnectionSettings]],
+   * configured using the `akka.http.client` config section.
+   *
+   * The layer is not reusable and must only be materialized once.
+   */
   def websocketClientLayer(uri: Uri,
                            settings: ClientConnectionSettings = ClientConnectionSettings(system),
                            random: Random = new SecureRandom(),
                            log: LoggingAdapter = system.log): Http.WebsocketClientLayer =
     WebsocketClientBlueprint(uri, settings, random, log)
+
+  /**
+   * Constructs a flow that once materialized establishes a Websocket connection to the given Uri.
+   *
+   * The layer is not reusable and must only be materialized once.
+   */
+  def websocketClientFlow(uri: Uri,
+                          localAddress: Option[InetSocketAddress] = None,
+                          settings: ClientConnectionSettings = ClientConnectionSettings(system),
+                          random: Random = new SecureRandom(),
+                          httpsContext: Option[HttpsContext] = None,
+                          log: LoggingAdapter = system.log): Flow[Message, Message, Future[OutgoingConnection]] = {
+    require(uri.isAbsolute, s"Websocket request URI must be absolute but was '$uri'")
+
+    val ctx = uri.scheme match {
+      case "ws"  ⇒ None
+      case "wss" ⇒ effectiveHttpsContext(httpsContext)
+      case scheme @ _ ⇒
+        throw new IllegalArgumentException(s"Illegal URI scheme '$scheme' in '$uri' for Websocket request. " +
+          s"Websocket requests must use either 'ws' or 'wss'")
+    }
+    val host = uri.authority.host.address
+    val port = uri.effectivePort
+
+    websocketClientLayer(uri, settings, random, log)
+      .joinMat(_outgoingTlsConnectionLayer(host, port, localAddress, settings, ctx, log))(Keep.right)
+  }
+
+  /**
+   * Runs a single Websocket conversation given a Uri and a flow that represents the client side of the
+   * Websocket conversation.
+   */
+  def singleWebsocketRequest[T](uri: Uri,
+                                clientFlow: Flow[Message, Message, T],
+                                localAddress: Option[InetSocketAddress] = None,
+                                settings: ClientConnectionSettings = ClientConnectionSettings(system),
+                                random: Random = new SecureRandom(),
+                                httpsContext: Option[HttpsContext] = None,
+                                log: LoggingAdapter = system.log)(implicit mat: Materializer): T =
+    websocketClientFlow(uri, localAddress, settings, random, httpsContext, log)
+      .joinMat(clientFlow)(Keep.right).run()
 
   /**
    * Triggers an orderly shutdown of all host connections pools currently maintained by the [[ActorSystem]].

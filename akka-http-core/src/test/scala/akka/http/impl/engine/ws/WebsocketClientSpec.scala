@@ -27,13 +27,13 @@ class WebsocketClientSpec extends FreeSpec with Matchers with WithMaterializerSp
 
     }
     "reject invalid handshakes" - {
-      "missing Sec-WebSocket-Accept hash" in {}
-      "wrong Sec-WebSocket-Accept hash" in {}
-      "missing `Upgrade` header" in {}
-      "missing `Connection: upgrade` header" in {}
+      "missing Sec-WebSocket-Accept hash" in pending
+      "wrong Sec-WebSocket-Accept hash" in pending
+      "missing `Upgrade` header" in pending
+      "missing `Connection: upgrade` header" in pending
     }
 
-    "don't send out websocket frames before handshake was finished successfully" in {}
+    "don't send out websocket frames before handshake was finished successfully" in pending
     "receive first frame in same chunk as HTTP upgrade response" in new TestSetup with ClientProbes {
       expectWireData(
         """GET /ws HTTP/1.1
