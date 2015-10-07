@@ -137,6 +137,8 @@ object TestPublisher {
     private var pendingRequests = initialPendingRequests
     private lazy val subscription = expectSubscription()
 
+    def ensureSubscription(): Unit = subscription // initialize if not yet initialized
+
     /**
      * Current pending requests.
      */
@@ -557,6 +559,8 @@ object TestSubscriber {
     override type Self = Probe[T]
 
     private lazy val subscription = expectSubscription()
+
+    def ensureSubscription(): Unit = subscription // initialize if not yet initialized
 
     def request(n: Long): Self = {
       subscription.request(n)
