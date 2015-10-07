@@ -55,6 +55,8 @@ object WebsocketClientBlueprint {
                 settings: ClientConnectionSettings,
                 random: Random,
                 log: LoggingAdapter): BidiFlow[ByteString, ByteString, ByteString, ByteString, Unit] = {
+    val valve = OneTimeValve()
+
     val (initialRequest, key) = Handshake.Client.buildRequest(uri, Nil, random)
     val hostHeader = Host(uri.authority)
     val renderedInitialRequest =
@@ -92,6 +94,7 @@ object WebsocketClientBlueprint {
               }
 
               become(transparent)
+              valve.open()
 
               val parseResult = parser.onPull()
               require(parseResult == ParserOutput.MessageEnd, s"parseResult should be MessageEnd but was $parseResult")
@@ -114,7 +117,7 @@ object WebsocketClientBlueprint {
       val networkIn = b.add(Flow[ByteString].transform(() ⇒ new UpgradeStage))
       val wsIn = b.add(Flow[ByteString])
 
-      val handshakeRequestSource = b.add(Source.single(renderedInitialRequest) /* FIXME: ++ valve to delay ws frames*/ )
+      val handshakeRequestSource = b.add(Source.single(renderedInitialRequest) ++ valve.source /* FIXME: ++ valve to delay ws frames*/ )
       val httpRequestBytesAndThenWSBytes = b.add(Concat[ByteString]())
 
       handshakeRequestSource ~> httpRequestBytesAndThenWSBytes

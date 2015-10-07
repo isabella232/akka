@@ -24,9 +24,9 @@ object EchoTestClientApp extends App {
   import system.dispatcher
   implicit val mat = ActorMaterializer()
 
-  def delayedCompletion[T]: Source[Nothing, Unit] =
+  def delayedCompletion(delay: FiniteDuration): Source[Nothing, Unit] =
     Source.single(1)
-      .mapAsync(1)(_ ⇒ akka.pattern.after(1.second, system.scheduler)(Future(1)))
+      .mapAsync(1)(_ ⇒ akka.pattern.after(delay, system.scheduler)(Future(1)))
       .drop(1).asInstanceOf[Source[Nothing, Unit]]
 
   def messages: List[Message] =
@@ -37,10 +37,7 @@ object EchoTestClientApp extends App {
       BinaryMessage(ByteString("def")))
 
   def source: Source[Message, Unit] =
-    // FIXME: fails sometimes without the delay because server doesn't allow the first message
-    // before the handshake was accepted
-    delayedCompletion[Message] ++
-      Source(messages)
+    Source(messages) ++ delayedCompletion(1.second) // otherwise, we may start closing too soon
 
   def sink: Sink[Message, Future[Seq[String]]] =
     Flow[Message]
@@ -53,10 +50,9 @@ object EchoTestClientApp extends App {
       .grouped(10000)
       .toMat(Sink.head)(Keep.right)
 
-  def echoClient =
-    Flow.wrap(sink, source)(Keep.left)
+  def echoClient = Flow.wrap(sink, source)(Keep.left)
 
-  val result = Http().singleWebsocketRequest("ws://echo.websocket.org", echoClient)
+  val result = Http().singleWebsocketRequest("wss://echo.websocket.org", echoClient)
   result onComplete {
     case Success(res) ⇒
       println("Run successful. Got these elements:")

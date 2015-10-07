@@ -31,7 +31,22 @@ class WebsocketClientSpec extends FreeSpec with Matchers with WithMaterializerSp
       "missing `Connection: upgrade` header" in pending
     }
 
-    "don't send out websocket frames before handshake was finished successfully" in pending
+    "don't send out frames before handshake was finished successfully" in new TestSetup {
+      def clientImplementation: Flow[Message, Message, Unit] =
+        Flow.wrap(Sink.ignore, Source.single(TextMessage("fast message")))(Keep.none)
+
+      expectWireData(UpgradeRequestBytes)
+      expectNoWireData()
+
+      sendWireData(UpgradeResponseBytes)
+      expectMaskedFrameOnNetwork(Protocol.Opcode.Text, ByteString("fast message"), fin = true)
+
+      expectMaskedCloseFrame(Protocol.CloseCodes.Regular)
+      sendWSCloseFrame(Protocol.CloseCodes.Regular)
+
+      closeNetworkInput()
+      expectNetworkClose()
+    }
     "receive first frame in same chunk as HTTP upgrade response" in new TestSetup with ClientProbes {
       expectWireData(UpgradeRequestBytes)
 
