@@ -184,6 +184,12 @@ object TestSubscriber {
   final case object OnComplete extends SubscriberEvent
   final case class OnError(cause: Throwable) extends SubscriberEvent
 
+  case class UnexpectedEventError(unexpectedEvent: SubscriberEvent)(msg: String, cause: Throwable = null) extends AssertionError(msg, cause)
+  def unexpectedEvent(event: SubscriberEvent, msg: String, cause: Throwable = null): Nothing =
+    throw new UnexpectedEventError(event)(msg, cause)
+
+  case class TimeoutException(after: FiniteDuration)(msg: String) extends AssertionError(msg)
+
   /**
    * Probe that implements [[org.reactivestreams.Subscriber]] interface.
    */
@@ -240,7 +246,18 @@ object TestSubscriber {
     /**
      * Expect and return a stream element.
      */
-    def expectNext(): I = probe.expectMsgType[OnNext[I]].element
+    def expectNext(): I = {
+      val rem = probe.remaining
+      try expectEvent() match {
+        case n: OnNext[I]       ⇒ n.element
+        case e @ OnError(error) ⇒ unexpectedEvent(e, s"Got error while waiting for more data: '${error.getMessage}'", error)
+        case c @ OnComplete     ⇒ unexpectedEvent(c, s"Truncation. Got completion while waiting for more data.")
+      }
+      catch {
+        case a: AssertionError if a.getMessage startsWith "assertion failed: timeout" ⇒
+          throw TimeoutException(rem)(s"Timeout after $rem while waiting for more data.")
+      }
+    }
 
     /**
      * Fluent DSL
@@ -330,7 +347,22 @@ object TestSubscriber {
      * Expect given [[Throwable]].
      */
     def expectError(cause: Throwable): Self = {
-      probe.expectMsg(OnError(cause))
+      val rem = probe.remaining
+      try expectEvent() match {
+        case n: OnNext[I]     ⇒ unexpectedEvent(n, s"Got more data when expecting error '$cause'.")
+        case OnError(`cause`) ⇒ // success
+        case e @ OnError(other) ⇒
+          val extraNote =
+            if (other.getMessage == cause.getMessage) " (getMessage equals but Throwable instance does not equal expected)"
+            else ""
+          unexpectedEvent(e, s"Got other error '${other.getMessage}' when expecting particular error '$cause'$extraNote.")
+        case c @ OnComplete ⇒ unexpectedEvent(c, s"Got completion when expecting error '$cause'.")
+
+      }
+      catch {
+        case a: AssertionError if a.getMessage startsWith "assertion error: timeout" ⇒
+          throw TimeoutException(rem)(s"Timeout after $rem when expecting error '$cause'.")
+      }
       self
     }
 
