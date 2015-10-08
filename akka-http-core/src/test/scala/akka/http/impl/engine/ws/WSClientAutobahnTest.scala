@@ -167,7 +167,7 @@ object WSClientAutobahnTest extends App {
   system.scheduler.scheduleOnce(60.seconds)(system.shutdown())
 
   def runWs[T](uri: Uri, clientFlow: Flow[Message, Message, T]): T =
-    Http().singleWebsocketRequest(uri, clientFlow)
+    Http().singleWebsocketRequest(uri, clientFlow)._2
 
   def completionSignal[T]: Flow[T, T, Future[Unit]] =
     Flow[T].transformMaterializing { () ⇒

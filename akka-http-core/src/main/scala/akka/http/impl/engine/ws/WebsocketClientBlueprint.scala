@@ -12,12 +12,14 @@ import akka.http.impl.engine.parsing.{ ParserOutput, HttpHeaderParser, HttpRespo
 import akka.http.impl.engine.rendering.{ HttpRequestRendererFactory, RequestRenderingContext }
 import akka.http.impl.engine.ws.Handshake.Client.NegotiatedWebsocketSettings
 import akka.http.impl.util.StreamUtils
+import akka.http.scaladsl.Http.{ InvalidUpgradeResponse, ValidUpgrade, WebsocketUpgradeResponse }
 import akka.http.scaladsl.model.headers.Host
 import akka.stream.stage._
 import akka.util.ByteString
 import akka.event.LoggingAdapter
+import org.omg.CORBA.DynAnyPackage.Invalid
 
-import scala.concurrent.Promise
+import scala.concurrent.{ Future, Promise }
 
 import akka.stream.BidiShape
 import akka.stream.io.{ SessionBytes, SendBytes, SslTlsInbound }
@@ -32,11 +34,11 @@ object WebsocketClientBlueprint {
    * Returns a WebsocketClientLayer that can be materialized once.
    */
   def apply(uri: Uri,
+            subProtocol: Option[String],
             settings: ClientConnectionSettings,
             random: Random,
             log: LoggingAdapter): Http.WebsocketClientLayer =
-    (simpleTls atop
-      handshake(uri, settings, random, log) atop
+    (simpleTls.atopMat(handshake(uri, subProtocol, settings, random, log))(Keep.right) atop
       Websocket.framing atop
       Websocket.stack(serverSide = false)).reversed
 
@@ -45,12 +47,15 @@ object WebsocketClientBlueprint {
    * can only be materialized once.
    */
   def handshake(uri: Uri,
+                subProtocol: Option[String],
                 settings: ClientConnectionSettings,
                 random: Random,
-                log: LoggingAdapter): BidiFlow[ByteString, ByteString, ByteString, ByteString, Unit] = {
+                log: LoggingAdapter): BidiFlow[ByteString, ByteString, ByteString, ByteString, Future[WebsocketUpgradeResponse]] = {
+    val result = Promise[WebsocketUpgradeResponse]()
+
     val valve = StreamUtils.OneTimeValve()
 
-    val (initialRequest, key) = Handshake.Client.buildRequest(uri, Nil, random)
+    val (initialRequest, key) = Handshake.Client.buildRequest(uri, subProtocol.toList, random)
     val hostHeader = Host(uri.authority)
     val renderedInitialRequest =
       HttpRequestRendererFactory.renderStrict(RequestRenderingContext(initialRequest, hostHeader), settings, log)
@@ -60,40 +65,44 @@ object WebsocketClientBlueprint {
 
       def initial: State = parsingResponse
 
-      // a special version of the parser which only parses one message and then reports the remaining data
-      // if some is available
-      val parser = new HttpResponseParser(settings.parserSettings, HttpHeaderParser(settings.parserSettings)()) {
-        var first = true
-        override protected def parseMessage(input: ByteString, offset: Int): StateResult = {
-          if (first) {
-            first = false
-            super.parseMessage(input, offset)
-          } else {
-            emit(RemainingBytes(input.drop(offset)))
-            terminate()
+      def parsingResponse: State = new State {
+        // a special version of the parser which only parses one message and then reports the remaining data
+        // if some is available
+        val parser = new HttpResponseParser(settings.parserSettings, HttpHeaderParser(settings.parserSettings)()) {
+          var first = true
+          override protected def parseMessage(input: ByteString, offset: Int): StateResult = {
+            if (first) {
+              first = false
+              super.parseMessage(input, offset)
+            } else {
+              emit(RemainingBytes(input.drop(offset)))
+              terminate()
+            }
           }
         }
-      }
-      parser.setRequestMethodForNextResponse(HttpMethods.GET)
+        parser.setRequestMethodForNextResponse(HttpMethods.GET)
 
-      def parsingResponse: State = new State {
         def onPush(elem: ByteString, ctx: Context[ByteString]): SyncDirective = {
           parser.onPush(elem) match {
             case NeedMoreData ⇒ ctx.pull()
             case ResponseStart(status, protocol, headers, entity, close) ⇒
               val response = HttpResponse(status, headers, protocol = protocol)
-              Handshake.Client.validateResponse(response, key) match {
-                case Some(NegotiatedWebsocketSettings(protocol)) ⇒
-              }
+              Handshake.Client.validateResponse(response, subProtocol.toList, key) match {
+                case Right(NegotiatedWebsocketSettings(protocol)) ⇒
+                  result.success(ValidUpgrade(response, protocol))
 
-              become(transparent)
-              valve.open()
+                  become(transparent)
+                  valve.open()
 
-              val parseResult = parser.onPull()
-              require(parseResult == ParserOutput.MessageEnd, s"parseResult should be MessageEnd but was $parseResult")
-              parser.onPull() match {
-                case NeedMoreData          ⇒ ctx.pull()
-                case RemainingBytes(bytes) ⇒ ctx.push(bytes)
+                  val parseResult = parser.onPull()
+                  require(parseResult == ParserOutput.MessageEnd, s"parseResult should be MessageEnd but was $parseResult")
+                  parser.onPull() match {
+                    case NeedMoreData          ⇒ ctx.pull()
+                    case RemainingBytes(bytes) ⇒ ctx.push(bytes)
+                  }
+                case Left(problem) ⇒
+                  result.success(InvalidUpgradeResponse(response, s"Websocket server at $uri returned $problem"))
+                  ctx.fail(throw new IllegalArgumentException(s"Websocket upgrade did not finish because of '$problem'"))
               }
           }
         }
@@ -118,10 +127,10 @@ object WebsocketClientBlueprint {
 
       BidiShape(
         networkIn.inlet,
-        networkIn.outlet, // FIXME: actually check handshake before relaying
+        networkIn.outlet,
         wsIn.inlet,
         httpRequestBytesAndThenWSBytes.out)
-    }
+    } mapMaterializedValue (_ ⇒ result.future)
   }
 
   def simpleTls: BidiFlow[SslTlsInbound, ByteString, ByteString, SendBytes, Unit] =

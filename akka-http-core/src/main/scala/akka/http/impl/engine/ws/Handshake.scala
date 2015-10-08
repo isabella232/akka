@@ -58,7 +58,7 @@ private[http] object Handshake {
             list of values indicating which extensions the client would like
             to speak.  The interpretation of this header field is discussed
             in Section 9.1.
-   */
+    */
     def isWebsocketUpgrade(headers: List[HttpHeader], hostHeaderPresent: Boolean): Option[UpgradeToWebsocket] = {
       def find[T <: HttpHeader: ClassTag]: Option[T] =
         headers.collectFirst {
@@ -97,31 +97,31 @@ private[http] object Handshake {
     }
 
     /*
-    From: http://tools.ietf.org/html/rfc6455#section-4.2.2
+      From: http://tools.ietf.org/html/rfc6455#section-4.2.2
 
-    1.  A Status-Line with a 101 response code as per RFC 2616
-        [RFC2616].  Such a response could look like "HTTP/1.1 101
-        Switching Protocols".
+      1.  A Status-Line with a 101 response code as per RFC 2616
+          [RFC2616].  Such a response could look like "HTTP/1.1 101
+          Switching Protocols".
 
-    2.  An |Upgrade| header field with value "websocket" as per RFC
-        2616 [RFC2616].
+      2.  An |Upgrade| header field with value "websocket" as per RFC
+          2616 [RFC2616].
 
-    3.  A |Connection| header field with value "Upgrade".
+      3.  A |Connection| header field with value "Upgrade".
 
-    4.  A |Sec-WebSocket-Accept| header field.  The value of this
-        header field is constructed by concatenating /key/, defined
-        above in step 4 in Section 4.2.2, with the string "258EAFA5-
-        E914-47DA-95CA-C5AB0DC85B11", taking the SHA-1 hash of this
-        concatenated value to obtain a 20-byte value and base64-
-        encoding (see Section 4 of [RFC4648]) this 20-byte hash.
-   */
+      4.  A |Sec-WebSocket-Accept| header field.  The value of this
+          header field is constructed by concatenating /key/, defined
+          above in step 4 in Section 4.2.2, with the string "258EAFA5-
+          E914-47DA-95CA-C5AB0DC85B11", taking the SHA-1 hash of this
+          concatenated value to obtain a 20-byte value and base64-
+          encoding (see Section 4 of [RFC4648]) this 20-byte hash.
+    */
     def buildResponse(key: `Sec-WebSocket-Key`, handlerFlow: Flow[FrameEvent, FrameEvent, Any], subprotocol: Option[String]): HttpResponse =
       HttpResponse(
         StatusCodes.SwitchingProtocols,
         subprotocol.map(p ⇒ `Sec-WebSocket-Protocol`(Seq(p))).toList :::
           List(
-            Upgrade(List(UpgradeProtocol("websocket"))),
-            Connection(List("upgrade")),
+            UpgradeHeader,
+            ConnectionUpgradeHeader,
             `Sec-WebSocket-Accept`.forKey(key),
             UpgradeToWebsocketResponseHeader(handlerFlow)))
   }
@@ -136,26 +136,107 @@ private[http] object Handshake {
       val keyBytes = new Array[Byte](16)
       random.nextBytes(keyBytes)
       val key = `Sec-WebSocket-Key`(Base64.rfc2045().encodeToString(keyBytes, false))
+      val protocol =
+        if (subprotocols.nonEmpty) `Sec-WebSocket-Protocol`(subprotocols) :: Nil
+        else Nil
       //version, protocol, extensions, origin
 
       val headers = Seq(
-        Upgrade(List(UpgradeProtocol("websocket"))),
-        Connection(List("upgrade")),
+        UpgradeHeader,
+        ConnectionUpgradeHeader,
         key,
-        `Sec-WebSocket-Version`(Seq(CurrentWebsocketVersion)))
+        SecWebsocketVersionHeader) ++ protocol
 
       (HttpRequest(HttpMethods.GET, uri.toRelative, headers), key)
     }
 
-    def validateResponse(response: HttpResponse, key: `Sec-WebSocket-Key`): Option[NegotiatedWebsocketSettings] = {
-      def expect[T](what: T, toBe: T, name: String): Unit =
-        require(what == toBe, s"$name should have been $toBe but was $what")
+    /**
+     * Tries to validate the HTTP response. Returns either Right(settings) or an error message if
+     * the response cannot be validated.
+     */
+    def validateResponse(response: HttpResponse, subprotocols: Seq[String], key: `Sec-WebSocket-Key`): Either[String, NegotiatedWebsocketSettings] = {
+      /*
+       From http://tools.ietf.org/html/rfc6455#section-4.1
 
-      expect(response.status, StatusCodes.SwitchingProtocols, "status code")
-      // TODO: implement
-      //println(response.headers.mkString("\n"))
+       1.  If the status code received from the server is not 101, the
+           client handles the response per HTTP [RFC2616] procedures.  In
+           particular, the client might perform authentication if it
+           receives a 401 status code; the server might redirect the client
+           using a 3xx status code (but clients are not required to follow
+           them), etc.  Otherwise, proceed as follows.
 
-      Some(NegotiatedWebsocketSettings(None))
+       2.  If the response lacks an |Upgrade| header field or the |Upgrade|
+           header field contains a value that is not an ASCII case-
+           insensitive match for the value "websocket", the client MUST
+           _Fail the WebSocket Connection_.
+
+       3.  If the response lacks a |Connection| header field or the
+           |Connection| header field doesn't contain a token that is an
+           ASCII case-insensitive match for the value "Upgrade", the client
+           MUST _Fail the WebSocket Connection_.
+
+       4.  If the response lacks a |Sec-WebSocket-Accept| header field or
+           the |Sec-WebSocket-Accept| contains a value other than the
+           base64-encoded SHA-1 of the concatenation of the |Sec-WebSocket-
+           Key| (as a string, not base64-decoded) with the string "258EAFA5-
+           E914-47DA-95CA-C5AB0DC85B11" but ignoring any leading and
+           trailing whitespace, the client MUST _Fail the WebSocket
+           Connection_.
+
+       5.  If the response includes a |Sec-WebSocket-Extensions| header
+           field and this header field indicates the use of an extension
+           that was not present in the client's handshake (the server has
+           indicated an extension not requested by the client), the client
+           MUST _Fail the WebSocket Connection_.  (The parsing of this
+           header field to determine which extensions are requested is
+           discussed in Section 9.1.)
+
+       6.  If the response includes a |Sec-WebSocket-Protocol| header field
+           and this header field indicates the use of a subprotocol that was
+           not present in the client's handshake (the server has indicated a
+           subprotocol not requested by the client), the client MUST _Fail
+           the WebSocket Connection_.
+     */
+
+      trait Expectation extends (HttpResponse ⇒ Option[String]) { outer ⇒
+        def &&(other: HttpResponse ⇒ Option[String]): Expectation =
+          new Expectation {
+            def apply(v1: HttpResponse): Option[String] =
+              outer(v1).orElse(other(v1))
+          }
+      }
+
+      def check[T](value: HttpResponse ⇒ T, expected: T)(msg: T ⇒ String): Expectation =
+        new Expectation {
+          def apply(resp: HttpResponse): Option[String] = {
+            val v = value(resp)
+            if (v == expected) None
+            else Some(msg(v))
+          }
+        }
+
+      def headerExists(candidate: HttpHeader, showExactOther: Boolean = true): Expectation =
+        check(_.headers.find(_.name == candidate.name), Some(candidate)) {
+          case Some(other) if showExactOther ⇒ s"response that was missing required `$candidate` header. Found `$other` with the wrong value."
+          case Some(_)                       ⇒ s"response with invalid `${candidate.name}` header."
+          case None                          ⇒ s"response that was missing required `${candidate.name}` header."
+        }
+
+      val expectations: Expectation =
+        check(_.status, StatusCodes.SwitchingProtocols)("unexpected status code: " + _) &&
+          headerExists(UpgradeHeader) &&
+          headerExists(ConnectionUpgradeHeader) &&
+          headerExists(SecWebsocketVersionHeader) &&
+          headerExists(`Sec-WebSocket-Accept`.forKey(key), showExactOther = false)
+
+      expectations(response) match {
+        case None          ⇒ Right(NegotiatedWebsocketSettings(None)) // all matched
+        case Some(problem) ⇒ Left(problem)
+      }
     }
   }
+
+  val UpgradeHeader = Upgrade(List(UpgradeProtocol("websocket")))
+  val ConnectionUpgradeHeader = Connection(List("upgrade"))
+  val SecWebsocketVersionHeader = `Sec-WebSocket-Version`(Seq(CurrentWebsocketVersion))
 }

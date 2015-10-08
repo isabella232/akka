@@ -6,13 +6,15 @@ package akka.http.impl.engine.ws
 
 import java.util.Random
 
+import akka.http.scaladsl.Http.{ InvalidUpgradeResponse, WebsocketUpgradeResponse }
+
 import scala.concurrent.duration._
 
 import akka.http.ClientConnectionSettings
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model.headers.{ ProductVersion, `User-Agent` }
 import akka.http.scaladsl.model.ws._
-import akka.http.scaladsl.model.Uri
+import akka.http.scaladsl.model.{ HttpResponse, Uri }
 import akka.stream.io._
 import akka.stream.scaladsl._
 import akka.stream.testkit.{ TestSubscriber, TestPublisher }
@@ -25,10 +27,148 @@ class WebsocketClientSpec extends FreeSpec with Matchers with WithMaterializerSp
   "The client-side Websocket implementation should" - {
     "establish a websocket connection when the user requests it" in new EstablishedConnectionSetup with ClientEchoes
     "reject invalid handshakes" - {
-      "missing Sec-WebSocket-Accept hash" in pending
-      "wrong Sec-WebSocket-Accept hash" in pending
-      "missing `Upgrade` header" in pending
-      "missing `Connection: upgrade` header" in pending
+      "other status code" in new TestSetup with ClientEchoes {
+        expectWireData(
+          """GET /ws HTTP/1.1
+            |Upgrade: websocket
+            |Connection: upgrade
+            |Sec-WebSocket-Key: YLQguzhR2dR6y5M9vnA5mw==
+            |Sec-WebSocket-Version: 13
+            |Host: example.org
+            |User-Agent: akka-http/test
+            |
+            |""")
+
+        sendWireData(
+          """HTTP/1.1 404 Not Found
+            |Server: akka-http/test
+            |Content-Length: 0
+            |
+            |""")
+
+        expectNetworkAbort()
+        expectInvalidUpgradeResponseCause("Websocket server at ws://example.org/ws returned unexpected status code: 404 Not Found")
+      }
+      "missing (or wrong) Sec-Websocket-Version header" in new TestSetup with ClientEchoes {
+        expectWireData(
+          """GET /ws HTTP/1.1
+            |Upgrade: websocket
+            |Connection: upgrade
+            |Sec-WebSocket-Key: YLQguzhR2dR6y5M9vnA5mw==
+            |Sec-WebSocket-Version: 13
+            |Host: example.org
+            |User-Agent: akka-http/test
+            |
+            |""")
+
+        sendWireData(
+          """HTTP/1.1 101 Switching Protocols
+            |Upgrade: websocket
+            |Server: akka-http/test
+            |Connection: upgrade
+            |
+            |""")
+
+        expectNetworkAbort()
+        expectInvalidUpgradeResponseCause("Websocket server at ws://example.org/ws returned response that was missing required `Sec-WebSocket-Version` header.")
+      }
+      "missing Sec-WebSocket-Accept hash" in new TestSetup with ClientEchoes {
+        expectWireData(
+          """GET /ws HTTP/1.1
+            |Upgrade: websocket
+            |Connection: upgrade
+            |Sec-WebSocket-Key: YLQguzhR2dR6y5M9vnA5mw==
+            |Sec-WebSocket-Version: 13
+            |Host: example.org
+            |User-Agent: akka-http/test
+            |
+            |""")
+
+        sendWireData(
+          """HTTP/1.1 101 Switching Protocols
+            |Upgrade: websocket
+            |Sec-WebSocket-Version: 13
+            |Server: akka-http/test
+            |Connection: upgrade
+            |
+            |""")
+
+        expectNetworkAbort()
+        expectInvalidUpgradeResponseCause("Websocket server at ws://example.org/ws returned response that was missing required `Sec-WebSocket-Accept` header.")
+      }
+      "wrong Sec-WebSocket-Accept hash" in new TestSetup with ClientEchoes {
+        expectWireData(
+          """GET /ws HTTP/1.1
+            |Upgrade: websocket
+            |Connection: upgrade
+            |Sec-WebSocket-Key: YLQguzhR2dR6y5M9vnA5mw==
+            |Sec-WebSocket-Version: 13
+            |Host: example.org
+            |User-Agent: akka-http/test
+            |
+            |""")
+
+        sendWireData(
+          """HTTP/1.1 101 Switching Protocols
+            |Upgrade: websocket
+            |Sec-WebSocket-Accept: s3pPLMBiTxhZRbK+xOo=
+            |Sec-WebSocket-Version: 13
+            |Server: akka-http/test
+            |Connection: upgrade
+            |
+            |""")
+
+        expectNetworkAbort()
+        expectInvalidUpgradeResponseCause("Websocket server at ws://example.org/ws returned response with invalid `Sec-WebSocket-Accept` header.")
+      }
+      "missing `Upgrade` header" in new TestSetup with ClientEchoes {
+        expectWireData(
+          """GET /ws HTTP/1.1
+            |Upgrade: websocket
+            |Connection: upgrade
+            |Sec-WebSocket-Key: YLQguzhR2dR6y5M9vnA5mw==
+            |Sec-WebSocket-Version: 13
+            |Host: example.org
+            |User-Agent: akka-http/test
+            |
+            |""")
+
+        sendWireData(
+          """HTTP/1.1 101 Switching Protocols
+            |Sec-WebSocket-Accept: ujmZX4KXZqjwy6vi1aQFH5p4Ygk=
+            |Sec-WebSocket-Version: 13
+            |Server: akka-http/test
+            |Connection: upgrade
+            |
+            |""")
+
+        expectNetworkAbort()
+        expectInvalidUpgradeResponseCause("Websocket server at ws://example.org/ws returned response that was missing required `Upgrade` header.")
+      }
+      "missing `Connection: upgrade` header" in new TestSetup with ClientEchoes {
+        expectWireData(
+          """GET /ws HTTP/1.1
+            |Upgrade: websocket
+            |Connection: upgrade
+            |Sec-WebSocket-Key: YLQguzhR2dR6y5M9vnA5mw==
+            |Sec-WebSocket-Version: 13
+            |Host: example.org
+            |User-Agent: akka-http/test
+            |
+            |""")
+
+        sendWireData(
+          """HTTP/1.1 101 Switching Protocols
+            |Upgrade: websocket
+            |Sec-WebSocket-Accept: ujmZX4KXZqjwy6vi1aQFH5p4Ygk=
+            |Sec-WebSocket-Version: 13
+            |Server: akka-http/test
+            |
+            |""")
+
+        expectNetworkAbort()
+        expectInvalidUpgradeResponseCause("Websocket server at ws://example.org/ws returned response that was missing required `Connection` header.")
+      }
     }
 
     "don't send out frames before handshake was finished successfully" in new TestSetup {
@@ -83,6 +223,103 @@ class WebsocketClientSpec extends FreeSpec with Matchers with WithMaterializerSp
       closeNetworkInput()
       expectNetworkClose()
     }
+    "support subprotocols" - {
+      "accept if server supports subprotocol" in new TestSetup with ClientEchoes {
+        override protected def requestedSubProtocol: Option[String] = Some("v2")
+
+        expectWireData(
+          """GET /ws HTTP/1.1
+          |Upgrade: websocket
+          |Connection: upgrade
+          |Sec-WebSocket-Key: YLQguzhR2dR6y5M9vnA5mw==
+          |Sec-WebSocket-Version: 13
+          |Sec-WebSocket-Protocol: v2
+          |Host: example.org
+          |User-Agent: akka-http/test
+          |
+          |""")
+        sendWireData(
+          """HTTP/1.1 101 Switching Protocols
+            |Upgrade: websocket
+            |Sec-WebSocket-Accept: ujmZX4KXZqjwy6vi1aQFH5p4Ygk=
+            |Sec-WebSocket-Version: 13
+            |Server: akka-http/test
+            |Connection: upgrade
+            |Sec-WebSocket-Protocol: v2
+            |
+            |""")
+
+        sendWSFrame(Protocol.Opcode.Text, ByteString("Message 1"), fin = true)
+        expectMaskedFrameOnNetwork(Protocol.Opcode.Text, ByteString("Message 1"), fin = true)
+      }
+      "send error on user flow if server doesn't support subprotocol" - {
+        "if no protocol was selected" in new TestSetup with ClientProbes {
+          override protected def requestedSubProtocol: Option[String] = Some("v2")
+
+          expectWireData(
+            """GET /ws HTTP/1.1
+              |Upgrade: websocket
+              |Connection: upgrade
+              |Sec-WebSocket-Key: YLQguzhR2dR6y5M9vnA5mw==
+              |Sec-WebSocket-Version: 13
+              |Sec-WebSocket-Protocol: v2
+              |Host: example.org
+              |User-Agent: akka-http/test
+              |
+              |""")
+          sendWireData(
+            """HTTP/1.1 101 Switching Protocols
+              |Upgrade: websocket
+              |Sec-WebSocket-Accept: ujmZX4KXZqjwy6vi1aQFH5p4Ygk=
+              |Sec-WebSocket-Version: 13
+              |Server: akka-http/test
+              |Connection: upgrade
+              |
+              |""")
+
+          expectMaskedCloseFrame(Protocol.CloseCodes.ProtocolError)
+          val e = messagesIn.expectError()
+          e.getMessage shouldEqual "The websocket server did not support the given subprotocol."
+
+          sendWSCloseFrame(Protocol.CloseCodes.ProtocolError)
+          closeNetworkInput()
+          expectNetworkClose()
+        }
+        "if different protocol was selected" in new TestSetup with ClientProbes {
+          override protected def requestedSubProtocol: Option[String] = Some("v2")
+
+          expectWireData(
+            """GET /ws HTTP/1.1
+              |Upgrade: websocket
+              |Connection: upgrade
+              |Sec-WebSocket-Key: YLQguzhR2dR6y5M9vnA5mw==
+              |Sec-WebSocket-Version: 13
+              |Sec-WebSocket-Protocol: v2
+              |Host: example.org
+              |User-Agent: akka-http/test
+              |
+              |""")
+          sendWireData(
+            """HTTP/1.1 101 Switching Protocols
+              |Upgrade: websocket
+              |Sec-WebSocket-Accept: ujmZX4KXZqjwy6vi1aQFH5p4Ygk=
+              |Sec-WebSocket-Protocol: v3
+              |Sec-WebSocket-Version: 13
+              |Server: akka-http/test
+              |Connection: upgrade
+              |
+              |""")
+
+          expectMaskedCloseFrame(Protocol.CloseCodes.ProtocolError)
+          val e = messagesIn.expectError()
+          e.getMessage shouldEqual "The websocket server did not support the given subprotocol."
+
+          sendWSCloseFrame(Protocol.CloseCodes.ProtocolError)
+          closeNetworkInput()
+          expectNetworkClose()
+        }
+      }
+    }
   }
 
   def UpgradeRequestBytes = ByteString {
@@ -100,8 +337,9 @@ class WebsocketClientSpec extends FreeSpec with Matchers with WithMaterializerSp
   def UpgradeResponseBytes = ByteString {
     """HTTP/1.1 101 Switching Protocols
       |Upgrade: websocket
-      |Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+      |Sec-WebSocket-Accept: ujmZX4KXZqjwy6vi1aQFH5p4Ygk=
       |Server: akka-http/test
+      |Sec-WebSocket-Version: 13
       |Connection: upgrade
       |
       |""".stripMarginWithNewline("\r\n")
@@ -115,6 +353,7 @@ class WebsocketClientSpec extends FreeSpec with Matchers with WithMaterializerSp
   abstract class TestSetup extends WSTestSetupBase {
     protected def noMsgTimeout: FiniteDuration = 100.millis
     protected def clientImplementation: Flow[Message, Message, Unit]
+    protected def requestedSubProtocol: Option[String] = None
 
     val random = new Random(0)
     def settings = ClientConnectionSettings(system)
@@ -123,21 +362,24 @@ class WebsocketClientSpec extends FreeSpec with Matchers with WithMaterializerSp
     def targetUri: Uri = "ws://example.org/ws"
 
     def clientLayer: Http.WebsocketClientLayer =
-      Http(system).websocketClientLayer(targetUri, settings, random)
+      Http(system).websocketClientLayer(targetUri, requestedSubProtocol, settings, random)
 
-    val (netOut, netIn) = {
+    val (netOut, netIn, response) = {
       val netOut = ByteStringSinkProbe()
       val netIn = TestPublisher.probe[ByteString]()
 
-      FlowGraph.closed(clientLayer) { implicit b ⇒
-        client ⇒
-          import FlowGraph.Implicits._
-          Source(netIn) ~> Flow[ByteString].map(SessionBytes(null, _)) ~> client.in2
-          client.out1 ~> Flow[SslTlsOutbound].collect { case SendBytes(x) ⇒ x } ~> netOut.sink
-          client.out2 ~> clientImplementation ~> client.in1
-      }.run()
+      val graph =
+        FlowGraph.closed(clientLayer) { implicit b ⇒
+          client ⇒
+            import FlowGraph.Implicits._
+            Source(netIn) ~> Flow[ByteString].map(SessionBytes(null, _)) ~> client.in2
+            client.out1 ~> Flow[SslTlsOutbound].collect { case SendBytes(x) ⇒ x } ~> netOut.sink
+            client.out2 ~> clientImplementation ~> client.in1
+        }
 
-      netOut -> netIn
+      val response = graph.run()
+
+      (netOut, netIn, response)
     }
     def expectBytes(length: Int): ByteString = netOut.expectBytes(length)
     def expectBytes(bytes: ByteString): Unit = netOut.expectBytes(bytes)
@@ -153,12 +395,23 @@ class WebsocketClientSpec extends FreeSpec with Matchers with WithMaterializerSp
 
     def send(bytes: ByteString): Unit = sendWireData(bytes)
 
-    def expectWireData(s: String) = netOut.expectUtf8EncodedString(s.stripMarginWithNewline("\r\n"))
+    def expectWireData(s: String) =
+      netOut.expectUtf8EncodedString(s.stripMarginWithNewline("\r\n"))
     def expectWireData(bs: ByteString) = netOut.expectBytes(bs)
     def expectNoWireData() = netOut.expectNoBytes(noMsgTimeout)
 
     def expectNetworkClose(): Unit = netOut.expectComplete()
+    def expectNetworkAbort(): Unit = netOut.expectError()
     def closeNetworkInput(): Unit = netIn.sendComplete()
+
+    def expectResponse(response: WebsocketUpgradeResponse): Unit =
+      expectInvalidUpgradeResponse() shouldEqual response
+    def expectInvalidUpgradeResponseCause(expected: String): Unit =
+      expectInvalidUpgradeResponse().cause shouldEqual expected
+
+    import akka.http.impl.util._
+    def expectInvalidUpgradeResponse(): InvalidUpgradeResponse =
+      response.awaitResult(1.second).asInstanceOf[InvalidUpgradeResponse]
   }
 
   trait ClientEchoes extends TestSetup {

@@ -423,10 +423,11 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
    * The layer is not reusable and must only be materialized once.
    */
   def websocketClientLayer(uri: Uri,
+                           subProtocol: Option[String] = None,
                            settings: ClientConnectionSettings = ClientConnectionSettings(system),
                            random: Random = new SecureRandom(),
                            log: LoggingAdapter = system.log): Http.WebsocketClientLayer =
-    WebsocketClientBlueprint(uri, settings, random, log)
+    WebsocketClientBlueprint(uri, subProtocol, settings, random, log)
 
   /**
    * Constructs a flow that once materialized establishes a Websocket connection to the given Uri.
@@ -434,11 +435,12 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
    * The layer is not reusable and must only be materialized once.
    */
   def websocketClientFlow(uri: Uri,
+                          subProtocol: Option[String] = None,
                           localAddress: Option[InetSocketAddress] = None,
                           settings: ClientConnectionSettings = ClientConnectionSettings(system),
                           random: Random = new SecureRandom(),
                           httpsContext: Option[HttpsContext] = None,
-                          log: LoggingAdapter = system.log): Flow[Message, Message, Future[OutgoingConnection]] = {
+                          log: LoggingAdapter = system.log): Flow[Message, Message, Future[WebsocketUpgradeResponse]] = {
     require(uri.isAbsolute, s"Websocket request URI must be absolute but was '$uri'")
 
     val ctx = uri.scheme match {
@@ -451,8 +453,8 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
     val host = uri.authority.host.address
     val port = uri.effectivePort
 
-    websocketClientLayer(uri, settings, random, log)
-      .joinMat(_outgoingTlsConnectionLayer(host, port, localAddress, settings, ctx, log))(Keep.right)
+    websocketClientLayer(uri, subProtocol, settings, random, log)
+      .joinMat(_outgoingTlsConnectionLayer(host, port, localAddress, settings, ctx, log))(Keep.left)
   }
 
   /**
@@ -461,13 +463,14 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
    */
   def singleWebsocketRequest[T](uri: Uri,
                                 clientFlow: Flow[Message, Message, T],
+                                subProtocol: Option[String] = None,
                                 localAddress: Option[InetSocketAddress] = None,
                                 settings: ClientConnectionSettings = ClientConnectionSettings(system),
                                 random: Random = new SecureRandom(),
                                 httpsContext: Option[HttpsContext] = None,
-                                log: LoggingAdapter = system.log)(implicit mat: Materializer): T =
-    websocketClientFlow(uri, localAddress, settings, random, httpsContext, log)
-      .joinMat(clientFlow)(Keep.right).run()
+                                log: LoggingAdapter = system.log)(implicit mat: Materializer): (Future[WebsocketUpgradeResponse], T) =
+    websocketClientFlow(uri, subProtocol, localAddress, settings, random, httpsContext, log)
+      .joinMat(clientFlow)(Keep.both).run()
 
   /**
    * Triggers an orderly shutdown of all host connections pools currently maintained by the [[ActorSystem]].
@@ -637,7 +640,7 @@ object Http extends ExtensionId[HttpExt] with ExtensionIdProvider {
    *                +------+
    * }}}
    */
-  type WebsocketClientLayer = BidiFlow[Message, SslTlsOutbound, SslTlsInbound, Message, Unit]
+  type WebsocketClientLayer = BidiFlow[Message, SslTlsOutbound, SslTlsInbound, Message, Future[WebsocketUpgradeResponse]]
 
   /**
    * Represents a prospective HTTP server binding.
@@ -645,7 +648,7 @@ object Http extends ExtensionId[HttpExt] with ExtensionIdProvider {
    * @param localAddress  The local address of the endpoint bound by the materialization of the `connections` [[Source]]
    *
    */
-  case class ServerBinding(localAddress: InetSocketAddress)(private val unbindAction: () ⇒ Future[Unit]) {
+  final case class ServerBinding(localAddress: InetSocketAddress)(private val unbindAction: () ⇒ Future[Unit]) {
 
     /**
      * Asynchronously triggers the unbinding of the port that was bound by the materialization of the `connections`
@@ -659,7 +662,7 @@ object Http extends ExtensionId[HttpExt] with ExtensionIdProvider {
   /**
    * Represents one accepted incoming HTTP connection.
    */
-  case class IncomingConnection(
+  final case class IncomingConnection(
     localAddress: InetSocketAddress,
     remoteAddress: InetSocketAddress,
     flow: Flow[HttpResponse, HttpRequest, Unit]) {
@@ -689,12 +692,23 @@ object Http extends ExtensionId[HttpExt] with ExtensionIdProvider {
   /**
    * Represents a prospective outgoing HTTP connection.
    */
-  case class OutgoingConnection(localAddress: InetSocketAddress, remoteAddress: InetSocketAddress)
+  final case class OutgoingConnection(localAddress: InetSocketAddress, remoteAddress: InetSocketAddress)
+
+  /**
+   * Represents the response to a websocket upgrade request.
+   */
+  sealed trait WebsocketUpgradeResponse {
+    def response: HttpResponse
+  }
+  final case class InvalidUpgradeResponse(response: HttpResponse, cause: String) extends WebsocketUpgradeResponse
+  final case class ValidUpgrade(
+    response: HttpResponse,
+    chosenSubprotocol: Option[String]) extends WebsocketUpgradeResponse
 
   /**
    * Represents a connection pool to a specific target host and pool configuration.
    */
-  case class HostConnectionPool(setup: HostConnectionPoolSetup)(
+  final case class HostConnectionPool(setup: HostConnectionPoolSetup)(
     private[http] val gatewayFuture: Future[PoolGateway]) extends javadsl.HostConnectionPool { // enable test access
 
     /**
@@ -718,11 +732,11 @@ object Http extends ExtensionId[HttpExt] with ExtensionIdProvider {
 import scala.collection.JavaConverters._
 
 //# https-context-impl
-case class HttpsContext(sslContext: SSLContext,
-                        enabledCipherSuites: Option[immutable.Seq[String]] = None,
-                        enabledProtocols: Option[immutable.Seq[String]] = None,
-                        clientAuth: Option[ClientAuth] = None,
-                        sslParameters: Option[SSLParameters] = None)
+final case class HttpsContext(sslContext: SSLContext,
+                              enabledCipherSuites: Option[immutable.Seq[String]] = None,
+                              enabledProtocols: Option[immutable.Seq[String]] = None,
+                              clientAuth: Option[ClientAuth] = None,
+                              sslParameters: Option[SSLParameters] = None)
   //#
   extends akka.http.javadsl.HttpsContext {
   def firstSession = NegotiateNewSession(enabledCipherSuites, enabledProtocols, clientAuth, sslParameters)
