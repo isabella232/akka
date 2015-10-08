@@ -27,6 +27,15 @@ import akka.http.scaladsl.model.ws._
 private[http] object Websocket {
   import FrameHandler._
 
+  /**
+   * A stack of all the higher WS layers between raw frames and the user API.
+   */
+  def stack(serverSide: Boolean = true,
+            closeTimeout: FiniteDuration = 3.seconds): BidiFlow[FrameEvent, Message, Message, FrameEvent, Unit] =
+    masking(serverSide) atop
+      frameHandling(serverSide, closeTimeout) atop
+      messageAPI(serverSide, closeTimeout)
+
   /** The lowest layer that implements the binary protocol */
   def framing: BidiFlow[ByteString, FrameEvent, FrameEvent, ByteString, Unit] =
     BidiFlow.wrap(
@@ -218,12 +227,6 @@ private[http] object Websocket {
         merge.out)
     }.named("ws-message-api")
   }
-
-  def stack(serverSide: Boolean = true,
-            closeTimeout: FiniteDuration = 3.seconds): BidiFlow[FrameEvent, Message, Message, FrameEvent, Unit] =
-    masking(serverSide) atop
-      frameHandling(serverSide, closeTimeout) atop
-      messageAPI(serverSide, closeTimeout)
 
   object Tick
   case object SwitchToWebsocketToken

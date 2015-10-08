@@ -11,6 +11,7 @@ import akka.http.impl.engine.parsing.ParserOutput.{ RemainingBytes, ResponseStar
 import akka.http.impl.engine.parsing.{ ParserOutput, HttpHeaderParser, HttpResponseParser }
 import akka.http.impl.engine.rendering.{ HttpRequestRendererFactory, RequestRenderingContext }
 import akka.http.impl.engine.ws.Handshake.Client.NegotiatedWebsocketSettings
+import akka.http.impl.util.StreamUtils
 import akka.http.scaladsl.model.headers.Host
 import akka.stream.stage._
 import akka.util.ByteString
@@ -26,21 +27,10 @@ import akka.http.ClientConnectionSettings
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model.{ HttpResponse, HttpMethods, Uri }
 
-trait OneTimeValve {
-  def source[T]: Source[T, Unit]
-  def open(): Unit
-}
-object OneTimeValve {
-  def apply(): OneTimeValve = new OneTimeValve {
-    val promise = Promise[Unit]()
-    val _source = Source(promise.future).drop(1) // we are only interested in the completion event
-
-    def source[T]: Source[T, Unit] = _source.asInstanceOf[Source[T, Unit]] // safe, because source won't generate any elements
-    def open(): Unit = promise.success(())
-  }
-}
-
 object WebsocketClientBlueprint {
+  /**
+   * Returns a WebsocketClientLayer that can be materialized once.
+   */
   def apply(uri: Uri,
             settings: ClientConnectionSettings,
             random: Random,
@@ -50,12 +40,15 @@ object WebsocketClientBlueprint {
       Websocket.framing atop
       Websocket.stack(serverSide = false)).reversed
 
-  /** A bidi flow that injects and inspects the WS handshake and then goes out of the way */
+  /**
+   * A bidi flow that injects and inspects the WS handshake and then goes out of the way. This BidiFlow
+   * can only be materialized once.
+   */
   def handshake(uri: Uri,
                 settings: ClientConnectionSettings,
                 random: Random,
                 log: LoggingAdapter): BidiFlow[ByteString, ByteString, ByteString, ByteString, Unit] = {
-    val valve = OneTimeValve()
+    val valve = StreamUtils.OneTimeValve()
 
     val (initialRequest, key) = Handshake.Client.buildRequest(uri, Nil, random)
     val hostHeader = Host(uri.authority)
@@ -117,7 +110,7 @@ object WebsocketClientBlueprint {
       val networkIn = b.add(Flow[ByteString].transform(() ⇒ new UpgradeStage))
       val wsIn = b.add(Flow[ByteString])
 
-      val handshakeRequestSource = b.add(Source.single(renderedInitialRequest) ++ valve.source /* FIXME: ++ valve to delay ws frames*/ )
+      val handshakeRequestSource = b.add(Source.single(renderedInitialRequest) ++ valve.source)
       val httpRequestBytesAndThenWSBytes = b.add(Concat[ByteString]())
 
       handshakeRequestSource ~> httpRequestBytesAndThenWSBytes
