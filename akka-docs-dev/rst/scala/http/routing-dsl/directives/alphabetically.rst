@@ -14,6 +14,14 @@ Directive                                   Description
                                             ``AuthenticatorPF[T]``
 :ref:`-authenticateBasicPFAsync-`           Wraps the inner route with Http Basic authentication support using a given
                                             ``AsyncAuthenticatorPF[T]``
+:ref:`-authenticateOAuth2-`                 Wraps the inner route with OAuth Bearer Token authentication support using
+                                            a given ``AuthenticatorPF[T]``
+:ref:`-authenticateOAuth2Async-`            Wraps the inner route with OAuth Bearer Token authentication support using
+                                            a given ``AsyncAuthenticator[T]``
+:ref:`-authenticateOAuth2PF-`               Wraps the inner route with OAuth Bearer Token authentication support using
+                                            a given ``AuthenticatorPF[T]``
+:ref:`-authenticateOAuth2PFAsync-`          Wraps the inner route with OAuth Bearer Token authentication support using
+                                            a given ``AsyncAuthenticatorPF[T]``
 :ref:`-authenticateOrRejectWithChallenge-`  Lifts an authenticator function into a directive
 :ref:`-authorize-`                          Applies the given authorization check to the request
 :ref:`-cancelRejection-`                    Adds a ``TransformationRejection`` cancelling all rejections equal to the
@@ -54,6 +62,7 @@ Directive                                   Description
 :ref:`-extractUri-`                         Extracts the complete request URI
 :ref:`-failWith-`                           Bubbles the given error up the response chain where it is dealt with by the
                                             closest :ref:`-handleExceptions-` directive and its ``ExceptionHandler``
+:ref:`-fileUpload-`                         Provides a stream of an uploaded file from a multipart request
 :ref:`-formField-`                          Extracts an HTTP form field from the request
 :ref:`-formFields-`                         Extracts a number of HTTP form field from the request
 :ref:`-get-`                                Rejects all non-GET requests
@@ -72,7 +81,10 @@ Directive                                   Description
 :ref:`-handleRejections-`                   Transforms rejections produced by the inner route using the given
                                             ``RejectionHandler``
 :ref:`-handleWebsocketMessages-`            Handles websocket requests with the given handler and rejects other requests
-                                            with a ``ExpectedWebsocketRequestRejection``
+                                            with an ``ExpectedWebsocketRequestRejection``
+:ref:`-handleWebsocketMessagesForProtocol-` Handles websocket requests with the given handler if the subprotocol matches
+                                            and rejects other requests with an ``ExpectedWebsocketRequestRejection`` or
+                                            an ``UnsupportedWebsocketSubprotocolRejection``.
 :ref:`-handleWith-`                         Completes the request using a given function
 :ref:`-head-`                               Rejects all non-HEAD requests
 :ref:`-headerValue-`                        Extracts an HTTP header value using a given ``HttpHeader ⇒ Option[T]``
@@ -128,7 +140,6 @@ Directive                                   Description
                                             ``PartialFunction[HttpHeader, T]``
 :ref:`-options-`                            Rejects all non-OPTIONS requests
 :ref:`-overrideMethodWithParameter-`        Changes the request method to the value of the specified query parameter
-:ref:`-overrideStatusCode-`                 Overrides the response status code with the given one
 :ref:`-parameter-`                          Extracts a query parameter value from the request
 :ref:`-parameterMap-`                       Extracts the request's query parameters as a ``Map[String, String]``
 :ref:`-parameterMultiMap-`                  Extracts the request's query parameters as a ``Map[String, List[String]]``
@@ -160,9 +171,9 @@ Directive                                   Description
                                             ``RequestContext``, without implicitly consuming a leading slash
 :ref:`-rawPathPrefixTest-`                  Checks whether the unmatchedPath has a prefix matched by the given
                                             ``PathMatcher``
-:ref:`-recoverRejections-`                  Transforms rejections from a previous route with an
+:ref:`-recoverRejections-`                  Transforms rejections from the inner route with an
                                             ``immutable.Seq[Rejection] ⇒ RouteResult`` function
-:ref:`-recoverRejectionsWith-`              Transforms rejections from a previous route with an
+:ref:`-recoverRejectionsWith-`              Transforms rejections from the inner route with an
                                             ``immutable.Seq[Rejection] ⇒ Future[RouteResult]`` function
 :ref:`-redirect-`                           Completes the request with redirection response of the given type to the
                                             given URI
@@ -186,9 +197,12 @@ Directive                                   Description
 :ref:`-responseEncodingAccepted-`           Rejects the request with an ``UnacceptedResponseEncodingRejection`` if the
                                             given response encoding is not accepted by the client
 :ref:`-scheme-`                             Rejects all requests whose URI scheme doesn't match the given one
+:ref:`-selectPreferredLanguage-`            Inspects the request's ``Accept-Language`` header and determines, which of
+                                            a given set of language alternatives is preferred by the client
 :ref:`-setCookie-`                          Adds a ``Set-Cookie`` response header with the given cookies
 :ref:`-textract-`                           Extracts a number of values using a ``RequestContext ⇒ Tuple`` function
 :ref:`-tprovide-`                           Injects a given tuple of values into a directive
+:ref:`-uploadedFile-`                       Streams one uploaded file from a multipart request to a file on disk
 :ref:`-validate-`                           Checks a given condition before running its inner route
 :ref:`-withExecutionContext-`               Runs its inner route with the given alternative ``ExecutionContext``
 :ref:`-withMaterializer-`                   Runs its inner route with the given alternative ``Materializer``

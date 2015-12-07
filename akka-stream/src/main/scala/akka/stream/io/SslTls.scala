@@ -119,11 +119,8 @@ object SslTls {
     override def subModules: Set[Module] = Set.empty
 
     override def withAttributes(att: Attributes): Module = copy(attributes = att)
-    override def carbonCopy: Module = {
-      val mod = TlsModule(attributes, sslContext, firstSession, role, closing, hostInfo)
-      if (plainIn == shape.inlets(0)) mod
-      else mod.replaceShape(mod.shape.asInstanceOf[BidiShape[_, _, _, _]].reversed)
-    }
+    override def carbonCopy: Module =
+      TlsModule(attributes, sslContext, firstSession, role, closing, hostInfo)
 
     override def replaceShape(s: Shape) =
       if (s == shape) this
@@ -155,13 +152,13 @@ object SslTls {
  */
 object SslTlsPlacebo {
   val forScala: scaladsl.BidiFlow[SslTlsOutbound, ByteString, ByteString, SessionBytes, Unit] =
-    scaladsl.BidiFlow() { implicit b ⇒
+    scaladsl.BidiFlow.fromGraph(scaladsl.GraphDSL.create() { implicit b ⇒
       // this constructs a session for (invalid) protocol SSL_NULL_WITH_NULL_NULL
       val session = SSLContext.getDefault.createSSLEngine.getSession
-      val top = b.add(scaladsl.Flow[SslTlsOutbound].collect { case SendBytes(b) ⇒ b })
+      val top = b.add(scaladsl.Flow[SslTlsOutbound].collect { case SendBytes(bytes) ⇒ bytes })
       val bottom = b.add(scaladsl.Flow[ByteString].map(SessionBytes(session, _)))
-      BidiShape(top, bottom)
-    }
+      BidiShape.fromFlows(top, bottom)
+    })
   val forJava: javadsl.BidiFlow[SslTlsOutbound, ByteString, ByteString, SessionBytes, Unit] =
     new javadsl.BidiFlow(forScala)
 }
@@ -225,7 +222,7 @@ case object Server extends Server
  *  - [[IgnoreCancel]] means to not react to cancellation of the receiving
  *    side unless the sending side has already completed
  *  - [[IgnoreComplete]] means to not react to the completion of the sending
- *    side unless the receiving side has already cancelled
+ *    side unless the receiving side has already canceled
  *  - [[IgnoreBoth]] means to ignore the first termination signal—be that
  *    cancellation or completion—and only act upon the second one
  */

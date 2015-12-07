@@ -11,7 +11,7 @@ import akka.http.scaladsl.server._
 class ExecutionDirectivesExamplesSpec extends RoutingSpec {
   "handleExceptions" in {
     val divByZeroHandler = ExceptionHandler {
-      case _: ArithmeticException => complete(StatusCodes.BadRequest, "You've got your arithmetic wrong, fool!")
+      case _: ArithmeticException => complete((StatusCodes.BadRequest, "You've got your arithmetic wrong, fool!"))
     }
     val route =
       path("divide" / IntNumber / IntNumber) { (a, b) =>
@@ -20,6 +20,7 @@ class ExecutionDirectivesExamplesSpec extends RoutingSpec {
         }
       }
 
+    // tests:
     Get("/divide/10/5") ~> route ~> check {
       responseAs[String] shouldEqual "The result is 2"
     }
@@ -30,7 +31,7 @@ class ExecutionDirectivesExamplesSpec extends RoutingSpec {
   }
   "handleRejections" in {
     val totallyMissingHandler = RejectionHandler.newBuilder()
-      .handleNotFound { complete(StatusCodes.NotFound, "Oh man, what you are looking for is long gone.") }
+      .handleNotFound { complete((StatusCodes.NotFound, "Oh man, what you are looking for is long gone.")) }
       .result()
     val route =
       pathPrefix("handled") {
@@ -39,6 +40,7 @@ class ExecutionDirectivesExamplesSpec extends RoutingSpec {
         }
       }
 
+    // tests:
     Get("/handled/existing") ~> route ~> check {
       responseAs[String] shouldEqual "This path exists"
     }

@@ -1,6 +1,6 @@
 package docs.stream
 
-import akka.stream.{ OverflowStrategy, ActorMaterializer }
+import akka.stream.{ ClosedShape, OverflowStrategy, ActorMaterializer }
 import akka.stream.scaladsl._
 import akka.stream.testkit.AkkaSpec
 
@@ -16,15 +16,16 @@ class GraphCyclesSpec extends AkkaSpec {
       // format: OFF
       //#deadlocked
       // WARNING! The graph below deadlocks!
-      FlowGraph.closed() { implicit b =>
-        import FlowGraph.Implicits._
+      RunnableGraph.fromGraph(GraphDSL.create() { implicit b =>
+        import GraphDSL.Implicits._
 
         val merge = b.add(Merge[Int](2))
         val bcast = b.add(Broadcast[Int](2))
 
         source ~> merge ~> Flow[Int].map { s => println(s); s } ~> bcast ~> Sink.ignore
                   merge                    <~                      bcast
-      }
+        ClosedShape
+      })
       //#deadlocked
       // format: ON
     }
@@ -33,15 +34,16 @@ class GraphCyclesSpec extends AkkaSpec {
       // format: OFF
       //#unfair
       // WARNING! The graph below stops consuming from "source" after a few steps
-      FlowGraph.closed() { implicit b =>
-        import FlowGraph.Implicits._
+      RunnableGraph.fromGraph(GraphDSL.create() { implicit b =>
+        import GraphDSL.Implicits._
 
         val merge = b.add(MergePreferred[Int](1))
         val bcast = b.add(Broadcast[Int](2))
 
         source ~> merge ~> Flow[Int].map { s => println(s); s } ~> bcast ~> Sink.ignore
                   merge.preferred              <~                  bcast
-      }
+        ClosedShape
+      })
       //#unfair
       // format: ON
     }
@@ -49,15 +51,16 @@ class GraphCyclesSpec extends AkkaSpec {
     "include a dropping cycle" in {
       // format: OFF
       //#dropping
-      FlowGraph.closed() { implicit b =>
-        import FlowGraph.Implicits._
+      RunnableGraph.fromGraph(GraphDSL.create() { implicit b =>
+        import GraphDSL.Implicits._
 
         val merge = b.add(Merge[Int](2))
         val bcast = b.add(Broadcast[Int](2))
 
         source ~> merge ~> Flow[Int].map { s => println(s); s } ~> bcast ~> Sink.ignore
             merge <~ Flow[Int].buffer(10, OverflowStrategy.dropHead) <~ bcast
-      }
+        ClosedShape
+      })
       //#dropping
       // format: ON
     }
@@ -66,8 +69,8 @@ class GraphCyclesSpec extends AkkaSpec {
       // format: OFF
       //#zipping-dead
       // WARNING! The graph below never processes any elements
-      FlowGraph.closed() { implicit b =>
-        import FlowGraph.Implicits._
+      RunnableGraph.fromGraph(GraphDSL.create() { implicit b =>
+        import GraphDSL.Implicits._
 
         val zip = b.add(ZipWith[Int, Int, Int]((left, right) => right))
         val bcast = b.add(Broadcast[Int](2))
@@ -75,7 +78,8 @@ class GraphCyclesSpec extends AkkaSpec {
         source ~> zip.in0
         zip.out.map { s => println(s); s } ~> bcast ~> Sink.ignore
         zip.in1             <~                bcast
-      }
+        ClosedShape
+      })
       //#zipping-dead
       // format: ON
     }
@@ -83,8 +87,8 @@ class GraphCyclesSpec extends AkkaSpec {
     "include a live zipping cycle" in {
       // format: OFF
       //#zipping-live
-      FlowGraph.closed() { implicit b =>
-        import FlowGraph.Implicits._
+      RunnableGraph.fromGraph(GraphDSL.create() { implicit b =>
+        import GraphDSL.Implicits._
 
         val zip = b.add(ZipWith((left: Int, right: Int) => left))
         val bcast = b.add(Broadcast[Int](2))
@@ -95,7 +99,8 @@ class GraphCyclesSpec extends AkkaSpec {
         zip.out.map { s => println(s); s } ~> bcast ~> Sink.ignore
         zip.in1 <~ concat <~ start
                    concat         <~          bcast
-      }
+        ClosedShape
+      })
       //#zipping-live
       // format: ON
     }

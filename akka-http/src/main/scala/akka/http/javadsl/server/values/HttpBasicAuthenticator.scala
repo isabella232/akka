@@ -12,22 +12,23 @@ import scala.concurrent.Future
 import scala.reflect.ClassTag
 
 /**
- * Represents existing or missing HTTP Basic authentication credentials.
+ * Represents existing or missing Http Basic authentication credentials.
  */
-trait BasicUserCredentials {
+trait BasicCredentials {
   /**
    * Were credentials provided in the request?
    */
   def available: Boolean
 
   /**
-   * The username as sent in the request.
+   * The identifier as sent in the request.
    */
-  def userName: String
+  def identifier: String
+
   /**
    * Verifies the given secret against the one sent in the request.
    */
-  def verifySecret(secret: String): Boolean
+  def verify(secret: String): Boolean
 }
 
 /**
@@ -37,7 +38,7 @@ trait BasicUserCredentials {
  */
 abstract class HttpBasicAuthenticator[T](val realm: String) extends AbstractDirective with ExtractionImplBase[T] with RequestVal[T] {
   protected[http] implicit def classTag: ClassTag[T] = reflect.classTag[AnyRef].asInstanceOf[ClassTag[T]]
-  def authenticate(credentials: BasicUserCredentials): Future[Option[T]]
+  def authenticate(credentials: BasicCredentials): Future[Option[T]]
 
   /**
    * Creates a return value for use in [[authenticate]] that successfully authenticates the requests and provides

@@ -95,7 +95,16 @@ private[parser] trait SimpleHeaders { this: Parser with CommonRules with CommonA
 
   // https://tools.ietf.org/html/rfc6265#section-4.2
   def `cookie` = rule {
-    oneOrMore(`cookie-pair`).separatedBy((ch(';') | ch(',')) ~ OWS) ~ EOI ~> (`Cookie`(_))
+    oneOrMore(`optional-cookie-pair`).separatedBy(';' ~ OWS) ~ EOI ~> { pairs ⇒
+      val validPairs = pairs.collect { case Some(p) ⇒ p }
+      `Cookie` {
+        if (validPairs.nonEmpty) validPairs
+        // Parsing infrastructure requires to return an HttpHeader value here but it is not possible
+        // to create a Cookie header without elements, so we throw here. This will 1) log a warning
+        // provide the complete content of the header as a RawHeader
+        else throw HeaderParser.EmptyCookieException
+      }
+    }
   }
 
   // http://tools.ietf.org/html/rfc7231#section-7.1.1.2
@@ -121,7 +130,7 @@ private[parser] trait SimpleHeaders { this: Parser with CommonRules with CommonA
   // Also: an empty hostnames with a non-empty port value (as in `Host: :8080`) are *allowed*,
   // see http://trac.tools.ietf.org/wg/httpbis/trac/ticket/92
   def host = rule {
-    runSubParser(new UriParser(_).`hostAndPort-pushed`) ~ EOI ~> (Host(_, _))
+    runSubParser(newUriParser(_).`hostAndPort-pushed`) ~ EOI ~> (Host(_, _))
   }
 
   // http://tools.ietf.org/html/rfc7232#section-3.1
@@ -150,7 +159,7 @@ private[parser] trait SimpleHeaders { this: Parser with CommonRules with CommonA
 
   // http://tools.ietf.org/html/rfc7231#section-7.1.2
   def location = rule {
-    runSubParser(new UriParser(_).`URI-reference-pushed`) ~ EOI ~> (Location(_))
+    uriReference ~ EOI ~> (Location(_))
   }
 
   // http://tools.ietf.org/html/rfc6454#section-7
@@ -171,7 +180,7 @@ private[parser] trait SimpleHeaders { this: Parser with CommonRules with CommonA
   def referer = rule {
     // we are bit more relaxed than the spec here by also parsing a potential fragment
     // but catch it in the `Referer` instance validation (with a `require` in the constructor)
-    runSubParser(new UriParser(_).`URI-reference-pushed`) ~ EOI ~> (Referer(_))
+    uriReference ~ EOI ~> (Referer(_))
   }
 
   // http://tools.ietf.org/html/rfc7231#section-7.4.2

@@ -27,15 +27,9 @@ private[akka] class ActorRefSourceActor(bufferSize: Int, overflowStrategy: Overf
   import akka.stream.OverflowStrategy._
 
   // when bufferSize is 0 there the buffer is not used
-  private val buffer = if (bufferSize == 0) null else FixedSizeBuffer[Any](bufferSize)
+  protected val buffer = if (bufferSize == 0) null else FixedSizeBuffer[Any](bufferSize)
 
-  def receive = {
-    case _: Request ⇒
-      // totalDemand is tracked by super
-      if (bufferSize != 0)
-        while (totalDemand > 0L && !buffer.isEmpty)
-          onNext(buffer.dequeue())
-
+  def receive = ({
     case Cancel ⇒
       context.stop(self)
 
@@ -46,6 +40,17 @@ private[akka] class ActorRefSourceActor(bufferSize: Int, overflowStrategy: Overf
     case Status.Failure(cause) if isActive ⇒
       onErrorThenStop(cause)
 
+  }: Receive).orElse(requestElem).orElse(receiveElem)
+
+  def requestElem: Receive = {
+    case _: Request ⇒
+      // totalDemand is tracked by super
+      if (bufferSize != 0)
+        while (totalDemand > 0L && !buffer.isEmpty)
+          onNext(buffer.dequeue())
+  }
+
+  def receiveElem: Receive = {
     case elem if isActive ⇒
       if (totalDemand > 0L)
         onNext(elem)
@@ -55,20 +60,26 @@ private[akka] class ActorRefSourceActor(bufferSize: Int, overflowStrategy: Overf
         buffer.enqueue(elem)
       else overflowStrategy match {
         case DropHead ⇒
+          log.debug("Dropping the head element because buffer is full and overflowStrategy is: [DropHead]")
           buffer.dropHead()
           buffer.enqueue(elem)
         case DropTail ⇒
+          log.debug("Dropping the tail element because buffer is full and overflowStrategy is: [DropTail]")
           buffer.dropTail()
           buffer.enqueue(elem)
         case DropBuffer ⇒
+          log.debug("Dropping all the buffered elements because buffer is full and overflowStrategy is: [DropBuffer]")
           buffer.clear()
           buffer.enqueue(elem)
         case DropNew ⇒
-        // do not enqueue new element if the buffer is full
+          // do not enqueue new element if the buffer is full
+          log.debug("Dropping the new element because buffer is full and overflowStrategy is: [DropNew]")
         case Fail ⇒
+          log.error("Failing because buffer is full and overflowStrategy is: [Fail]")
           onErrorThenStop(new Fail.BufferOverflowException(s"Buffer overflow (max capacity was: $bufferSize)!"))
         case Backpressure ⇒
-        // there is a precondition check in Source.actorRefSource factory method
+          // there is a precondition check in Source.actorRefSource factory method
+          log.debug("Backpressuring because buffer is full and overflowStrategy is: [Backpressure]")
       }
   }
 
@@ -77,7 +88,7 @@ private[akka] class ActorRefSourceActor(bufferSize: Int, overflowStrategy: Overf
       context.stop(self)
 
     case Status.Failure(cause) if isActive ⇒
-      // errors must be signalled as soon as possible,
+      // errors must be signaled as soon as possible,
       // even if previously valid completion was requested via Status.Success
       onErrorThenStop(cause)
 

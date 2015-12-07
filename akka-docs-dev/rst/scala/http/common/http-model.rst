@@ -156,6 +156,43 @@ concrete subtype.
   Therefore you must make sure that you always consume the entity data, even in the case that you are not actually
   interested in it!
 
+
+Limiting message entity length
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All message entities that Akka HTTP reads from the network automatically get a length verification check attached to
+them. This check makes sure that the total entity size is less than or equal to the configured
+``max-content-length`` [#]_, which is an important defense against certain Denial-of-Service attacks.
+However, a single global limit for all requests (or responses) is often too inflexible for applications that need to
+allow large limits for *some* requests (or responses) but want to clamp down on all messages not belonging into that
+group.
+In order to give you maximum flexibility in defining entity size limits according to your needs the ``HttpEntity``
+features a ``withSizeLimit`` method, which lets you adjust the globally configured maximum size for this particular
+entity, be it to increase or decrease any previously set value.
+This means that your application will receive all requests (or responses) from the HTTP layer, even the ones whose
+``Content-Length`` exceeds the configured limit (because you might want to increase the limit yourself).
+Only when the actual data stream ``Source`` contained in the entity is materialized will the boundary checks be
+actually applied. In case the length verification fails the respective stream will be terminated with an
+``EntityStreamException`` either directly at materialization time (if the ``Content-Length`` is known) or whenever more
+data bytes than allowed have been read.
+
+When called on ``Strict`` entities the ``withSizeLimit`` method will return the entity itself if the length is within
+the bound, otherwise a ``Default`` entity with a single element data stream. This allows for potential refinement of the
+entity size limit at a later point (before materialization of the data stream).
+
+By default all message entities produced by the HTTP layer automatically carry the limit that is defined in the
+application's ``max-content-length`` config setting. If the entity is transformed in a way that changes the
+content-length and then another limit is applied then this new limit will be evaluated against the new
+content-length. If the entity is transformed in a way that changes the content-length and no new limit is applied
+then the previous limit will be applied against the previous content-length.
+Generally this behavior should be in line with your expectations.
+
+.. [#] `akka.http.parsing.max-content-length` (applying to server- as well as client-side),
+       `akka.http.server.parsing.max-content-length` (server-side only),
+       `akka.http.client.parsing.max-content-length` (client-side only) or
+       `akka.http.host-connection-pool.client.parsing.max-content-length` (only host-connection-pools)
+
+
 Special processing for HEAD requests
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -178,6 +215,8 @@ connection after the response has been sent. This allows the sending of HEAD res
 header across persistent HTTP connections.
 
 .. _RFC 7230: http://tools.ietf.org/html/rfc7230#section-3.3.3
+
+.. _header-model-scala:
 
 Header Model
 ------------
@@ -244,9 +283,55 @@ Connection
 
 __ @github@/akka-http-core/src/test/scala/akka/http/impl/engine/rendering/ResponseRendererSpec.scala#L422
 
+Custom Headers
+--------------
+
+Sometimes you may need to model a custom header type which is not part of HTTP and still be able to use it
+as convienient as is possible with the built-in types.
+
+Because of the number of ways one may interact with headers (i.e. try to match a ``CustomHeader`` against a ``RawHeader``
+or the other way around etc), a helper trait for custom Header types and their companions classes are provided by Akka HTTP.
+Thanks to extending :class:`ModeledCustomHeader` instead of the plain ``CustomHeader`` such header can be matched
+
+.. includecode:: ../../../../../akka-http-tests/src/test/scala/akka/http/scaladsl/server/CustomHeaderRoutingSpec.scala
+   :include: modeled-api-key-custom-header
+
+Which allows the this CustomHeader to be used in the following scenarios:
+
+.. includecode:: ../../../../../akka-http-tests/src/test/scala/akka/http/scaladsl/server/CustomHeaderRoutingSpec.scala
+   :include: matching-examples
+
+Including usage within the header directives like in the following :ref:`-headerValuePF-` example:
+
+.. includecode:: ../../../../../akka-http-tests/src/test/scala/akka/http/scaladsl/server/CustomHeaderRoutingSpec.scala
+   :include: matching-in-routes
+
+One can also directly extend :class:`CustomHeader` which requires less boilerplate, however that has the downside of
+matching against :ref:`RawHeader` instances not working out-of-the-box, thus limiting its usefulnes in the routing layer
+of Akka HTTP. For only rendering such header however it would be enough.
+
+.. note::
+  When defining custom headers, prefer to extend :class:`ModeledCustomHeader` instead of :class:`CustomHeader` directly
+  as it will automatically make your header abide all the expected pattern matching semantics one is accustomed to
+  when using built-in types (such as matching a custom header against a ``RawHeader`` as is often the case in routing
+  layers of Akka HTTP applications).
 
 Parsing / Rendering
 -------------------
 
 Parsing and rendering of HTTP data structures is heavily optimized and for most types there's currently no public API
 provided to parse (or render to) Strings or byte arrays.
+
+.. note::
+  Various parsing and rendering settings are available to tweak in the configuration under ``akka.http.client[.parsing]``,
+  ``akka.http.server[.parsing]`` and ``akka.http.host-connection-pool[.client.parsing]``, with defaults for all of these
+  being defined in the ``akka.http.parsing`` configuration section.
+
+  For example, if you want to change a parsing setting for all components, you can set the ``akka.http.parsing.illegal-header-warnings = off``
+  value. However this setting can be stil overriden by the more specific sections, like for example ``akka.http.server.parsing.illegal-header-warnings = on``.
+  In this case both ``client`` and ``host-connection-pool`` APIs will see the setting ``off``, however the server will see ``on``.
+
+  In the case of ``akka.http.host-connection-pool.client`` settings, they default to settings set in ``akka.http.client``,
+  and can override them if needed. This is useful, since both ``client`` and ``host-connection-pool`` APIs,
+  such as the Client API ``Http().outgoingConnection`` or the Host Connection Pool APIs ``Http().singleRequest`` or ``Http().superPool``,
+  usually need the same settings, however the ``server`` most likely has a very different set of settings.

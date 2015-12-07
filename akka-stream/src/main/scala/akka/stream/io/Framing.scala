@@ -97,7 +97,7 @@ object Framing {
 
     })
 
-    BidiFlow.wrap(encoder, decoder)(Keep.left)
+    BidiFlow.fromFlowsMat(encoder, decoder)(Keep.left)
   }
 
   private trait IntDecoder {
@@ -121,7 +121,7 @@ object Framing {
 
   private class LittleEndianCodec(val length: Int) extends IntDecoder {
     private val highestOctet = (length - 1) * 8
-    private val Mask = (1 << (length * 8)) - 1
+    private val Mask = ((1L << (length * 8)) - 1).toInt
 
     override def decode(bs: ByteIterator): Int = {
       var count = length

@@ -16,6 +16,8 @@ import akka.http.scaladsl.server.AuthenticationFailedRejection.{ CredentialsReje
 /**
  * Provides directives for securing an inner route using the standard Http authentication headers [[`WWW-Authenticate`]]
  * and [[Authorization]]. Most prominently, HTTP Basic authentication as defined in RFC 2617.
+ *
+ * See: <a href="https://www.ietf.org/rfc/rfc2617.txt">RFC 2617</a>.
  */
 trait SecurityDirectives {
   import BasicDirectives._
@@ -23,22 +25,32 @@ trait SecurityDirectives {
   import FutureDirectives._
   import RouteDirectives._
 
+  //#authentication-result
   /**
    * The result of an HTTP authentication attempt is either the user object or
    * an HttpChallenge to present to the browser.
    */
   type AuthenticationResult[+T] = Either[HttpChallenge, T]
+  //#authentication-result
 
-  type Authenticator[T] = UserCredentials ⇒ Option[T]
-  type AsyncAuthenticator[T] = UserCredentials ⇒ Future[Option[T]]
-  type AuthenticatorPF[T] = PartialFunction[UserCredentials, T]
-  type AsyncAuthenticatorPF[T] = PartialFunction[UserCredentials, Future[T]]
+  //#authenticator
+  type Authenticator[T] = Credentials ⇒ Option[T]
+  //#authenticator
+  //#async-authenticator
+  type AsyncAuthenticator[T] = Credentials ⇒ Future[Option[T]]
+  //#async-authenticator
+  //#authenticator-pf
+  type AuthenticatorPF[T] = PartialFunction[Credentials, T]
+  //#authenticator-pf
+  //#async-authenticator-pf
+  type AsyncAuthenticatorPF[T] = PartialFunction[Credentials, Future[T]]
+  //#async-authenticator-pf
 
   /**
    * Extracts the potentially present [[HttpCredentials]] provided with the request's [[Authorization]] header.
    */
   def extractCredentials: Directive1[Option[HttpCredentials]] =
-    optionalHeaderValueByType[Authorization]().map(_.map(_.credentials))
+    optionalHeaderValueByType[Authorization](()).map(_.map(_.credentials))
 
   /**
    * Wraps the inner route with Http Basic authentication support using a given ``Authenticator[T]``.
@@ -55,8 +67,8 @@ trait SecurityDirectives {
    */
   def authenticateBasicAsync[T](realm: String, authenticator: AsyncAuthenticator[T]): AuthenticationDirective[T] =
     extractExecutionContext.flatMap { implicit ec ⇒
-      authenticateOrRejectWithChallenge[BasicHttpCredentials, T] { basic ⇒
-        authenticator(UserCredentials(basic)).fast.map {
+      authenticateOrRejectWithChallenge[BasicHttpCredentials, T] { cred ⇒
+        authenticator(Credentials(cred)).fast.map {
           case Some(t) ⇒ AuthenticationResult.success(t)
           case None    ⇒ AuthenticationResult.failWithChallenge(challengeFor(realm))
         }
@@ -79,6 +91,49 @@ trait SecurityDirectives {
   def authenticateBasicPFAsync[T](realm: String, authenticator: AsyncAuthenticatorPF[T]): AuthenticationDirective[T] =
     extractExecutionContext.flatMap { implicit ec ⇒
       authenticateBasicAsync(realm, credentials ⇒
+        if (authenticator isDefinedAt credentials) authenticator(credentials).fast.map(Some(_))
+        else FastFuture.successful(None))
+    }
+
+  /**
+   * A directive that wraps the inner route with OAuth2 Bearer Token authentication support.
+   * The given authenticator determines whether the credentials in the request are valid
+   * and, if so, which user object to supply to the inner route.
+   */
+  def authenticateOAuth2[T](realm: String, authenticator: Authenticator[T]): AuthenticationDirective[T] =
+    authenticateOAuth2Async(realm, cred ⇒ FastFuture.successful(authenticator(cred)))
+
+  /**
+   * A directive that wraps the inner route with OAuth2 Bearer Token authentication support.
+   * The given authenticator determines whether the credentials in the request are valid
+   * and, if so, which user object to supply to the inner route.
+   */
+  def authenticateOAuth2Async[T](realm: String, authenticator: AsyncAuthenticator[T]): AuthenticationDirective[T] =
+    extractExecutionContext.flatMap { implicit ec ⇒
+      authenticateOrRejectWithChallenge[OAuth2BearerToken, T] { cred ⇒
+        authenticator(Credentials(cred)).fast.map {
+          case Some(t) ⇒ AuthenticationResult.success(t)
+          case None    ⇒ AuthenticationResult.failWithChallenge(challengeFor(realm))
+        }
+      }
+    }
+
+  /**
+   * A directive that wraps the inner route with OAuth2 Bearer Token authentication support.
+   * The given authenticator determines whether the credentials in the request are valid
+   * and, if so, which user object to supply to the inner route.
+   */
+  def authenticateOAuth2PF[T](realm: String, authenticator: AuthenticatorPF[T]): AuthenticationDirective[T] =
+    authenticateOAuth2(realm, authenticator.lift)
+
+  /**
+   * A directive that wraps the inner route with OAuth2 Bearer Token authentication support.
+   * The given authenticator determines whether the credentials in the request are valid
+   * and, if so, which user object to supply to the inner route.
+   */
+  def authenticateOAuth2PFAsync[T](realm: String, authenticator: AsyncAuthenticatorPF[T]): AuthenticationDirective[T] =
+    extractExecutionContext.flatMap { implicit ec ⇒
+      authenticateOAuth2Async(realm, credentials ⇒
         if (authenticator isDefinedAt credentials) authenticator(credentials).fast.map(Some(_))
         else FastFuture.successful(None))
     }
@@ -134,24 +189,35 @@ object SecurityDirectives extends SecurityDirectives
 
 /**
  * Represents authentication credentials supplied with a request. Credentials can either be
- * [[UserCredentials.Missing]] or can be [[UserCredentials.Provided]] in which case a username is
+ * [[Credentials.Missing]] or can be [[Credentials.Provided]] in which case an identifier is
  * supplied and a function to check the known secret against the provided one in a secure fashion.
  */
-sealed trait UserCredentials
-object UserCredentials {
-  case object Missing extends UserCredentials
-  abstract case class Provided(username: String) extends UserCredentials {
-    def verifySecret(secret: String): Boolean
+sealed trait Credentials
+object Credentials {
+  case object Missing extends Credentials
+  abstract case class Provided(identifier: String) extends Credentials {
+    /**
+     * Safely compares the passed in `secret` with the received secret part of the Credentials.
+     * Use of this method instead of manual String equality testing is recommended in order to guard against timing attacks.
+     *
+     * See also [[EnhancedString#secure_==]], for more information.
+     */
+    def verify(secret: String): Boolean
   }
 
-  def apply(cred: Option[BasicHttpCredentials]): UserCredentials =
+  def apply(cred: Option[HttpCredentials]): Credentials = {
     cred match {
       case Some(BasicHttpCredentials(username, receivedSecret)) ⇒
-        new UserCredentials.Provided(username) {
-          def verifySecret(secret: String): Boolean = secret secure_== receivedSecret
+        new Credentials.Provided(username) {
+          def verify(secret: String): Boolean = secret secure_== receivedSecret
         }
-      case None ⇒ UserCredentials.Missing
+      case Some(OAuth2BearerToken(token)) ⇒
+        new Credentials.Provided(token) {
+          def verify(secret: String): Boolean = secret secure_== token
+        }
+      case None ⇒ Credentials.Missing
     }
+  }
 }
 
 import SecurityDirectives._

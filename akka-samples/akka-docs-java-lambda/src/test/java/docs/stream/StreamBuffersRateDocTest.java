@@ -77,21 +77,21 @@ public class StreamBuffersRateDocTest {
     final FiniteDuration oneSecond =
         FiniteDuration.create(1, TimeUnit.SECONDS);
     final Source<String, Cancellable> msgSource =
-        Source.from(oneSecond, oneSecond, "message!");
+        Source.tick(oneSecond, oneSecond, "message!");
     final Source<String, Cancellable> tickSource =
-        Source.from(oneSecond.mul(3), oneSecond.mul(3), "tick");
+        Source.tick(oneSecond.mul(3), oneSecond.mul(3), "tick");
     final Flow<String, Integer, BoxedUnit> conflate =
         Flow.of(String.class).conflate(
             first -> 1, (count, elem) -> count + 1);
 
-    FlowGraph.factory().closed(b -> {
+    RunnableGraph.fromGraph(GraphDSL.create(b -> {
       final FanInShape2<String, Integer, Integer> zipper =
-          b.graph(ZipWith.create((String tick, Integer count) -> count));
-
-      b.from(msgSource).via(conflate).to(zipper.in1());
-      b.from(tickSource).to(zipper.in0());
-      b.from(zipper.out()).to(Sink.foreach(elem -> System.out.println(elem)));
-    }).run(mat);
+          b.add(ZipWith.create((String tick, Integer count) -> count));
+      b.from(b.add(msgSource)).via(b.add(conflate)).toInlet(zipper.in1());
+      b.from(b.add(tickSource)).toInlet(zipper.in0());
+      b.from(zipper.out()).to(b.add(Sink.foreach(elem -> System.out.println(elem))));
+      return ClosedShape.getInstance();
+    })).run(mat);
     //#buffering-abstraction-leak
   }
 

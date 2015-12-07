@@ -32,12 +32,22 @@ trait ParameterDirectives extends ToNameReceptacleEnhancements {
   /**
    * Extracts a query parameter value from the request.
    * Rejects the request if the defined query parameter matcher(s) don't match.
+   *
+   * Due to a bug in Scala 2.10, invocations of this method sometimes fail to compile with an
+   * "too many arguments for method parameter" or "type mismatch" error.
+   *
+   * As a workaround add an `import ParameterDirectives.ParamMagnet` or use Scala 2.11.x.
    */
   def parameter(pdm: ParamMagnet): pdm.Out = pdm()
 
   /**
    * Extracts a number of query parameter values from the request.
    * Rejects the request if the defined query parameter matcher(s) don't match.
+   *
+   * Due to a bug in Scala 2.10, invocations of this method sometimes fail to compile with an
+   * "too many arguments for method parameters" or "type mismatch" error.
+   *
+   * As a workaround add an `import ParameterDirectives.ParamMagnet` or use Scala 2.11.x.
    */
   def parameters(pdm: ParamMagnet): pdm.Out = pdm()
 
@@ -47,13 +57,13 @@ object ParameterDirectives extends ParameterDirectives {
   import BasicDirectives._
 
   private val _parameterMap: Directive1[Map[String, String]] =
-    extract(_.request.uri.query.toMap)
+    extract(_.request.uri.query().toMap)
 
   private val _parameterMultiMap: Directive1[Map[String, List[String]]] =
-    extract(_.request.uri.query.toMultiMap)
+    extract(_.request.uri.query().toMultiMap)
 
   private val _parameterSeq: Directive1[immutable.Seq[(String, String)]] =
-    extract(_.request.uri.query.toSeq)
+    extract(_.request.uri.query().toSeq)
 
   sealed trait ParamMagnet {
     type Out
@@ -99,7 +109,7 @@ object ParameterDirectives extends ParameterDirectives {
       extractRequestContext flatMap { ctx ⇒
         import ctx.executionContext
         import ctx.materializer
-        handleParamResult(paramName, fsou(ctx.request.uri.query get paramName))
+        handleParamResult(paramName, fsou(ctx.request.uri.query().get(paramName)))
       }
     implicit def forString(implicit fsu: FSU[String]): ParamDefAux[String, Directive1[String]] =
       extractParameter[String, String] { string ⇒ filter(string, fsu) }
@@ -124,7 +134,7 @@ object ParameterDirectives extends ParameterDirectives {
       extractRequestContext flatMap { ctx ⇒
         import ctx.executionContext
         import ctx.materializer
-        onComplete(fsou(ctx.request.uri.query get paramName)) flatMap {
+        onComplete(fsou(ctx.request.uri.query().get(paramName))) flatMap {
           case Success(value) if value == requiredValue ⇒ pass
           case _                                        ⇒ reject
         }
@@ -140,7 +150,7 @@ object ParameterDirectives extends ParameterDirectives {
       extractRequestContext flatMap { ctx ⇒
         import ctx.executionContext
         import ctx.materializer
-        handleParamResult(paramName, Future.sequence(ctx.request.uri.query.getAll(paramName).map(fsu.apply)))
+        handleParamResult(paramName, Future.sequence(ctx.request.uri.query().getAll(paramName).map(fsu.apply)))
       }
     implicit def forRepVR[T](implicit fsu: FSU[T]): ParamDefAux[RepeatedValueReceptacle[T], Directive1[Iterable[T]]] =
       extractParameter[RepeatedValueReceptacle[T], Iterable[T]] { rvr ⇒ repeatedFilter(rvr.name, fsu) }

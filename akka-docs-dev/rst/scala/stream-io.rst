@@ -16,7 +16,7 @@ Streaming TCP
 
 Accepting connections: Echo Server
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-In order to implement a simple EchoServer we ``bind`` to a given address, which returns a ``Source[IncomingConnection]``,
+In order to implement a simple EchoServer we ``bind`` to a given address, which returns a ``Source[IncomingConnection, Future[ServerBinding]]``,
 which will emit an :class:`IncomingConnection` element for each new connection that the Server should handle:
 
 .. includecode:: code/docs/stream/io/StreamTcpDocSpec.scala#echo-server-simple-bind
@@ -35,8 +35,8 @@ incoming connection Flow, since it directly corresponds to an existing, already 
 only ever be materialized *once*.
 
 Closing connections is possible by cancelling the *incoming connection* :class:`Flow` from your server logic (e.g. by
-connecting its downstream to an :class:`CancelledSink` and its upstream to a *completed* :class:`Source`).
-It is also possible to shut down the servers socket by cancelling the ``connections:Source[IncomingConnection]``.
+connecting its downstream to a :class:`Sink.cancelled` and its upstream to a :class:`Source.empty`).
+It is also possible to shut down the server's socket by cancelling the :class:`IncomingConnection` source ``connections``.
 
 We can then test the TCP server by sending data to the TCP Socket using ``netcat``:
 
@@ -86,10 +86,10 @@ it makes sense to make the Server initiate the conversation by emitting a "hello
 
 .. includecode:: code/docs/stream/io/StreamTcpDocSpec.scala#welcome-banner-chat-server
 
-The way we constructed a :class:`Flow` using a :class:`PartialFlowGraph` is explained in detail in
+The way we constructed a :class:`Flow` using the :class:`GraphDSL` is explained in detail in
 :ref:`constructing-sources-sinks-flows-from-partial-graphs-scala`, however the basic concepts is rather simple–
 we can encapsulate arbitrarily complex logic within a :class:`Flow` as long as it exposes the same interface, which means
-exposing exactly one :class:`UndefinedSink` and exactly one :class:`UndefinedSource` which will be connected to the TCP
+exposing exactly one :class:`Outlet` and exactly one :class:`Inlet` which will be connected to the TCP
 pipeline. In this example we use a :class:`Concat` graph processing stage to inject the initial message, and then
 continue with handling all incoming data using the echo handler. You should use this pattern of encapsulating complex
 logic in Flows and attaching those to :class:`StreamIO` in order to implement your custom and possibly sophisticated TCP servers.
@@ -110,7 +110,7 @@ on files.
   Once Akka is free to require JDK8 (from ``2.4.x``) these implementations will be updated to make use of the
   new NIO APIs (i.e. :class:`AsynchronousFileChannel`).
 
-Streaming data from a file is as easy as defining a `SynchronousFileSource` given a target file, and an optional
+Streaming data from a file is as easy as creating a `Source.file` given a target file, and an optional
 ``chunkSize`` which determines the buffer size determined as one "element" in such stream:
 
 .. includecode:: code/docs/stream/io/StreamFileDocSpec.scala#file-source
@@ -118,13 +118,7 @@ Streaming data from a file is as easy as defining a `SynchronousFileSource` give
 Please note that these processing stages are backed by Actors and by default are configured to run on a pre-configured
 threadpool-backed dispatcher dedicated for File IO. This is very important as it isolates the blocking file IO operations from the rest
 of the ActorSystem allowing each dispatcher to be utilised in the most efficient way. If you want to configure a custom
-dispatcher for file IO operations globally, you can do so by changing the ``akka.stream.file-io-dispatcher``,
+dispatcher for file IO operations globally, you can do so by changing the ``akka.stream.blocking-io-dispatcher``,
 or for a specific stage by specifying a custom Dispatcher in code, like this:
 
 .. includecode:: code/docs/stream/io/StreamFileDocSpec.scala#custom-dispatcher-code
-
-If you would like to keep all sink and source factories defined on the :class:`Source` and :class:`Sink` objects
-instead of using the separate objects contained in ``akka.stream.io`` to create these you can import an *implicit
-coversion* that makes these operations available as shown below:
-
-.. includecode:: code/docs/stream/io/StreamFileDocSpec.scala#source-sink-implicits

@@ -3,25 +3,22 @@
  */
 package akka.stream.javadsl
 
+import java.io.{ InputStream, OutputStream, File }
+
 import akka.actor.{ ActorRef, Props }
+import akka.dispatch.ExecutionContexts
 import akka.japi.function
 import akka.stream.impl.StreamLayout
 import akka.stream.{ javadsl, scaladsl, _ }
+import akka.util.ByteString
 import org.reactivestreams.{ Publisher, Subscriber }
 
+import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.Try
 
 /** Java API */
 object Sink {
-
-  val factory: SinkCreate = new SinkCreate {}
-
-  /** Adapt [[scaladsl.Sink]] for use within Java DSL */
-  //FIXME: Is this needed now?
-  def adapt[O, M](sink: scaladsl.Sink[O, M]): javadsl.Sink[O, M] =
-    new Sink(sink)
-
   /**
    * A `Sink` that will invoke the given function for every received element, giving it its previous
    * output (or the given `zero` value) and the element as input.
@@ -52,10 +49,17 @@ object Sink {
 
   /**
    * A `Sink` that materializes into a [[org.reactivestreams.Publisher]].
-   * that can handle one [[org.reactivestreams.Subscriber]].
+   *
+   * If `fanout` is `true`, the materialized `Publisher` will support multiple `Subscriber`s and
+   * the size of the `inputBuffer` configured for this stage becomes the maximum number of elements that
+   * the fastest [[org.reactivestreams.Subscriber]] can be ahead of the slowest one before slowing
+   * the processing down due to back pressure.
+   *
+   * If `fanout` is `false` then the materialized `Publisher` will only support a single `Subscriber` and
+   * reject any additional `Subscriber`s.
    */
-  def publisher[In](): Sink[In, Publisher[In]] =
-    new Sink(scaladsl.Sink.publisher)
+  def publisher[T](fanout: Boolean): Sink[T, Publisher[T]] =
+    new Sink(scaladsl.Sink.publisher(fanout))
 
   /**
    * A `Sink` that will invoke the given procedure for each received element. The sink is materialized
@@ -81,13 +85,6 @@ object Sink {
     new Sink(scaladsl.Sink.foreachParallel(parallel)(f.apply)(ec))
 
   /**
-   * A `Sink` that materializes into a [[org.reactivestreams.Publisher]]
-   * that can handle more than one [[org.reactivestreams.Subscriber]].
-   */
-  def fanoutPublisher[T](initialBufferSize: Int, maximumBufferSize: Int): Sink[T, Publisher[T]] =
-    new Sink(scaladsl.Sink.fanoutPublisher(initialBufferSize, maximumBufferSize))
-
-  /**
    * A `Sink` that when the flow is completed, either through a failure or normal
    * completion, apply the provided function with [[scala.util.Success]]
    * or [[scala.util.Failure]].
@@ -97,13 +94,49 @@ object Sink {
 
   /**
    * A `Sink` that materializes into a `Future` of the first value received.
+   * If the stream completes before signaling at least a single element, the Future will be failed with a [[NoSuchElementException]].
+   * If the stream signals an error errors before signaling at least a single element, the Future will be failed with the streams exception.
+   *
+   * See also [[headOption]].
    */
   def head[In](): Sink[In, Future[In]] =
     new Sink(scaladsl.Sink.head[In])
 
   /**
+   * A `Sink` that materializes into a `Future` of the optional first value received.
+   * If the stream completes before signaling at least a single element, the value of the Future will be an empty [[akka.japi.Option]].
+   * If the stream signals an error errors before signaling at least a single element, the Future will be failed with the streams exception.
+   *
+   * See also [[head]].
+   */
+  def headOption[In](): Sink[In, Future[akka.japi.Option[In]]] =
+    new Sink(scaladsl.Sink.headOption[In].mapMaterializedValue(
+      _.map(akka.japi.Option.fromScalaOption)(ExecutionContexts.sameThreadExecutionContext)))
+
+  /**
+   * A `Sink` that materializes into a `Future` of the last value received.
+   * If the stream completes before signaling at least a single element, the Future will be failed with a [[NoSuchElementException]].
+   * If the stream signals an error errors before signaling at least a single element, the Future will be failed with the streams exception.
+   *
+   * See also [[lastOption]].
+   */
+  def last[In](): Sink[In, Future[In]] =
+    new Sink(scaladsl.Sink.last[In])
+
+  /**
+   * A `Sink` that materializes into a `Future` of the optional last value received.
+   * If the stream completes before signaling at least a single element, the value of the Future will be an empty [[akka.japi.Option]].
+   * If the stream signals an error errors before signaling at least a single element, the Future will be failed with the streams exception.
+   *
+   * See also [[head]].
+   */
+  def lastOption[In](): Sink[In, Future[akka.japi.Option[In]]] =
+    new Sink(scaladsl.Sink.lastOption[In].mapMaterializedValue(
+      _.map(akka.japi.Option.fromScalaOption)(ExecutionContexts.sameThreadExecutionContext)))
+
+  /**
    * Sends the elements of the stream to the given `ActorRef`.
-   * If the target actor terminates the stream will be cancelled.
+   * If the target actor terminates the stream will be canceled.
    * When the stream is completed successfully the given `onCompleteMessage`
    * will be sent to the destination actor.
    * When the stream is completed with failure a [[akka.actor.Status.Failure]]
@@ -132,11 +165,104 @@ object Sink {
    * A graph with the shape of a sink logically is a sink, this method makes
    * it so also in type.
    */
-  def wrap[T, M](g: Graph[SinkShape[T], M]): Sink[T, M] =
+  def fromGraph[T, M](g: Graph[SinkShape[T], M]): Sink[T, M] =
     g match {
       case s: Sink[T, M] ⇒ s
-      case other         ⇒ new Sink(scaladsl.Sink.wrap(other))
+      case other         ⇒ new Sink(scaladsl.Sink.fromGraph(other))
     }
+
+  /**
+   * Combine several sinks with fan-out strategy like `Broadcast` or `Balance` and returns `Sink`.
+   */
+  def combine[T, U](output1: Sink[U, _], output2: Sink[U, _], rest: java.util.List[Sink[U, _]], strategy: function.Function[java.lang.Integer, Graph[UniformFanOutShape[T, U], Unit]]): Sink[T, Unit] = {
+    import scala.collection.JavaConverters._
+    val seq = if (rest != null) rest.asScala.map(_.asScala) else Seq()
+    new Sink(scaladsl.Sink.combine(output1.asScala, output2.asScala, seq: _*)(num ⇒ strategy.apply(num)))
+  }
+
+  /**
+   * Creates a `Sink` that is materialized as an [[akka.stream.SinkQueue]].
+   * [[akka.stream.SinkQueue.pull]] method is pulling element from the stream and returns ``Future[Option[T]]``.
+   * `Future` completes when element is available.
+   *
+   * `Sink` will request at most `bufferSize` number of elements from
+   * upstream and then stop back pressure.
+   *
+   * @param bufferSize The size of the buffer in element count
+   * @param timeout Timeout for ``SinkQueue.pull():Future[Option[T] ]``
+   */
+  def queue[T](bufferSize: Int, timeout: FiniteDuration): Sink[T, SinkQueue[T]] =
+    new Sink(scaladsl.Sink.queue(bufferSize, timeout))
+
+  /**
+   * Creates a Sink that writes incoming [[ByteString]] elements to the given file.
+   * Overwrites existing files, if you want to append to an existing file use [[#file(File, Boolean)]] and
+   * pass in `true` as the Boolean argument.
+   *
+   * Materializes a [[Future]] that will be completed with the size of the file (in bytes) at the streams completion.
+   *
+   * You can configure the default dispatcher for this Source by changing the `akka.stream.blocking-io-dispatcher` or
+   * set it for a given Source by using [[ActorAttributes]].
+   *
+   * @param f The file to write to
+   */
+  def file(f: File): javadsl.Sink[ByteString, Future[java.lang.Long]] = file(f, append = false)
+
+  /**
+   * Creates a Sink that writes incoming [[ByteString]] elements to the given file and either overwrites
+   * or appends to it.
+   *
+   * Materializes a [[Future]] that will be completed with the size of the file (in bytes) at the streams completion.
+   *
+   * You can configure the default dispatcher for this Source by changing the `akka.stream.blocking-io-dispatcher` or
+   * set it for a given Source by using [[ActorAttributes]].
+   *
+   * @param f The file to write to
+   * @param append Whether or not the file should be overwritten or appended to
+   */
+  def file(f: File, append: Boolean): javadsl.Sink[ByteString, Future[java.lang.Long]] =
+    new Sink(scaladsl.Sink.file(f, append)).asInstanceOf[javadsl.Sink[ByteString, Future[java.lang.Long]]]
+
+  /**
+   * Sink which writes incoming [[ByteString]]s to an [[OutputStream]] created by the given function.
+   *
+   * Materializes a [[Future]] that will be completed with the size of the file (in bytes) at the streams completion.
+   *
+   * You can configure the default dispatcher for this Source by changing the `akka.stream.blocking-io-dispatcher` or
+   * set it for a given Source by using [[ActorAttributes]].
+   *
+   * @param f A Creator which creates an OutputStream to write to
+   */
+  def outputStream(f: function.Creator[OutputStream]): javadsl.Sink[ByteString, Future[java.lang.Long]] =
+    new Sink(scaladsl.Sink.outputStream(() ⇒ f.create())).asInstanceOf[javadsl.Sink[ByteString, Future[java.lang.Long]]]
+
+  /**
+   * Creates a Sink which when materialized will return an [[java.io.InputStream]] which it is possible
+   * to read the values produced by the stream this Sink is attached to.
+   *
+   * This method uses a default read timeout, use [[#inputStream(FiniteDuration)]] to explicitly
+   * configure the timeout.
+   *
+   * This Sink is intended for inter-operation with legacy APIs since it is inherently blocking.
+   *
+   * You can configure the default dispatcher for this Source by changing the `akka.stream.blocking-io-dispatcher` or
+   * set it for a given Source by using [[ActorAttributes]].
+   */
+  def inputStream(): Sink[ByteString, InputStream] = new Sink(scaladsl.Sink.inputStream())
+
+  /**
+   * Creates a Sink which when materialized will return an [[java.io.InputStream]] which it is possible
+   * to read the values produced by the stream this Sink is attached to.
+   *
+   * This Sink is intended for inter-operation with legacy APIs since it is inherently blocking.
+   *
+   * You can configure the default dispatcher for this Source by changing the `akka.stream.blocking-io-dispatcher` or
+   * set it for a given Source by using [[ActorAttributes]].
+   *
+   * @param readTimeout the max time the read operation on the materialized InputStream should block
+   */
+  def inputStream(readTimeout: FiniteDuration): Sink[ByteString, InputStream] =
+    new Sink(scaladsl.Sink.inputStream(readTimeout))
 }
 
 /**
@@ -145,7 +271,7 @@ object Sink {
  * A `Sink` is a set of stream processing steps that has one open input and an attached output.
  * Can be used as a `Subscriber`
  */
-class Sink[-In, +Mat](delegate: scaladsl.Sink[In, Mat]) extends Graph[SinkShape[In], Mat] {
+final class Sink[-In, +Mat](delegate: scaladsl.Sink[In, Mat]) extends Graph[SinkShape[In], Mat] {
 
   override def shape: SinkShape[In] = delegate.shape
   private[stream] def module: StreamLayout.Module = delegate.module

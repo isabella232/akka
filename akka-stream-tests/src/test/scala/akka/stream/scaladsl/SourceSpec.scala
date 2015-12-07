@@ -7,10 +7,9 @@ import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.util.{ Success, Failure }
 import scala.util.control.NoStackTrace
-import akka.stream.ActorMaterializer
+import akka.stream.{ SourceShape, ActorMaterializer }
 import akka.stream.testkit._
-import akka.stream.impl.PublisherSource
-import akka.stream.impl.ReactiveStreamsCompliance
+import akka.stream.impl.{ PublisherSource, ReactiveStreamsCompliance }
 
 class SourceSpec extends AkkaSpec {
 
@@ -18,7 +17,7 @@ class SourceSpec extends AkkaSpec {
 
   "Single Source" must {
     "produce element" in {
-      val p = Source.single(1).runWith(Sink.publisher)
+      val p = Source.single(1).runWith(Sink.publisher(false))
       val c = TestSubscriber.manualProbe[Int]()
       p.subscribe(c)
       val sub = c.expectSubscription()
@@ -28,7 +27,7 @@ class SourceSpec extends AkkaSpec {
     }
 
     "reject later subscriber" in {
-      val p = Source.single(1).runWith(Sink.publisher)
+      val p = Source.single(1).runWith(Sink.publisher(false))
       val c1 = TestSubscriber.manualProbe[Int]()
       val c2 = TestSubscriber.manualProbe[Int]()
       p.subscribe(c1)
@@ -46,7 +45,7 @@ class SourceSpec extends AkkaSpec {
 
   "Empty Source" must {
     "complete immediately" in {
-      val p = Source.empty.runWith(Sink.publisher)
+      val p = Source.empty.runWith(Sink.publisher(false))
       val c = TestSubscriber.manualProbe[Int]()
       p.subscribe(c)
       c.expectSubscriptionAndComplete()
@@ -61,7 +60,7 @@ class SourceSpec extends AkkaSpec {
   "Failed Source" must {
     "emit error immediately" in {
       val ex = new RuntimeException with NoStackTrace
-      val p = Source.failed(ex).runWith(Sink.publisher)
+      val p = Source.failed(ex).runWith(Sink.publisher(false))
       val c = TestSubscriber.manualProbe[Int]()
       p.subscribe(c)
       c.expectSubscriptionAndError(ex)
@@ -73,14 +72,14 @@ class SourceSpec extends AkkaSpec {
     }
   }
 
-  "Lazy Empty Source" must {
-    "complete materialized future when stream cancels" in {
-      val neverSource = Source.lazyEmpty
-      val pubSink = Sink.publisher
+  "Maybe Source" must {
+    "complete materialized future with None when stream cancels" in Utils.assertAllStagesStopped {
+      val neverSource = Source.maybe[Int]
+      val pubSink = Sink.publisher[Int](false)
 
       val (f, neverPub) = neverSource.toMat(pubSink)(Keep.both).run()
 
-      val c = TestSubscriber.manualProbe()
+      val c = TestSubscriber.manualProbe[Int]()
       neverPub.subscribe(c)
       val subs = c.expectSubscription()
 
@@ -88,24 +87,35 @@ class SourceSpec extends AkkaSpec {
       c.expectNoMsg(300.millis)
 
       subs.cancel()
-      Await.result(f.future, 500.millis)
+      Await.result(f.future, 500.millis) shouldEqual None
     }
 
-    "allow external triggering of completion" in {
-      val neverSource = Source.lazyEmpty[Int]
+    "allow external triggering of empty completion" in Utils.assertAllStagesStopped {
+      val neverSource = Source.maybe[Int].filter(_ ⇒ false)
       val counterSink = Sink.fold[Int, Int](0) { (acc, _) ⇒ acc + 1 }
 
       val (neverPromise, counterFuture) = neverSource.toMat(counterSink)(Keep.both).run()
 
       // external cancellation
-      neverPromise.success(())
+      neverPromise.trySuccess(None) shouldEqual true
 
-      val ready = Await.ready(counterFuture, 500.millis)
-      val Success(0) = ready.value.get
+      Await.result(counterFuture, 500.millis) shouldEqual 0
     }
 
-    "allow external triggering of onError" in {
-      val neverSource = Source.lazyEmpty
+    "allow external triggering of non-empty completion" in Utils.assertAllStagesStopped {
+      val neverSource = Source.maybe[Int]
+      val counterSink = Sink.head[Int]
+
+      val (neverPromise, counterFuture) = neverSource.toMat(counterSink)(Keep.both).run()
+
+      // external cancellation
+      neverPromise.trySuccess(Some(6)) shouldEqual true
+
+      Await.result(counterFuture, 500.millis) shouldEqual 6
+    }
+
+    "allow external triggering of onError" in Utils.assertAllStagesStopped {
+      val neverSource = Source.maybe[Int]
       val counterSink = Sink.fold[Int, Int](0) { (acc, _) ⇒ acc + 1 }
 
       val (neverPromise, counterFuture) = neverSource.toMat(counterSink)(Keep.both).run()
@@ -126,17 +136,17 @@ class SourceSpec extends AkkaSpec {
       val source = Source.subscriber[Int]
       val out = TestSubscriber.manualProbe[Int]
 
-      val s = Source(source, source, source, source, source)(Seq(_, _, _, _, _)) { implicit b ⇒
+      val s = Source.fromGraph(GraphDSL.create(source, source, source, source, source)(Seq(_, _, _, _, _)) { implicit b ⇒
         (i0, i1, i2, i3, i4) ⇒
-          import FlowGraph.Implicits._
+          import GraphDSL.Implicits._
           val m = b.add(Merge[Int](5))
           i0.outlet ~> m.in(0)
           i1.outlet ~> m.in(1)
           i2.outlet ~> m.in(2)
           i3.outlet ~> m.in(3)
           i4.outlet ~> m.in(4)
-          m.out
-      }.to(Sink(out)).run()
+          SourceShape(m.out)
+      }).to(Sink(out)).run()
 
       for (i ← 0 to 4) probes(i).subscribe(s(i))
       val sub = out.expectSubscription()
@@ -153,11 +163,56 @@ class SourceSpec extends AkkaSpec {
       gotten.toSet should ===(Set(0, 1, 2, 3, 4))
       out.expectComplete()
     }
+
+    "combine from many inputs with simplified API" in {
+      val probes = Seq.fill(3)(TestPublisher.manualProbe[Int]())
+      val source = for (i ← 0 to 2) yield Source(probes(i))
+      val out = TestSubscriber.manualProbe[Int]
+
+      Source.combine(source(0), source(1), source(2))(Merge(_)).to(Sink(out)).run()
+
+      val sub = out.expectSubscription()
+      sub.request(3)
+
+      for (i ← 0 to 2) {
+        val s = probes(i).expectSubscription()
+        s.expectRequest()
+        s.sendNext(i)
+        s.sendComplete()
+      }
+
+      val gotten = for (_ ← 0 to 2) yield out.expectNext()
+      gotten.toSet should ===(Set(0, 1, 2))
+      out.expectComplete()
+    }
+
+    "combine from two inputs with simplified API" in {
+      val probes = Seq.fill(2)(TestPublisher.manualProbe[Int]())
+      val source = Source(probes(0)) :: Source(probes(1)) :: Nil
+      val out = TestSubscriber.manualProbe[Int]
+
+      Source.combine(source(0), source(1))(Merge(_)).to(Sink(out)).run()
+
+      val sub = out.expectSubscription()
+      sub.request(3)
+
+      for (i ← 0 to 1) {
+        val s = probes(i).expectSubscription()
+        s.expectRequest()
+        s.sendNext(i)
+        s.sendComplete()
+      }
+
+      val gotten = for (_ ← 0 to 1) yield out.expectNext()
+      gotten.toSet should ===(Set(0, 1))
+      out.expectComplete()
+    }
+
   }
 
   "Repeat Source" must {
     "repeat as long as it takes" in {
-      import FlowGraph.Implicits._
+      import GraphDSL.Implicits._
       val result = Await.result(Source.repeat(42).grouped(10000).runWith(Sink.head), 1.second)
       result.size should ===(10000)
       result.toSet should ===(Set(42))

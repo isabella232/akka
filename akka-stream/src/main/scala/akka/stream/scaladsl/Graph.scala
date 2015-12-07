@@ -3,27 +3,23 @@
  */
 package akka.stream.scaladsl
 
-import akka.stream.impl.Junctions._
-import akka.stream.impl.GenJunctions._
-import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
+import akka.stream.impl.Stages.{ StageModule, SymbolicStage }
 import akka.stream.impl._
 import akka.stream.impl.StreamLayout._
 import akka.stream._
-import Attributes.name
-import scala.collection.immutable
+import akka.stream.stage.{ OutHandler, InHandler, GraphStageLogic, GraphStage }
 import scala.annotation.unchecked.uncheckedVariance
 import scala.annotation.tailrec
+import scala.collection.immutable
 
 object Merge {
   /**
    * Create a new `Merge` with the specified number of input ports.
    *
    * @param inputPorts number of input ports
+   * @param eagerClose if true, the merge will complete as soon as one of its inputs completes.
    */
-  def apply[T](inputPorts: Int): Merge[T] = {
-    val shape = new UniformFanInShape[T, T](inputPorts)
-    new Merge(inputPorts, shape, new MergeModule(shape, Attributes.name("Merge")))
-  }
+  def apply[T](inputPorts: Int, eagerClose: Boolean = false): Merge[T] = new Merge(inputPorts, eagerClose)
 
 }
 
@@ -35,25 +31,81 @@ object Merge {
  *
  * '''Backpressures when''' downstream backpressures
  *
- * '''Completes when''' all upstreams complete
+ * '''Completes when''' all upstreams complete (eagerClose=false) or one upstream completes (eagerClose=true)
  *
  * '''Cancels when''' downstream cancels
  */
-class Merge[T] private (inputPorts: Int,
-                        override val shape: UniformFanInShape[T, T],
-                        private[stream] override val module: StreamLayout.Module)
-  extends Graph[UniformFanInShape[T, T], Unit] {
+class Merge[T] private (val inputPorts: Int, val eagerClose: Boolean) extends GraphStage[UniformFanInShape[T, T]] {
+  val in: immutable.IndexedSeq[Inlet[T]] = Vector.tabulate(inputPorts)(i ⇒ Inlet[T]("Merge.in" + i))
+  val out: Outlet[T] = Outlet[T]("Merge.out")
+  override val shape: UniformFanInShape[T, T] = UniformFanInShape(out, in: _*)
 
-  override def withAttributes(attr: Attributes): Merge[T] =
-    new Merge(inputPorts, shape, module.withAttributes(attr).nest())
+  override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) {
+    private var initialized = false
 
-  override def named(name: String): Merge[T] = withAttributes(Attributes.name(name))
+    private val pendingQueue = Array.ofDim[Inlet[T]](inputPorts)
+    private var pendingHead = 0
+    private var pendingTail = 0
+
+    private var runningUpstreams = inputPorts
+    private def upstreamsClosed = runningUpstreams == 0
+
+    private def pending: Boolean = pendingHead != pendingTail
+
+    private def enqueue(in: Inlet[T]): Unit = {
+      pendingQueue(pendingTail % inputPorts) = in
+      pendingTail += 1
+    }
+
+    private def dequeueAndDispatch(): Unit = {
+      val in = pendingQueue(pendingHead % inputPorts)
+      pendingHead += 1
+      push(out, grab(in))
+      if (upstreamsClosed && !pending) completeStage()
+      else tryPull(in)
+    }
+
+    in.foreach { i ⇒
+      setHandler(i, new InHandler {
+        override def onPush(): Unit = {
+          if (isAvailable(out)) {
+            if (!pending) {
+              push(out, grab(i))
+              tryPull(i)
+            }
+          } else enqueue(i)
+        }
+
+        override def onUpstreamFinish() =
+          if (eagerClose) {
+            in.foreach(cancel)
+            runningUpstreams = 0
+            if (!pending) completeStage()
+          } else {
+            runningUpstreams -= 1
+            if (upstreamsClosed && !pending) completeStage()
+          }
+      })
+    }
+
+    setHandler(out, new OutHandler {
+      override def onPull(): Unit = {
+        if (!initialized) {
+          initialized = true
+          in.foreach(tryPull)
+        } else if (pending)
+          dequeueAndDispatch()
+      }
+    })
+  }
+
+  override def toString = "Merge"
 }
 
 object MergePreferred {
   import FanInShape._
   final class MergePreferredShape[T](val secondaryPorts: Int, _init: Init[T]) extends UniformFanInShape[T, T](secondaryPorts, _init) {
-    def this(secondaryPorts: Int, name: String) = this(secondaryPorts, Name(name))
+    def this(secondaryPorts: Int, name: String) = this(secondaryPorts, Name[T](name))
     override protected def construct(init: Init[T]): FanInShape[T] = new MergePreferredShape(secondaryPorts, init)
     override def deepCopy(): MergePreferredShape[T] = super.deepCopy().asInstanceOf[MergePreferredShape[T]]
 
@@ -64,11 +116,9 @@ object MergePreferred {
    * Create a new `MergePreferred` with the specified number of secondary input ports.
    *
    * @param secondaryPorts number of secondary input ports
+   * @param eagerClose if true, the merge will complete as soon as one of its inputs completes.
    */
-  def apply[T](secondaryPorts: Int): MergePreferred[T] = {
-    val shape = new MergePreferredShape[T](secondaryPorts, "MergePreferred")
-    new MergePreferred(secondaryPorts, shape, new MergePreferredModule(shape, Attributes.name("MergePreferred")))
-  }
+  def apply[T](secondaryPorts: Int, eagerClose: Boolean = false): MergePreferred[T] = new MergePreferred(secondaryPorts, eagerClose)
 }
 
 /**
@@ -82,21 +132,97 @@ object MergePreferred {
  *
  * '''Backpressures when''' downstream backpressures
  *
- * '''Completes when''' all upstreams complete
+ * '''Completes when''' all upstreams complete (eagerClose=false) or one upstream completes (eagerClose=true)
  *
  * '''Cancels when''' downstream cancels
  *
  * A `Broadcast` has one `in` port and 2 or more `out` ports.
  */
-class MergePreferred[T] private (secondaryPorts: Int,
-                                 override val shape: MergePreferred.MergePreferredShape[T],
-                                 private[stream] override val module: StreamLayout.Module)
-  extends Graph[MergePreferred.MergePreferredShape[T], Unit] {
+class MergePreferred[T] private (val secondaryPorts: Int, val eagerClose: Boolean) extends GraphStage[MergePreferred.MergePreferredShape[T]] {
+  override val shape: MergePreferred.MergePreferredShape[T] =
+    new MergePreferred.MergePreferredShape(secondaryPorts, "MergePreferred")
 
-  override def withAttributes(attr: Attributes): MergePreferred[T] =
-    new MergePreferred(secondaryPorts, shape, module.withAttributes(attr).nest())
+  def in(id: Int): Inlet[T] = shape.in(id)
+  def out: Outlet[T] = shape.out
+  def preferred: Inlet[T] = shape.preferred
 
-  override def named(name: String): MergePreferred[T] = withAttributes(Attributes.name(name))
+  override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) {
+    var openInputs = secondaryPorts + 1
+    def onComplete(): Unit = {
+      openInputs -= 1
+      if (eagerClose || openInputs == 0) completeStage()
+    }
+
+    setHandler(out, new OutHandler {
+      private var first = true
+      override def onPull(): Unit = {
+        if (first) {
+          first = false
+          tryPull(preferred)
+          shape.inSeq.foreach(tryPull)
+        }
+      }
+    })
+
+    val pullMe = Array.tabulate(secondaryPorts)(i ⇒ {
+      val port = in(i)
+      () ⇒ tryPull(port)
+    })
+
+    /*
+     * This determines the unfairness of the merge:
+     * - at 1 the preferred will grab 40% of the bandwidth against three equally fast secondaries
+     * - at 2 the preferred will grab almost all bandwidth against three equally fast secondaries
+     * (measured with eventLimit=1 in the GraphInterpreter, so may not be accurate)
+     */
+    val maxEmitting = 2
+    var preferredEmitting = 0
+
+    setHandler(preferred, new InHandler {
+      override def onUpstreamFinish(): Unit = onComplete()
+      override def onPush(): Unit =
+        if (preferredEmitting == maxEmitting) () // blocked
+        else emitPreferred()
+
+      def emitPreferred(): Unit = {
+        preferredEmitting += 1
+        emit(out, grab(preferred), emitted)
+        tryPull(preferred)
+      }
+
+      val emitted = () ⇒ {
+        preferredEmitting -= 1
+        if (isAvailable(preferred)) emitPreferred()
+        else if (preferredEmitting == 0) emitSecondary()
+      }
+
+      def emitSecondary(): Unit = {
+        var i = 0
+        while (i < secondaryPorts) {
+          val port = in(i)
+          if (isAvailable(port)) emit(out, grab(port), pullMe(i))
+          i += 1
+        }
+      }
+    })
+
+    var i = 0
+    while (i < secondaryPorts) {
+      val port = in(i)
+      val pullPort = pullMe(i)
+      setHandler(port, new InHandler {
+        override def onPush(): Unit = {
+          if (preferredEmitting > 0) () // blocked
+          else {
+            emit(out, grab(port), pullPort)
+          }
+        }
+        override def onUpstreamFinish(): Unit = onComplete()
+      })
+      i += 1
+    }
+
+  }
 }
 
 object Broadcast {
@@ -107,8 +233,7 @@ object Broadcast {
    * @param eagerCancel if true, broadcast cancels upstream if any of its downstreams cancel.
    */
   def apply[T](outputPorts: Int, eagerCancel: Boolean = false): Broadcast[T] = {
-    val shape = new UniformFanOutShape[T, T](outputPorts)
-    new Broadcast(outputPorts, shape, new BroadcastModule(shape, eagerCancel, Attributes.name("Broadcast")))
+    new Broadcast(outputPorts, eagerCancel)
   }
 }
 
@@ -126,15 +251,73 @@ object Broadcast {
  *   If eagerCancel is enabled: when any downstream cancels; otherwise: when all downstreams cancel
  *
  */
-class Broadcast[T] private (outputPorts: Int,
-                            override val shape: UniformFanOutShape[T, T],
-                            private[stream] override val module: StreamLayout.Module)
-  extends Graph[UniformFanOutShape[T, T], Unit] {
+class Broadcast[T](private val outputPorts: Int, eagerCancel: Boolean) extends GraphStage[UniformFanOutShape[T, T]] {
+  val in: Inlet[T] = Inlet[T]("Broadast.in")
+  val out: immutable.IndexedSeq[Outlet[T]] = Vector.tabulate(outputPorts)(i ⇒ Outlet[T]("Broadcast.out" + i))
+  override val shape: UniformFanOutShape[T, T] = UniformFanOutShape(in, out: _*)
 
-  override def withAttributes(attr: Attributes): Broadcast[T] =
-    new Broadcast(outputPorts, shape, module.withAttributes(attr).nest())
+  override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) {
+    private var pendingCount = outputPorts
+    private val pending = Array.fill[Boolean](outputPorts)(true)
+    private var downstreamsRunning = outputPorts
 
-  override def named(name: String): Broadcast[T] = withAttributes(Attributes.name(name))
+    setHandler(in, new InHandler {
+      override def onPush(): Unit = {
+        pendingCount = downstreamsRunning
+        val elem = grab(in)
+
+        var idx = 0
+        val itr = out.iterator
+
+        while (itr.hasNext) {
+          val o = itr.next()
+          val i = idx
+          if (!isClosed(o)) {
+            push(o, elem)
+            pending(i) = true
+          }
+          idx += 1
+        }
+      }
+    })
+
+    private def tryPull(): Unit =
+      if (pendingCount == 0 && !hasBeenPulled(in)) pull(in)
+
+    {
+      var idx = 0
+      val itr = out.iterator
+      while (itr.hasNext) {
+        val out = itr.next()
+        val i = idx
+        setHandler(out, new OutHandler {
+          override def onPull(): Unit = {
+            pending(i) = false
+            pendingCount -= 1
+            tryPull()
+          }
+
+          override def onDownstreamFinish() = {
+            if (eagerCancel) completeStage()
+            else {
+              downstreamsRunning -= 1
+              if (downstreamsRunning == 0) completeStage()
+              else if (pending(i)) {
+                pending(i) = false
+                pendingCount -= 1
+                tryPull()
+              }
+            }
+          }
+        })
+        idx += 1
+      }
+    }
+
+  }
+
+  override def toString = "Broadcast"
+
 }
 
 object Balance {
@@ -147,9 +330,7 @@ object Balance {
    *   default value is `false`
    */
   def apply[T](outputPorts: Int, waitForAllDownstreams: Boolean = false): Balance[T] = {
-    val shape = new UniformFanOutShape[T, T](outputPorts)
-    new Balance(outputPorts, waitForAllDownstreams, shape,
-      new BalanceModule(shape, waitForAllDownstreams, Attributes.name("Balance")))
+    new Balance(outputPorts, waitForAllDownstreams)
   }
 }
 
@@ -168,26 +349,77 @@ object Balance {
  *
  * '''Cancels when''' all downstreams cancel
  */
-class Balance[T] private (outputPorts: Int,
-                          waitForAllDownstreams: Boolean,
-                          override val shape: UniformFanOutShape[T, T],
-                          private[stream] override val module: StreamLayout.Module)
-  extends Graph[UniformFanOutShape[T, T], Unit] {
+class Balance[T](val outputPorts: Int, waitForAllDownstreams: Boolean) extends GraphStage[UniformFanOutShape[T, T]] {
+  val in: Inlet[T] = Inlet[T]("Balance.in")
+  val out: immutable.IndexedSeq[Outlet[T]] = Vector.tabulate(outputPorts)(i ⇒ Outlet[T]("Balance.out" + i))
+  override val shape: UniformFanOutShape[T, T] = UniformFanOutShape[T, T](in, out: _*)
 
-  override def withAttributes(attr: Attributes): Balance[T] =
-    new Balance(outputPorts, waitForAllDownstreams, shape, module.withAttributes(attr).nest())
+  override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) {
+    private val pendingQueue = Array.ofDim[Outlet[T]](outputPorts)
+    private var pendingHead: Int = 0
+    private var pendingTail: Int = 0
 
-  override def named(name: String): Balance[T] = withAttributes(Attributes.name(name))
+    private var needDownstreamPulls: Int = if (waitForAllDownstreams) outputPorts else 0
+    private var downstreamsRunning: Int = outputPorts
+
+    private def noPending: Boolean = pendingHead == pendingTail
+    private def enqueue(out: Outlet[T]): Unit = {
+      pendingQueue(pendingTail % outputPorts) = out
+      pendingTail += 1
+    }
+    private def dequeueAndDispatch(): Unit = {
+      val out = pendingQueue(pendingHead % outputPorts)
+      pendingHead += 1
+      push(out, grab(in))
+      if (!noPending) pull(in)
+    }
+
+    setHandler(in, new InHandler {
+      override def onPush(): Unit = dequeueAndDispatch()
+    })
+
+    out.foreach { o ⇒
+      setHandler(o, new OutHandler {
+        private var hasPulled = false
+
+        override def onPull(): Unit = {
+          if (!hasPulled) {
+            hasPulled = true
+            if (needDownstreamPulls > 0) needDownstreamPulls -= 1
+          }
+
+          if (needDownstreamPulls == 0) {
+            if (isAvailable(in)) {
+              if (noPending) {
+                push(o, grab(in))
+              }
+            } else {
+              if (!hasBeenPulled(in)) pull(in)
+              enqueue(o)
+            }
+          } else enqueue(o)
+        }
+
+        override def onDownstreamFinish() = {
+          downstreamsRunning -= 1
+          if (downstreamsRunning == 0) completeStage()
+          else if (!hasPulled && needDownstreamPulls > 0) {
+            needDownstreamPulls -= 1
+            if (needDownstreamPulls == 0 && !hasBeenPulled(in)) pull(in)
+          }
+        }
+      })
+    }
+  }
+
+  override def toString = "Balance"
 }
 
 object Zip {
   /**
    * Create a new `Zip`.
    */
-  def apply[A, B](): Zip[A, B] = {
-    val shape = new FanInShape2[A, B, (A, B)]("Zip")
-    new Zip(shape, new ZipWith2Module[A, B, (A, B)](shape, Keep.both, Attributes.name("Zip")))
-  }
+  def apply[A, B](): Zip[A, B] = new Zip()
 }
 
 /**
@@ -203,14 +435,8 @@ object Zip {
  *
  * '''Cancels when''' downstream cancels
  */
-class Zip[A, B] private (override val shape: FanInShape2[A, B, (A, B)],
-                         private[stream] override val module: StreamLayout.Module)
-  extends Graph[FanInShape2[A, B, (A, B)], Unit] {
-
-  override def withAttributes(attr: Attributes): Zip[A, B] =
-    new Zip(shape, module.withAttributes(attr).nest())
-
-  override def named(name: String): Zip[A, B] = withAttributes(Attributes.name(name))
+class Zip[A, B] extends ZipWith2[A, B, (A, B)](Pair.apply) {
+  override def toString = "Zip"
 }
 
 /**
@@ -240,32 +466,19 @@ object ZipWith extends ZipWithApply
  * '''Cancels when''' any downstream cancels
  */
 object Unzip {
-
-  private final val _identity: Any ⇒ Any = a ⇒ a
-
   /**
    * Create a new `Unzip`.
    */
   def apply[A, B](): Unzip[A, B] = {
-    val shape = new FanOutShape2[(A, B), A, B]("Unzip")
-    new Unzip(shape, new UnzipWith2Module[(A, B), A, B](
-      shape,
-      _identity.asInstanceOf[((A, B)) ⇒ (A, B)],
-      Attributes.name("Unzip")))
+    new Unzip()
   }
 }
 
 /**
  * Combine the elements of multiple streams into a stream of the combined elements.
  */
-class Unzip[A, B] private (override val shape: FanOutShape2[(A, B), A, B],
-                           private[stream] override val module: StreamLayout.Module)
-  extends Graph[FanOutShape2[(A, B), A, B], Unit] {
-
-  override def withAttributes(attr: Attributes): Unzip[A, B] =
-    new Unzip(shape, module.withAttributes(attr).nest())
-
-  override def named(name: String): Unzip[A, B] = withAttributes(Attributes.name(name))
+class Unzip[A, B]() extends UnzipWith2[(A, B), A, B](identity) {
+  override def toString = "Unzip"
 }
 
 /**
@@ -285,16 +498,13 @@ object Concat {
   /**
    * Create a new `Concat`.
    */
-  def apply[T](): Concat[T] = {
-    val shape = new UniformFanInShape[T, T](2)
-    new Concat(shape, new ConcatModule(shape, Attributes.name("Concat")))
-  }
+  def apply[T](inputCount: Int = 2): Concat[T] = new Concat(inputCount)
 }
 
 /**
- * Takes two streams and outputs one stream formed from the two input streams
+ * Takes multiple streams and outputs one stream formed from the input streams
  * by first emitting all of the elements from the first stream and then emitting
- * all of the elements from the second stream.
+ * all of the elements from the second stream, etc.
  *
  * A `Concat` has one `first` port, one `second` port and one `out` port.
  *
@@ -306,33 +516,55 @@ object Concat {
  *
  * '''Cancels when''' downstream cancels
  */
-class Concat[T] private (override val shape: UniformFanInShape[T, T],
-                         private[stream] override val module: StreamLayout.Module)
-  extends Graph[UniformFanInShape[T, T], Unit] {
+class Concat[T](inputCount: Int) extends GraphStage[UniformFanInShape[T, T]] {
+  val in: immutable.IndexedSeq[Inlet[T]] = Vector.tabulate(inputCount)(i ⇒ Inlet[T]("Concat.in" + i))
+  val out: Outlet[T] = Outlet[T]("Concat.out")
+  override val shape: UniformFanInShape[T, T] = UniformFanInShape(out, in: _*)
 
-  override def withAttributes(attr: Attributes): Concat[T] =
-    new Concat(shape, module.withAttributes(attr).nest())
+  override def createLogic(inheritedAttributes: Attributes) = new GraphStageLogic(shape) {
+    var activeStream: Int = 0
 
-  override def named(name: String): Concat[T] = withAttributes(Attributes.name(name))
+    {
+      var idxx = 0
+      val itr = in.iterator
+      while (itr.hasNext) {
+        val i = itr.next()
+        val idx = idxx
+        setHandler(i, new InHandler {
+          override def onPush() = {
+            push(out, grab(i))
+          }
+
+          override def onUpstreamFinish() = {
+            if (idx == activeStream) {
+              activeStream += 1
+              // Skip closed inputs
+              while (activeStream < inputCount && isClosed(in(activeStream))) activeStream += 1
+              if (activeStream == inputCount) completeStage()
+              else if (isAvailable(out)) pull(in(activeStream))
+            }
+          }
+        })
+        idxx += 1
+      }
+    }
+
+    setHandler(out, new OutHandler {
+      override def onPull() = pull(in(activeStream))
+    })
+  }
 }
 
-object FlowGraph extends GraphApply {
+object GraphDSL extends GraphApply {
 
   class Builder[+M] private[stream] () {
     private var moduleInProgress: Module = EmptyModule
 
-    def addEdge[A, B, M2](from: Outlet[A], via: Graph[FlowShape[A, B], M2], to: Inlet[B]): Unit = {
-      val flowCopy = via.module.carbonCopy
-      moduleInProgress =
-        moduleInProgress
-          .compose(flowCopy)
-          .wire(from, flowCopy.shape.inlets.head)
-          .wire(flowCopy.shape.outlets.head, to)
-    }
-
-    def addEdge[T](from: Outlet[T], to: Inlet[T]): Unit = {
+    /**
+     * INTERNAL API
+     */
+    private[GraphDSL] def addEdge[T, U >: T](from: Outlet[T], to: Inlet[U]): Unit =
       moduleInProgress = moduleInProgress.wire(from, to)
-    }
 
     /**
      * Import a graph into this module, performing a deep copy, discarding its
@@ -372,9 +604,6 @@ object FlowGraph extends GraphApply {
       graph.shape.copyFromPorts(copy.shape.inlets, copy.shape.outlets).asInstanceOf[S]
     }
 
-    def add[T](s: Source[T, _]): Outlet[T] = add(s: Graph[SourceShape[T], _]).outlet
-    def add[T](s: Sink[T, _]): Inlet[T] = add(s: Graph[SinkShape[T], _]).inlet
-
     /**
      * Returns an [[Outlet]] that gives access to the materialized value of this graph. Once the graph is materialized
      * this outlet will emit exactly one element which is the materialized value. It is possible to expose this
@@ -389,77 +618,23 @@ object FlowGraph extends GraphApply {
      *
      * @return The outlet that will emit the materialized value.
      */
-    def materializedValue: Outlet[M] = {
+    def materializedValue: Outlet[M @uncheckedVariance] = {
       val module = new MaterializedValueSource[Any]
       moduleInProgress = moduleInProgress.compose(module)
       module.shape.outlet.asInstanceOf[Outlet[M]]
     }
 
-    private[stream] def andThen(port: OutPort, op: StageModule): Unit = {
+    private[stream] def deprecatedAndThen(port: OutPort, op: StageModule): Unit = {
       moduleInProgress =
         moduleInProgress
           .compose(op)
           .wire(port, op.inPort)
     }
 
-    private[stream] def buildRunnable[Mat](): RunnableGraph[Mat] = {
-      if (!moduleInProgress.isRunnable) {
-        throw new IllegalArgumentException(
-          "Cannot build the RunnableGraph because there are unconnected ports: " +
-            (moduleInProgress.outPorts ++ moduleInProgress.inPorts).mkString(", "))
-      }
-      new RunnableGraph(moduleInProgress.nest())
-    }
-
-    private[stream] def buildSource[T, Mat](outlet: Outlet[T]): Source[T, Mat] = {
-      if (moduleInProgress.isRunnable)
-        throw new IllegalArgumentException("Cannot build the Source since no ports remain open")
-      if (!moduleInProgress.isSource)
-        throw new IllegalArgumentException(
-          s"Cannot build Source with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.outPorts.mkString(",")})")
-      if (moduleInProgress.outPorts.head != outlet)
-        throw new IllegalArgumentException(s"provided Outlet $outlet does not equal the module’s open Outlet ${moduleInProgress.outPorts.head}")
-      new Source(moduleInProgress.replaceShape(SourceShape(outlet)).nest())
-    }
-
-    private[stream] def buildFlow[In, Out, Mat](inlet: Inlet[In], outlet: Outlet[Out]): Flow[In, Out, Mat] = {
-      if (!moduleInProgress.isFlow)
-        throw new IllegalArgumentException(
-          s"Cannot build Flow with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.outPorts.mkString(",")})")
-      if (moduleInProgress.outPorts.head != outlet)
-        throw new IllegalArgumentException(s"provided Outlet $outlet does not equal the module’s open Outlet ${moduleInProgress.outPorts.head}")
-      if (moduleInProgress.inPorts.head != inlet)
-        throw new IllegalArgumentException(s"provided Inlet $inlet does not equal the module’s open Inlet ${moduleInProgress.inPorts.head}")
-      new Flow(moduleInProgress.replaceShape(FlowShape(inlet, outlet)).nest())
-    }
-
-    private[stream] def buildBidiFlow[I1, O1, I2, O2, Mat](shape: BidiShape[I1, O1, I2, O2]): BidiFlow[I1, O1, I2, O2, Mat] = {
-      if (!moduleInProgress.isBidiFlow)
-        throw new IllegalArgumentException(
-          s"Cannot build BidiFlow with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.outPorts.mkString(",")})")
-      if (moduleInProgress.outPorts.toSet != shape.outlets.toSet)
-        throw new IllegalArgumentException(s"provided Outlets [${shape.outlets.mkString(",")}] does not equal the module’s open Outlets [${moduleInProgress.outPorts.mkString(",")}]")
-      if (moduleInProgress.inPorts.toSet != shape.inlets.toSet)
-        throw new IllegalArgumentException(s"provided Inlets [${shape.inlets.mkString(",")}] does not equal the module’s open Inlets [${moduleInProgress.inPorts.mkString(",")}]")
-      new BidiFlow(moduleInProgress.replaceShape(shape).nest())
-    }
-
-    private[stream] def buildSink[T, Mat](inlet: Inlet[T]): Sink[T, Mat] = {
-      if (moduleInProgress.isRunnable)
-        throw new IllegalArgumentException("Cannot build the Sink since no ports remain open")
-      if (!moduleInProgress.isSink)
-        throw new IllegalArgumentException(
-          s"Cannot build Sink with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.outPorts.mkString(",")})")
-      if (moduleInProgress.inPorts.head != inlet)
-        throw new IllegalArgumentException(s"provided Inlet $inlet does not equal the module’s open Inlet ${moduleInProgress.inPorts.head}")
-      new Sink(moduleInProgress.replaceShape(SinkShape(inlet)).nest())
-    }
-
     private[stream] def module: Module = moduleInProgress
 
     /** Converts this Scala DSL element to it's Java DSL counterpart. */
-    def asJava: javadsl.FlowGraph.Builder[M] = new javadsl.FlowGraph.Builder()(this)
-
+    def asJava: javadsl.GraphDSL.Builder[M] = new javadsl.GraphDSL.Builder()(this)
   }
 
   object Implicits {
@@ -480,12 +655,11 @@ object FlowGraph extends GraphApply {
       else junction.in(n)
     }
 
-    trait CombinerBase[T] extends Any {
+    sealed trait CombinerBase[T] extends Any {
       def importAndGetPort(b: Builder[_]): Outlet[T]
 
-      def ~>(to: Inlet[T])(implicit b: Builder[_]): Unit = {
+      def ~>[U >: T](to: Inlet[U])(implicit b: Builder[_]): Unit =
         b.addEdge(importAndGetPort(b), to)
-      }
 
       def ~>[Out](via: Graph[FlowShape[T, Out], Any])(implicit b: Builder[_]): PortOps[Out, Unit] = {
         val s = b.add(via)
@@ -517,21 +691,18 @@ object FlowGraph extends GraphApply {
         flow.outlet
       }
 
-      def ~>(to: Graph[SinkShape[T], _])(implicit b: Builder[_]): Unit = {
+      def ~>(to: Graph[SinkShape[T], _])(implicit b: Builder[_]): Unit =
         b.addEdge(importAndGetPort(b), b.add(to).inlet)
-      }
 
-      def ~>(to: SinkShape[T])(implicit b: Builder[_]): Unit = {
+      def ~>(to: SinkShape[T])(implicit b: Builder[_]): Unit =
         b.addEdge(importAndGetPort(b), to.inlet)
-      }
     }
 
-    trait ReverseCombinerBase[T] extends Any {
+    sealed trait ReverseCombinerBase[T] extends Any {
       def importAndGetPortReverse(b: Builder[_]): Inlet[T]
 
-      def <~(from: Outlet[T])(implicit b: Builder[_]): Unit = {
+      def <~[U <: T](from: Outlet[U])(implicit b: Builder[_]): Unit =
         b.addEdge(from, importAndGetPortReverse(b))
-      }
 
       def <~[In](via: Graph[FlowShape[In, T], _])(implicit b: Builder[_]): ReversePortOps[In] = {
         val s = b.add(via)
@@ -563,65 +734,69 @@ object FlowGraph extends GraphApply {
         flow.inlet
       }
 
-      def <~(from: Graph[SourceShape[T], _])(implicit b: Builder[_]): Unit = {
+      def <~(from: Graph[SourceShape[T], _])(implicit b: Builder[_]): Unit =
         b.addEdge(b.add(from).outlet, importAndGetPortReverse(b))
-      }
 
-      def <~(from: SourceShape[T])(implicit b: Builder[_]): Unit = {
+      def <~(from: SourceShape[T])(implicit b: Builder[_]): Unit =
         b.addEdge(from.outlet, importAndGetPortReverse(b))
-      }
     }
 
+    // Although Mat is always Unit, it cannot be removed as a type parameter, otherwise the "override type"
+    // won't work below
     class PortOps[Out, Mat](val outlet: Outlet[Out], b: Builder[_]) extends FlowOps[Out, Mat] with CombinerBase[Out] {
       override type Repr[+O, +M] = PortOps[O, M] @uncheckedVariance
 
       override def withAttributes(attr: Attributes): Repr[Out, Mat] =
         throw new UnsupportedOperationException("Cannot set attributes on chained ops from a junction output port")
 
-      override private[scaladsl] def andThen[U](op: StageModule): Repr[U, Mat] = {
-        b.andThen(outlet, op)
-        new PortOps(op.shape.outlet.asInstanceOf[Outlet[U]], b)
-      }
-
-      override private[scaladsl] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
-        // We don't track materialization here
-        b.andThen(outlet, op)
-        new PortOps(op.shape.outlet.asInstanceOf[Outlet[U]], b)
-      }
-
       override def importAndGetPort(b: Builder[_]): Outlet[Out] = outlet
+
+      override def via[T, Mat2](flow: Graph[FlowShape[Out, T], Mat2]): Repr[T, Mat] =
+        super.~>(flow)(b).asInstanceOf[Repr[T, Mat]]
+
+      override def viaMat[T, Mat2, Mat3](flow: Graph[FlowShape[Out, T], Mat2])(combine: (Mat, Mat2) ⇒ Mat3) =
+        throw new UnsupportedOperationException("Cannot use viaMat on a port")
+
+      override private[scaladsl] def deprecatedAndThen[U](op: StageModule): PortOps[U, Mat] = {
+        b.deprecatedAndThen(outlet, op)
+        new PortOps(op.shape.outlet.asInstanceOf[Outlet[U]], b)
+      }
+
     }
 
-    class DisabledPortOps[Out, Mat](msg: String) extends PortOps[Out, Mat](null, null) {
+    final class DisabledPortOps[Out, Mat](msg: String) extends PortOps[Out, Mat](null, null) {
       override def importAndGetPort(b: Builder[_]): Outlet[Out] = throw new IllegalArgumentException(msg)
+
+      override def viaMat[T, Mat2, Mat3](flow: Graph[FlowShape[Out, T], Mat2])(combine: (Mat, Mat2) ⇒ Mat3) =
+        throw new IllegalArgumentException(msg)
     }
 
     implicit class ReversePortOps[In](val inlet: Inlet[In]) extends ReverseCombinerBase[In] {
       override def importAndGetPortReverse(b: Builder[_]): Inlet[In] = inlet
     }
 
-    class DisabledReversePortOps[In](msg: String) extends ReversePortOps[In](null) {
+    final class DisabledReversePortOps[In](msg: String) extends ReversePortOps[In](null) {
       override def importAndGetPortReverse(b: Builder[_]): Inlet[In] = throw new IllegalArgumentException(msg)
     }
 
-    implicit class FanInOps[In, Out](val j: UniformFanInShape[In, Out]) extends AnyVal with CombinerBase[Out] with ReverseCombinerBase[In] {
+    implicit final class FanInOps[In, Out](val j: UniformFanInShape[In, Out]) extends AnyVal with CombinerBase[Out] with ReverseCombinerBase[In] {
       override def importAndGetPort(b: Builder[_]): Outlet[Out] = j.out
       override def importAndGetPortReverse(b: Builder[_]): Inlet[In] = findIn(b, j, 0)
     }
 
-    implicit class FanOutOps[In, Out](val j: UniformFanOutShape[In, Out]) extends AnyVal with ReverseCombinerBase[In] {
+    implicit final class FanOutOps[In, Out](val j: UniformFanOutShape[In, Out]) extends AnyVal with ReverseCombinerBase[In] {
       override def importAndGetPortReverse(b: Builder[_]): Inlet[In] = j.in
     }
 
-    implicit class SinkArrow[T](val s: Graph[SinkShape[T], _]) extends AnyVal with ReverseCombinerBase[T] {
+    implicit final class SinkArrow[T](val s: Graph[SinkShape[T], _]) extends AnyVal with ReverseCombinerBase[T] {
       override def importAndGetPortReverse(b: Builder[_]): Inlet[T] = b.add(s).inlet
     }
 
-    implicit class SinkShapeArrow[T](val s: SinkShape[T]) extends AnyVal with ReverseCombinerBase[T] {
+    implicit final class SinkShapeArrow[T](val s: SinkShape[T]) extends AnyVal with ReverseCombinerBase[T] {
       override def importAndGetPortReverse(b: Builder[_]): Inlet[T] = s.inlet
     }
 
-    implicit class FlowShapeArrow[I, O](val f: FlowShape[I, O]) extends AnyVal with ReverseCombinerBase[I] {
+    implicit final class FlowShapeArrow[I, O](val f: FlowShape[I, O]) extends AnyVal with ReverseCombinerBase[I] {
       override def importAndGetPortReverse(b: Builder[_]): Inlet[I] = f.inlet
 
       def <~>[I2, O2, Mat](bidi: Graph[BidiShape[O, O2, I2, I], Mat])(implicit b: Builder[_]): BidiShape[O, O2, I2, I] = {
@@ -644,7 +819,7 @@ object FlowGraph extends GraphApply {
       }
     }
 
-    implicit class FlowArrow[I, O, M](val f: Graph[FlowShape[I, O], M]) extends AnyVal {
+    implicit final class FlowArrow[I, O, M](val f: Graph[FlowShape[I, O], M]) extends AnyVal {
       def <~>[I2, O2, Mat](bidi: Graph[BidiShape[O, O2, I2, I], Mat])(implicit b: Builder[_]): BidiShape[O, O2, I2, I] = {
         val shape = b.add(bidi)
         val flow = b.add(f)
@@ -668,7 +843,7 @@ object FlowGraph extends GraphApply {
       }
     }
 
-    implicit class BidiFlowShapeArrow[I1, O1, I2, O2](val bidi: BidiShape[I1, O1, I2, O2]) extends AnyVal {
+    implicit final class BidiFlowShapeArrow[I1, O1, I2, O2](val bidi: BidiShape[I1, O1, I2, O2]) extends AnyVal {
       def <~>[I3, O3](other: BidiShape[O1, O3, I3, I2])(implicit b: Builder[_]): BidiShape[O1, O3, I3, I2] = {
         b.addEdge(bidi.out1, other.in1)
         b.addEdge(other.out2, bidi.in2)
@@ -705,11 +880,11 @@ object FlowGraph extends GraphApply {
     implicit def flow2flow[I, O](f: FlowShape[I, O])(implicit b: Builder[_]): PortOps[O, Unit] =
       new PortOps(f.outlet, b)
 
-    implicit class SourceArrow[T](val s: Graph[SourceShape[T], _]) extends AnyVal with CombinerBase[T] {
+    implicit final class SourceArrow[T](val s: Graph[SourceShape[T], _]) extends AnyVal with CombinerBase[T] {
       override def importAndGetPort(b: Builder[_]): Outlet[T] = b.add(s).outlet
     }
 
-    implicit class SourceShapeArrow[T](val s: SourceShape[T]) extends AnyVal with CombinerBase[T] {
+    implicit final class SourceShapeArrow[T](val s: SourceShape[T]) extends AnyVal with CombinerBase[T] {
       override def importAndGetPort(b: Builder[_]): Outlet[T] = s.outlet
     }
   }

@@ -5,12 +5,14 @@ package akka.stream.javadsl;
 
 import static org.junit.Assert.assertEquals;
 import java.util.Arrays;
+import java.util.Collections;
+
 import org.junit.Test;
 
 import akka.stream.Attributes;
 
 public class AttributesTest {
-  
+
   final Attributes attributes =
       Attributes.name("a")
       .and(Attributes.name("b"))
@@ -22,15 +24,15 @@ public class AttributesTest {
       Arrays.asList(new Attributes.Name("a"), new Attributes.Name("b")),
       attributes.getAttributeList(Attributes.Name.class));
     assertEquals(
-        Arrays.asList(new Attributes.InputBuffer(1, 2)),
+        Collections.singletonList(new Attributes.InputBuffer(1, 2)),
         attributes.getAttributeList(Attributes.InputBuffer.class));
   }
-  
+
   @Test
   public void mustGetAttributeByClass() {
     assertEquals(
-      new Attributes.Name("a"),
+      new Attributes.Name("b"),
       attributes.getAttribute(Attributes.Name.class, new Attributes.Name("default")));
   }
-  
+
 }

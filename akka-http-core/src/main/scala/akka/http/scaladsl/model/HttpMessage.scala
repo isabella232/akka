@@ -5,7 +5,6 @@
 package akka.http.scaladsl.model
 
 import java.lang.{ Iterable ⇒ JIterable }
-import akka.http.impl.util
 
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ Future, ExecutionContext }
@@ -14,7 +13,6 @@ import scala.reflect.{ classTag, ClassTag }
 import akka.parboiled2.CharUtils
 import akka.stream.Materializer
 import akka.util.ByteString
-import akka.http.impl.model.JavaUri
 import akka.http.impl.util._
 import akka.http.javadsl.{ model ⇒ jm }
 import akka.http.scaladsl.util.FastFuture._
@@ -69,9 +67,6 @@ sealed trait HttpMessage extends jm.HttpMessage {
   /** Returns a copy of this message with the list of headers transformed by the given function */
   def mapHeaders(f: immutable.Seq[HttpHeader] ⇒ immutable.Seq[HttpHeader]): Self = withHeaders(f(headers))
 
-  /** Returns a copy of this message with the entity transformed by the given function */
-  def mapEntity(f: HttpEntity ⇒ MessageEntity): Self = withEntity(f(entity))
-
   /**
    * The content encoding as specified by the Content-Encoding header. If no Content-Encoding header is present the
    * default value 'identity' is returned.
@@ -105,7 +100,8 @@ sealed trait HttpMessage extends jm.HttpMessage {
   def withEntity(string: String): Self = withEntity(HttpEntity(string))
   def withEntity(bytes: Array[Byte]): Self = withEntity(HttpEntity(bytes))
   def withEntity(bytes: ByteString): Self = withEntity(HttpEntity(bytes))
-  def withEntity(contentType: jm.ContentType, string: String): Self = withEntity(HttpEntity(contentType.asInstanceOf[ContentType], string))
+  def withEntity(contentType: jm.ContentType.NonBinary, string: String): Self =
+    withEntity(HttpEntity(contentType.asInstanceOf[ContentType.NonBinary], string))
   def withEntity(contentType: jm.ContentType, bytes: Array[Byte]): Self = withEntity(HttpEntity(contentType.asInstanceOf[ContentType], bytes))
   def withEntity(contentType: jm.ContentType, bytes: ByteString): Self = withEntity(HttpEntity(contentType.asInstanceOf[ContentType], bytes))
   def withEntity(contentType: jm.ContentType, file: java.io.File): Self = withEntity(HttpEntity(contentType.asInstanceOf[ContentType], file))
@@ -169,84 +165,9 @@ final case class HttpRequest(method: HttpMethod = HttpMethods.GET,
     copy(uri = effectiveUri(securedConnection, defaultHostHeader))
 
   /**
-   * The media-ranges accepted by the client according to the `Accept` request header.
-   * The returned ranges are sorted by decreasing q-value.
-   */
-  def acceptedMediaRanges: immutable.Seq[MediaRange] =
-    (for {
-      Accept(mediaRanges) ← headers
-      range ← mediaRanges
-    } yield range).sortBy(-_.qValue)
-
-  /**
-   * The charset-ranges accepted by the client according to the `Accept-Charset` request header.
-   * The returned ranges are sorted by decreasing q-value.
-   */
-  def acceptedCharsetRanges: immutable.Seq[HttpCharsetRange] =
-    (for {
-      `Accept-Charset`(charsetRanges) ← headers
-      range ← charsetRanges
-    } yield range).sortBy(-_.qValue)
-
-  /**
-   * The encoding-ranges accepted by the client according to the `Accept-Encoding` request header.
-   * The returned ranges are sorted by decreasing q-value.
-   */
-  def acceptedEncodingRanges: immutable.Seq[HttpEncodingRange] =
-    (for {
-      `Accept-Encoding`(encodingRanges) ← headers
-      range ← encodingRanges
-    } yield range).sortBy(-_.qValue)
-
-  /**
    * All cookies provided by the client in one or more `Cookie` headers.
    */
   def cookies: immutable.Seq[HttpCookiePair] = for (`Cookie`(cookies) ← headers; cookie ← cookies) yield cookie
-
-  /**
-   * Determines whether the given media-type is accepted by the client.
-   */
-  def isMediaTypeAccepted(mediaType: MediaType, ranges: Seq[MediaRange] = acceptedMediaRanges): Boolean =
-    qValueForMediaType(mediaType, ranges) > 0f
-
-  /**
-   * Returns the q-value that the client (implicitly or explicitly) attaches to the given media-type.
-   */
-  def qValueForMediaType(mediaType: MediaType, ranges: Seq[MediaRange] = acceptedMediaRanges): Float =
-    ranges match {
-      case Nil ⇒ 1.0f // http://tools.ietf.org/html/rfc7231#section-5.3.1
-      case x   ⇒ x collectFirst { case r if r matches mediaType ⇒ r.qValue } getOrElse 0f
-    }
-
-  /**
-   * Determines whether the given charset is accepted by the client.
-   */
-  def isCharsetAccepted(charset: HttpCharset, ranges: Seq[HttpCharsetRange] = acceptedCharsetRanges): Boolean =
-    qValueForCharset(charset, ranges) > 0f
-
-  /**
-   * Returns the q-value that the client (implicitly or explicitly) attaches to the given charset.
-   */
-  def qValueForCharset(charset: HttpCharset, ranges: Seq[HttpCharsetRange] = acceptedCharsetRanges): Float =
-    ranges match {
-      case Nil ⇒ 1.0f // http://tools.ietf.org/html/rfc7231#section-5.3.1
-      case x   ⇒ x collectFirst { case r if r matches charset ⇒ r.qValue } getOrElse 0f
-    }
-
-  /**
-   * Determines whether the given encoding is accepted by the client.
-   */
-  def isEncodingAccepted(encoding: HttpEncoding, ranges: Seq[HttpEncodingRange] = acceptedEncodingRanges): Boolean =
-    qValueForEncoding(encoding, ranges) > 0f
-
-  /**
-   * Returns the q-value that the client (implicitly or explicitly) attaches to the given encoding.
-   */
-  def qValueForEncoding(encoding: HttpEncoding, ranges: Seq[HttpEncodingRange] = acceptedEncodingRanges): Float =
-    ranges match {
-      case Nil ⇒ 1.0f // http://tools.ietf.org/html/rfc7231#section-5.3.1
-      case x   ⇒ x collectFirst { case r if r matches encoding ⇒ r.qValue } getOrElse 0f
-    }
 
   /**
    * Determines whether this request can be safely retried, which is the case only of the request method is idempotent.
@@ -267,10 +188,11 @@ final case class HttpRequest(method: HttpMethod = HttpMethods.GET,
   override def withUri(path: String): HttpRequest = withUri(Uri(path))
   def withUri(uri: Uri): HttpRequest = copy(uri = uri)
 
+  import JavaMapping.Implicits._
   /** Java API */
-  override def getUri: jm.Uri = util.JavaAccessors.Uri(uri)
+  override def getUri: jm.Uri = uri.asJava
   /** Java API */
-  override def withUri(relativeUri: akka.http.javadsl.model.Uri): HttpRequest = copy(uri = relativeUri.asInstanceOf[JavaUri].uri)
+  override def withUri(uri: jm.Uri): HttpRequest = copy(uri = uri.asScala)
 }
 
 object HttpRequest {
@@ -294,7 +216,7 @@ object HttpRequest {
       uri.toEffectiveHttpRequestUri(host, port, securedConnection)
     } else // http://tools.ietf.org/html/rfc7230#section-5.4
     if (hostHeader.isEmpty || uri.authority.isEmpty && hostHeader.get.isEmpty ||
-      hostHeader.get.host.equalsIgnoreCase(uri.authority.host)) uri
+      hostHeader.get.host.equalsIgnoreCase(uri.authority.host) && hostHeader.get.port == uri.authority.port) uri
     else throw IllegalUriException(s"'Host' header value of request to `$uri` doesn't match request target authority",
       s"Host header: $hostHeader\nrequest target authority: ${uri.authority}")
   }

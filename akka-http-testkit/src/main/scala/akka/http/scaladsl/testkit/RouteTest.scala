@@ -17,10 +17,10 @@ import akka.http.scaladsl.util.FastFuture
 import akka.http.scaladsl.server._
 import akka.http.scaladsl.unmarshalling._
 import akka.http.scaladsl.model._
-import headers.Host
+import akka.http.scaladsl.model.headers.{ Upgrade, `Sec-WebSocket-Protocol`, Host }
 import FastFuture._
 
-trait RouteTest extends RequestBuilding with RouteTestResultComponent with MarshallingTestUtils {
+trait RouteTest extends RequestBuilding with WSTestRequestBuilding with RouteTestResultComponent with MarshallingTestUtils {
   this: TestFrameworkInterface ⇒
 
   /** Override to supply a custom ActorSystem */
@@ -52,22 +52,24 @@ trait RouteTest extends RequestBuilding with RouteTestResultComponent with Marsh
 
   def check[T](body: ⇒ T): RouteTestResult ⇒ T = result ⇒ dynRR.withValue(result.awaitResult)(body)
 
+  private def responseSafe = if (dynRR.value ne null) dynRR.value.response else "<not available anymore>"
+
   def handled: Boolean = result.handled
   def response: HttpResponse = result.response
   def responseEntity: HttpEntity = result.entity
   def chunks: immutable.Seq[HttpEntity.ChunkStreamPart] = result.chunks
   def entityAs[T: FromEntityUnmarshaller: ClassTag](implicit timeout: Duration = 1.second): T = {
-    def msg(e: Throwable) = s"Could not unmarshal entity to type '${implicitly[ClassTag[T]]}' for `entityAs` assertion: $e\n\nResponse was: $response"
+    def msg(e: Throwable) = s"Could not unmarshal entity to type '${implicitly[ClassTag[T]]}' for `entityAs` assertion: $e\n\nResponse was: $responseSafe"
     Await.result(Unmarshal(responseEntity).to[T].fast.recover[T] { case error ⇒ failTest(msg(error)) }, timeout)
   }
   def responseAs[T: FromResponseUnmarshaller: ClassTag](implicit timeout: Duration = 1.second): T = {
-    def msg(e: Throwable) = s"Could not unmarshal response to type '${implicitly[ClassTag[T]]}' for `responseAs` assertion: $e\n\nResponse was: $response"
+    def msg(e: Throwable) = s"Could not unmarshal response to type '${implicitly[ClassTag[T]]}' for `responseAs` assertion: $e\n\nResponse was: $responseSafe"
     Await.result(Unmarshal(response).to[T].fast.recover[T] { case error ⇒ failTest(msg(error)) }, timeout)
   }
   def contentType: ContentType = responseEntity.contentType
   def mediaType: MediaType = contentType.mediaType
-  def charset: HttpCharset = contentType.charset
-  def definedCharset: Option[HttpCharset] = contentType.definedCharset
+  def charsetOption: Option[HttpCharset] = contentType.charsetOption
+  def charset: HttpCharset = charsetOption getOrElse sys.error("Binary entity does not have charset")
   def headers: immutable.Seq[HttpHeader] = response.headers
   def header[T <: HttpHeader: ClassTag]: Option[T] = response.header[T]
   def header(name: String): Option[HttpHeader] = response.headers.find(_.is(name.toLowerCase))
@@ -86,6 +88,21 @@ trait RouteTest extends RequestBuilding with RouteTestResultComponent with Marsh
   def rejection: Rejection = {
     val r = rejections
     if (r.size == 1) r.head else failTest("Expected a single rejection but got %s (%s)".format(r.size, r))
+  }
+
+  def isWebsocketUpgrade: Boolean =
+    status == StatusCodes.SwitchingProtocols && header[Upgrade].exists(_.hasWebsocket)
+
+  /**
+   * Asserts that the received response is a Websocket upgrade response and the extracts
+   * the chosen subprotocol and passes it to the handler.
+   */
+  def expectWebsocketUpgradeWithProtocol(body: String ⇒ Unit): Unit = {
+    if (!isWebsocketUpgrade) failTest("Response was no Websocket Upgrade response")
+    header[`Sec-WebSocket-Protocol`] match {
+      case Some(`Sec-WebSocket-Protocol`(Seq(protocol))) ⇒ body(protocol)
+      case _ ⇒ failTest("No Websocket protocol found in response.")
+    }
   }
 
   /**

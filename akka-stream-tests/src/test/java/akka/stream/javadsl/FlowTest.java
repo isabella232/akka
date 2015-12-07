@@ -8,28 +8,31 @@ import akka.dispatch.Foreach;
 import akka.dispatch.Futures;
 import akka.japi.JavaPartialFunction;
 import akka.japi.Pair;
-import akka.stream.Outlet;
-import akka.stream.OverflowStrategy;
-import akka.stream.StreamTest;
-import akka.stream.stage.*;
-import akka.stream.javadsl.FlowGraph.Builder;
 import akka.japi.function.*;
 import akka.stream.*;
+import akka.stream.impl.ConstantFun;
+import akka.stream.javadsl.GraphDSL.Builder;
+import akka.stream.stage.*;
 import akka.stream.testkit.AkkaSpec;
+import akka.stream.testkit.TestPublisher;
 import akka.testkit.JavaTestKit;
-
-import org.reactivestreams.Publisher;
-import scala.PartialFunction;
-import scala.runtime.BoxedUnit;
 import org.junit.ClassRule;
+import org.junit.Ignore;
 import org.junit.Test;
+import org.reactivestreams.Publisher;
 import scala.concurrent.Await;
 import scala.concurrent.Future;
-import scala.concurrent.duration.FiniteDuration;
 import scala.concurrent.duration.Duration;
+import scala.concurrent.duration.FiniteDuration;
+import scala.runtime.BoxedUnit;
+
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import static akka.stream.testkit.StreamTestKit.PublisherProbeSubscription;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 @SuppressWarnings("serial")
 public class FlowTest extends StreamTest {
@@ -107,6 +110,53 @@ public class FlowTest extends StreamTest {
   }
 
   @Test
+  public void mustBeAbleToUseIntersperse() throws Exception {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final Source<String, ?> source = Source.from(Arrays.asList("0", "1", "2", "3"));
+    final Flow<String, String, ?> flow = Flow.of(String.class).intersperse("[", ",", "]");
+
+    final Future<BoxedUnit> future = source.via(flow).runWith(Sink.foreach(new Procedure<String>() { // Scala Future
+      public void apply(String elem) {
+        probe.getRef().tell(elem, ActorRef.noSender());
+      }
+    }), materializer);
+
+    probe.expectMsgEquals("[");
+    probe.expectMsgEquals("0");
+    probe.expectMsgEquals(",");
+    probe.expectMsgEquals("1");
+    probe.expectMsgEquals(",");
+    probe.expectMsgEquals("2");
+    probe.expectMsgEquals(",");
+    probe.expectMsgEquals("3");
+    probe.expectMsgEquals("]");
+    Await.ready(future, Duration.apply(200, TimeUnit.MILLISECONDS));
+  }
+
+  @Test
+  public void mustBeAbleToUseIntersperseAndConcat() throws Exception {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final Source<String, ?> source = Source.from(Arrays.asList("0", "1", "2", "3"));
+    final Flow<String, String, ?> flow = Flow.of(String.class).intersperse(",");
+
+    final Future<BoxedUnit> future = Source.single(">> ").concat(source.via(flow)).runWith(Sink.foreach(new Procedure<String>() { // Scala Future
+      public void apply(String elem) {
+        probe.getRef().tell(elem, ActorRef.noSender());
+      }
+    }), materializer);
+
+    probe.expectMsgEquals(">> ");
+    probe.expectMsgEquals("0");
+    probe.expectMsgEquals(",");
+    probe.expectMsgEquals("1");
+    probe.expectMsgEquals(",");
+    probe.expectMsgEquals("2");
+    probe.expectMsgEquals(",");
+    probe.expectMsgEquals("3");
+    Await.ready(future, Duration.apply(200, TimeUnit.MILLISECONDS));
+  }
+
+  @Test
   public void mustBeAbleToUseTakeWhile() throws Exception {
     final JavaTestKit probe = new JavaTestKit(system);
     final Source<Integer, ?> source = Source.from(Arrays.asList(0, 1, 2, 3));
@@ -133,7 +183,7 @@ public class FlowTest extends StreamTest {
   }
 
 
-  @Test
+  @Ignore("StatefulStage to be converted to GraphStage when Java Api is available (#18817)") @Test
   public void mustBeAbleToUseTransform() {
     final JavaTestKit probe = new JavaTestKit(system);
     final Iterable<Integer> input = Arrays.asList(0, 1, 2, 3, 4, 5, 6, 7);
@@ -158,15 +208,15 @@ public class FlowTest extends StreamTest {
                   return emit(Arrays.asList(element, element).iterator(), ctx);
                 }
               }
-              
+
             };
           }
-          
+
           @Override
           public TerminationDirective onUpstreamFinish(Context<Integer> ctx) {
             return terminationEmit(Collections.singletonList(sum).iterator(), ctx);
           }
-          
+
         };
       }
     });
@@ -309,12 +359,12 @@ public class FlowTest extends StreamTest {
     return new akka.japi.function.Creator<Stage<T, T>>() {
       @Override
       public PushPullStage<T, T> create() throws Exception {
-        return new PushPullStage<T, T>() {  
+        return new PushPullStage<T, T>() {
           @Override
           public SyncDirective onPush(T element, Context<T> ctx) {
             return ctx.push(element);
           }
-          
+
           @Override
           public SyncDirective onPull(Context<T> ctx) {
             return ctx.pull();
@@ -328,26 +378,27 @@ public class FlowTest extends StreamTest {
   public void mustBeAbleToUseMerge() throws Exception {
     final Flow<String, String, BoxedUnit> f1 =
         Flow.of(String.class).transform(FlowTest.this.<String> op()).named("f1");
-    final Flow<String, String, BoxedUnit> f2 = 
+    final Flow<String, String, BoxedUnit> f2 =
         Flow.of(String.class).transform(FlowTest.this.<String> op()).named("f2");
     @SuppressWarnings("unused")
-    final Flow<String, String, BoxedUnit> f3 = 
+    final Flow<String, String, BoxedUnit> f3 =
         Flow.of(String.class).transform(FlowTest.this.<String> op()).named("f3");
 
     final Source<String, BoxedUnit> in1 = Source.from(Arrays.asList("a", "b", "c"));
     final Source<String, BoxedUnit> in2 = Source.from(Arrays.asList("d", "e", "f"));
 
-    final Sink<String, Publisher<String>> publisher = Sink.publisher();
-    
-    final Source<String, BoxedUnit> source = Source.factory().create(new Function<FlowGraph.Builder<BoxedUnit>, Outlet<String>>() {
-      @Override
-      public Outlet<String> apply(Builder<BoxedUnit> b) throws Exception {
-        final UniformFanInShape<String, String> merge = b.graph(Merge.<String> create(2));
-        b.flow(b.source(in1), f1, merge.in(0));
-        b.flow(b.source(in2), f2, merge.in(1));
-        return merge.out();
-      }
-    });
+    final Sink<String, Publisher<String>> publisher = Sink.publisher(false);
+
+    final Source<String, BoxedUnit> source = Source.fromGraph(
+            GraphDSL.create(new Function<GraphDSL.Builder<BoxedUnit>, SourceShape<String>>() {
+              @Override
+              public SourceShape<String> apply(Builder<BoxedUnit> b) throws Exception {
+                final UniformFanInShape<String, String> merge = b.add(Merge.<String>create(2));
+                b.from(b.add(in1)).via(b.add(f1)).toInlet(merge.in(0));
+                b.from(b.add(in2)).via(b.add(f2)).toInlet(merge.in(1));
+                return new SourceShape<String>(merge.out());
+              }
+            }));
 
     // collecting
     final Publisher<String> pub = source.runWith(publisher, materializer);
@@ -363,23 +414,25 @@ public class FlowTest extends StreamTest {
     final Iterable<String> input1 = Arrays.asList("A", "B", "C");
     final Iterable<Integer> input2 = Arrays.asList(1, 2, 3);
 
-    final Builder<BoxedUnit> b = FlowGraph.<BoxedUnit>builder();
-    final Outlet<String> in1 = b.source(Source.from(input1));
-    final Outlet<Integer> in2 = b.source(Source.from(input2));
-    final FanInShape2<String, Integer, Pair<String, Integer>> zip = b.graph(Zip.<String, Integer> create());
-    final Inlet<Pair<String, Integer>> out = b.sink(Sink
-        .foreach(new Procedure<Pair<String, Integer>>() {
-          @Override
-          public void apply(Pair<String, Integer> param) throws Exception {
-            probe.getRef().tell(param, ActorRef.noSender());
-          }
-        }));
-    
-    b.edge(in1, zip.in0());
-    b.edge(in2, zip.in1());
-    b.edge(zip.out(), out);
-    
-    b.run(materializer);
+    RunnableGraph.fromGraph(GraphDSL.create(new Function<Builder<BoxedUnit>, ClosedShape>(){
+      public ClosedShape apply(Builder<BoxedUnit> b) {
+        final Outlet<String> in1 = b.add(Source.from(input1)).outlet();
+        final Outlet<Integer> in2 = b.add(Source.from(input2)).outlet();
+        final FanInShape2<String, Integer, Pair<String, Integer>> zip = b.add(Zip.<String, Integer>create());
+        final SinkShape<Pair<String, Integer>> out =
+          b.add(Sink.foreach(new Procedure<Pair<String, Integer>>() {
+            @Override
+            public void apply(Pair<String, Integer> param) throws Exception {
+              probe.getRef().tell(param, ActorRef.noSender());
+            }
+          }));
+
+        b.from(in1).toInlet(zip.in0());
+        b.from(in2).toInlet(zip.in1());
+        b.from(zip.out()).to(out);
+        return ClosedShape.getInstance();
+      }
+    })).run(materializer);
 
     List<Object> output = Arrays.asList(probe.receiveN(3));
     @SuppressWarnings("unchecked")
@@ -433,14 +486,46 @@ public class FlowTest extends StreamTest {
     mainInputs.add(Source.from(input1));
     mainInputs.add(Source.from(input2));
 
-    final Flow<Source<Integer, BoxedUnit>, List<Integer>, BoxedUnit> flow = Flow.<Source<Integer, BoxedUnit>>create().
-      flatten(akka.stream.javadsl.FlattenStrategy.<Integer, BoxedUnit> concat()).grouped(6);
+    final Flow<Source<Integer, BoxedUnit>, List<Integer>, ?> flow = Flow.<Source<Integer, BoxedUnit>>create().
+      flatMapConcat(ConstantFun.<Source<Integer, BoxedUnit>>javaIdentityFunction()).grouped(6);
     Future<List<Integer>> future = Source.from(mainInputs).via(flow)
         .runWith(Sink.<List<Integer>>head(), materializer);
 
     List<Integer> result = Await.result(future, probe.dilated(FiniteDuration.create(3, TimeUnit.SECONDS)));
 
     assertEquals(Arrays.asList(1, 2, 3, 4, 5), result);
+  }
+  
+  @Test
+  public void mustBeAbleToUseFlatMapMerge() throws Exception {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final Iterable<Integer> input1 = Arrays.asList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+    final Iterable<Integer> input2 = Arrays.asList(10, 11, 12, 13, 14, 15, 16, 17, 18, 19);
+    final Iterable<Integer> input3 = Arrays.asList(20, 21, 22, 23, 24, 25, 26, 27, 28, 29);
+    final Iterable<Integer> input4 = Arrays.asList(30, 31, 32, 33, 34, 35, 36, 37, 38, 39);
+
+    final List<Source<Integer, BoxedUnit>> mainInputs = new ArrayList<Source<Integer,BoxedUnit>>();
+    mainInputs.add(Source.from(input1));
+    mainInputs.add(Source.from(input2));
+    mainInputs.add(Source.from(input3));
+    mainInputs.add(Source.from(input4));
+
+    final Flow<Source<Integer, BoxedUnit>, List<Integer>, ?> flow = Flow.<Source<Integer, BoxedUnit>>create().
+      flatMapMerge(3, ConstantFun.<Source<Integer, BoxedUnit>>javaIdentityFunction()).grouped(60);
+    Future<List<Integer>> future = Source.from(mainInputs).via(flow)
+        .runWith(Sink.<List<Integer>>head(), materializer);
+
+    List<Integer> result = Await.result(future, probe.dilated(FiniteDuration.create(3, TimeUnit.SECONDS)));
+    final Set<Integer> set = new HashSet<Integer>();
+    for (Integer i: result) {
+      set.add(i);
+    }
+    final Set<Integer> expected = new HashSet<Integer>();
+    for (int i = 0; i < 40; ++i) {
+      expected.add(i);
+    }
+
+    assertEquals(expected, set);
   }
 
   @Test
@@ -522,8 +607,10 @@ public class FlowTest extends StreamTest {
 
   @Test
   public void mustBeAbleToRecover() throws Exception {
+    final TestPublisher.ManualProbe<Integer> publisherProbe = TestPublisher.manualProbe(true,system);
     final JavaTestKit probe = new JavaTestKit(system);
-    final Source<Integer, ?> source = Source.from(Arrays.asList(0, 1, 2, 3));
+
+    final Source<Integer, ?> source = Source.from(publisherProbe);
     final Flow<Integer, Integer, ?> flow = Flow.of(Integer.class).map(
             new Function<Integer, Integer>() {
               public Integer apply(Integer elem) {
@@ -544,10 +631,191 @@ public class FlowTest extends StreamTest {
       }
     }), materializer);
 
+    final PublisherProbeSubscription<Integer> s = publisherProbe.expectSubscription();
+
+    s.sendNext(0);
     probe.expectMsgEquals(0);
+    s.sendNext(1);
     probe.expectMsgEquals(1);
+    s.sendNext(2);
     probe.expectMsgEquals(0);
     Await.ready(future, Duration.apply(200, TimeUnit.MILLISECONDS));
+  }
+
+  @Test
+  public void mustBeAbleToMaterializeIdentityWithJavaFlow() throws Exception {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final List<String> input = Arrays.asList("A", "B", "C");
+
+    Flow<String,String,?> otherFlow = Flow.of(String.class);
+
+    Flow<String,String,?> myFlow = Flow.of(String.class).via(otherFlow);
+    Source.from(input).via(myFlow).runWith(Sink.foreach(new Procedure<String>() { // Scala Future
+      public void apply(String elem) {
+        probe.getRef().tell(elem, ActorRef.noSender());
+      }
+    }), materializer);
+
+    probe.expectMsgAllOf("A","B","C");
+  }
+
+  @Test
+  public void mustBeAbleToMaterializeIdentityToJavaSink() throws Exception {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final List<String> input = Arrays.asList("A", "B", "C");
+    Flow<String,String,?> otherFlow = Flow.of(String.class);
+
+    Sink<String,BoxedUnit> sink = Flow.of(String.class).to(otherFlow.to(Sink.foreach(new Procedure<String>() { // Scala Future
+      public void apply(String elem) {
+        probe.getRef().tell(elem, ActorRef.noSender());
+      }
+    })));
+
+    Source.from(input).to(sink).run(materializer);
+    probe.expectMsgAllOf("A","B","C");
+  }
+
+  @Test
+  public void mustBeAbleToBroadcastEagerCancel() throws Exception {
+    final Sink<String, BoxedUnit> sink = Sink.fromGraph(
+      GraphDSL.create(new Function<GraphDSL.Builder<BoxedUnit>, SinkShape<String>>() {
+        @Override
+        public SinkShape<String> apply(Builder<BoxedUnit> b) throws Exception {
+          final UniformFanOutShape<String, String> broadcast = b.add(Broadcast.<String>create(2, true));
+          final SinkShape<String> out1 = b.add(Sink.<String>cancelled());
+          final SinkShape<String> out2 = b.add(Sink.<String>ignore());
+          b.from(broadcast.out(0)).to(out1);
+          b.from(broadcast.out(1)).to(out2);
+          return new SinkShape<String>(broadcast.in());
+        }
+      }));
+
+    final JavaTestKit probe = new JavaTestKit(system);
+    Source<String, ActorRef> source = Source.actorRef(1, OverflowStrategy.dropNew());
+    final ActorRef actor = source.toMat(sink, Keep.<ActorRef, BoxedUnit>left()).run(materializer);
+    probe.watch(actor);
+    probe.expectTerminated(actor);
+  }
+
+
+  @Test
+  public void mustBeAbleToUseZipWith() throws Exception {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final Iterable<String> input1 = Arrays.asList("A", "B", "C");
+    final Iterable<String> input2 = Arrays.asList("D", "E", "F");
+
+    Source.from(input1).via(Flow.of(String.class).zipWith(Source.from(input2), new Function2<String, String, String>() {
+      public String apply(String s1, String s2) {
+        return s1 + "-" + s2;
+      }
+    })).runForeach(new Procedure<String>() {
+      public void apply(String elem) {
+        probe.getRef().tell(elem, ActorRef.noSender());
+      }
+    }, materializer);
+
+    probe.expectMsgEquals("A-D");
+    probe.expectMsgEquals("B-E");
+    probe.expectMsgEquals("C-F");
+  }
+
+  @Test
+  public void mustBeAbleToUseZip2() throws Exception {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final Iterable<String> input1 = Arrays.asList("A", "B", "C");
+    final Iterable<String> input2 = Arrays.asList("D", "E", "F");
+
+    Source.from(input1).via(Flow.of(String.class).zip(Source.from(input2)))
+            .runForeach(new Procedure<Pair<String, String>>() {
+              public void apply(Pair<String, String> elem) {
+                probe.getRef().tell(elem, ActorRef.noSender());
+              }
+            }, materializer);
+
+    probe.expectMsgEquals(new Pair<String,String>("A", "D"));
+    probe.expectMsgEquals(new Pair<String,String>("B", "E"));
+    probe.expectMsgEquals(new Pair<String,String>("C", "F"));
+  }
+
+  @Test
+  public void mustBeAbleToUseMerge2() {
+    final JavaTestKit probe = new JavaTestKit(system);
+    final Iterable<String> input1 = Arrays.asList("A", "B", "C");
+    final Iterable<String> input2 = Arrays.asList("D", "E", "F");
+
+    Source.from(input1).via(Flow.of(String.class).merge(Source.from(input2)))
+            .runForeach(new Procedure<String>() {
+              public void apply(String elem) {
+                probe.getRef().tell(elem, ActorRef.noSender());
+              }
+            }, materializer);
+
+    probe.expectMsgAllOf("A", "B", "C", "D", "E", "F");
+  }
+
+  @Test
+  public void mustBeAbleToUseInitialTimeout() throws Exception {
+    try {
+      Await.result(
+          Source.<Integer>maybe()
+              .via(Flow.of(Integer.class).initialTimeout(Duration.create(1, "second")))
+              .runWith(Sink.<Integer>head(), materializer),
+          Duration.create(3, "second")
+      );
+      fail("A TimeoutException was expected");
+    } catch(TimeoutException e) {
+      // expected
+    }
+  }
+
+
+  @Test
+  public void mustBeAbleToUseCompletionTimeout() throws Exception {
+    try {
+      Await.result(
+          Source.<Integer>maybe()
+              .via(Flow.of(Integer.class).completionTimeout(Duration.create(1, "second")))
+              .runWith(Sink.<Integer>head(), materializer),
+          Duration.create(3, "second")
+      );
+      fail("A TimeoutException was expected");
+    } catch(TimeoutException e) {
+      // expected
+    }
+  }
+
+  @Test
+  public void mustBeAbleToUseIdleTimeout() throws Exception {
+    try {
+      Await.result(
+          Source.<Integer>maybe()
+              .via(Flow.of(Integer.class).idleTimeout(Duration.create(1, "second")))
+              .runWith(Sink.<Integer>head(), materializer),
+          Duration.create(3, "second")
+      );
+      fail("A TimeoutException was expected");
+    } catch(TimeoutException e) {
+      // expected
+    }
+  }
+
+  @Test
+  public void mustBeAbleToUseKeepAlive() throws Exception {
+    Integer result = Await.result(
+        Source.<Integer>maybe()
+            .via(Flow.of(Integer.class)
+              .keepAlive(Duration.create(1, "second"), new Creator<Integer>() {
+                public Integer create() {
+                  return 0;
+                }
+              })
+            )
+            .takeWithin(Duration.create(1500, "milliseconds"))
+            .runWith(Sink.<Integer>head(), materializer),
+        Duration.create(3, "second")
+    );
+
+    assertEquals((Object) 0, result);
   }
 
 }

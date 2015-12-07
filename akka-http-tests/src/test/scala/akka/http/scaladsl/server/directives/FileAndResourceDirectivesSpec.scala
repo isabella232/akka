@@ -19,22 +19,17 @@ import akka.http.scaladsl.TestUtils.writeAllText
 
 class FileAndResourceDirectivesSpec extends RoutingSpec with Inspectors with Inside {
 
-  override def testConfigSource =
-    """akka.http.scaladsl.routing {
-      |  file-chunking-threshold-size = 16
-      |  file-chunking-chunk-size = 8
-      |  range-coalescing-threshold = 1
-      |}""".stripMargin
+  override def testConfigSource = "akka.http.routing.range-coalescing-threshold = 1"
 
   "getFromFile" should {
     "reject non-GET requests" in {
-      Put() ~> getFromFile("some") ~> check { handled shouldEqual (false) }
+      Put() ~> getFromFile("some") ~> check { handled shouldEqual false }
     }
     "reject requests to non-existing files" in {
-      Get() ~> getFromFile("nonExistentFile") ~> check { handled shouldEqual (false) }
+      Get() ~> getFromFile("nonExistentFile") ~> check { handled shouldEqual false }
     }
     "reject requests to directories" in {
-      Get() ~> getFromFile(Properties.javaHome) ~> check { handled shouldEqual (false) }
+      Get() ~> getFromFile(Properties.javaHome) ~> check { handled shouldEqual false }
     }
     "return the file content with the MediaType matching the file extension" in {
       val file = File.createTempFile("akka Http Test", ".PDF")
@@ -42,7 +37,7 @@ class FileAndResourceDirectivesSpec extends RoutingSpec with Inspectors with Ins
         writeAllText("This is PDF", file)
         Get() ~> getFromFile(file.getPath) ~> check {
           mediaType shouldEqual `application/pdf`
-          definedCharset shouldEqual None
+          charsetOption shouldEqual None
           responseAs[String] shouldEqual "This is PDF"
           headers should contain(`Last-Modified`(DateTime(file.lastModified)))
         }
@@ -60,7 +55,7 @@ class FileAndResourceDirectivesSpec extends RoutingSpec with Inspectors with Ins
     }
 
     "return a single range from a file" in {
-      val file = File.createTempFile("partialTest", null)
+      val file = File.createTempFile("akkaHttpTest", null)
       try {
         writeAllText("ABCDEFGHIJKLMNOPQRSTUVWXYZ", file)
         Get() ~> addHeader(Range(ByteRange(0, 10))) ~> getFromFile(file) ~> check {
@@ -72,20 +67,51 @@ class FileAndResourceDirectivesSpec extends RoutingSpec with Inspectors with Ins
     }
 
     "return multiple ranges from a file at once" in {
-      pending // FIXME: reactivate
-      val file = File.createTempFile("partialTest", null)
+      val file = File.createTempFile("akkaHttpTest", null)
       try {
         writeAllText("ABCDEFGHIJKLMNOPQRSTUVWXYZ", file)
         val rangeHeader = Range(ByteRange(1, 10), ByteRange.suffix(10))
-        Get() ~> addHeader(rangeHeader) ~> getFromFile(file, ContentTypes.`text/plain`) ~> check {
+        Get() ~> addHeader(rangeHeader) ~> getFromFile(file, ContentTypes.`text/plain(UTF-8)`) ~> check {
           status shouldEqual StatusCodes.PartialContent
           header[`Content-Range`] shouldEqual None
           mediaType.withParams(Map.empty) shouldEqual `multipart/byteranges`
 
           val parts = responseAs[Multipart.ByteRanges].toStrict(1.second).awaitResult(3.seconds).strictParts
-          parts.size shouldEqual 2
-          parts(0).entity.data.utf8String shouldEqual "BCDEFGHIJK"
-          parts(1).entity.data.utf8String shouldEqual "QRSTUVWXYZ"
+          parts.map(_.entity.data.utf8String) should contain theSameElementsAs List("BCDEFGHIJK", "QRSTUVWXYZ")
+        }
+      } finally file.delete
+    }
+
+    "properly handle zero-byte files" in {
+      val file = File.createTempFile("akkaHttpTest", null)
+      try {
+        Get() ~> getFromFile(file) ~> check {
+          mediaType shouldEqual NoMediaType
+          responseAs[String] shouldEqual ""
+        }
+      } finally file.delete
+    }
+
+    "support precompressed files with registered MediaType" in {
+      val file = File.createTempFile("akkaHttpTest", ".svgz")
+      try {
+        writeAllText("123", file)
+        Get() ~> getFromFile(file) ~> check {
+          mediaType shouldEqual `image/svg+xml`
+          header[`Content-Encoding`] shouldEqual Some(`Content-Encoding`(HttpEncodings.gzip))
+          responseAs[String] shouldEqual "123"
+        }
+      } finally file.delete
+    }
+
+    "support files with registered MediaType and .gz suffix" in {
+      val file = File.createTempFile("akkaHttpTest", ".js.gz")
+      try {
+        writeAllText("456", file)
+        Get() ~> getFromFile(file) ~> check {
+          mediaType shouldEqual `application/javascript`
+          header[`Content-Encoding`] shouldEqual Some(`Content-Encoding`(HttpEncodings.gzip))
+          responseAs[String] shouldEqual "456"
         }
       } finally file.delete
     }
@@ -93,22 +119,22 @@ class FileAndResourceDirectivesSpec extends RoutingSpec with Inspectors with Ins
 
   "getFromResource" should {
     "reject non-GET requests" in {
-      Put() ~> getFromResource("some") ~> check { handled shouldEqual (false) }
+      Put() ~> getFromResource("some") ~> check { handled shouldEqual false }
     }
     "reject requests to non-existing resources" in {
-      Get() ~> getFromResource("nonExistingResource") ~> check { handled shouldEqual (false) }
+      Get() ~> getFromResource("nonExistingResource") ~> check { handled shouldEqual false }
     }
     "reject requests to directory resources" in {
-      Get() ~> getFromResource("someDir") ~> check { handled shouldEqual (false) }
+      Get() ~> getFromResource("someDir") ~> check { handled shouldEqual false }
     }
     "reject requests to directory resources with trailing slash" in {
-      Get() ~> getFromResource("someDir/") ~> check { handled shouldEqual (false) }
+      Get() ~> getFromResource("someDir/") ~> check { handled shouldEqual false }
     }
     "reject requests to directory resources from an archive " in {
-      Get() ~> getFromResource("com/typesafe/config") ~> check { handled shouldEqual (false) }
+      Get() ~> getFromResource("com/typesafe/config") ~> check { handled shouldEqual false }
     }
     "reject requests to directory resources from an archive with trailing slash" in {
-      Get() ~> getFromResource("com/typesafe/config/") ~> check { handled shouldEqual (false) }
+      Get() ~> getFromResource("com/typesafe/config/") ~> check { handled shouldEqual false }
     }
     "return the resource from an archive with spaces and umlauts" in {
       // contained within lib/jar with späces.jar
@@ -148,11 +174,17 @@ class FileAndResourceDirectivesSpec extends RoutingSpec with Inspectors with Ins
         responseAs[String] shouldEqual "XyZ"
       }
     }
+    "properly handle zero-byte files" in {
+      Get() ~> getFromResource("subDirectory/fileA.txt") ~> check {
+        mediaType shouldEqual NoMediaType
+        responseAs[String] shouldEqual ""
+      }
+    }
   }
 
   "getFromResourceDirectory" should {
     "reject requests to non-existing resources" in {
-      Get("not/found") ~> getFromResourceDirectory("subDirectory") ~> check { handled shouldEqual (false) }
+      Get("not/found") ~> getFromResourceDirectory("subDirectory") ~> check { handled shouldEqual false }
     }
     val verify = check {
       mediaType shouldEqual `application/pdf`
@@ -174,22 +206,22 @@ class FileAndResourceDirectivesSpec extends RoutingSpec with Inspectors with Ins
       }
     }
     "reject requests to directory resources" in {
-      Get() ~> getFromResourceDirectory("subDirectory") ~> check { handled shouldEqual (false) }
+      Get() ~> getFromResourceDirectory("subDirectory") ~> check { handled shouldEqual false }
     }
     "reject requests to directory resources with trailing slash" in {
-      Get() ~> getFromResourceDirectory("subDirectory/") ~> check { handled shouldEqual (false) }
+      Get() ~> getFromResourceDirectory("subDirectory/") ~> check { handled shouldEqual false }
     }
     "reject requests to sub directory resources" in {
-      Get("sub") ~> getFromResourceDirectory("someDir") ~> check { handled shouldEqual (false) }
+      Get("sub") ~> getFromResourceDirectory("someDir") ~> check { handled shouldEqual false }
     }
     "reject requests to sub directory resources with trailing slash" in {
-      Get("sub/") ~> getFromResourceDirectory("someDir") ~> check { handled shouldEqual (false) }
+      Get("sub/") ~> getFromResourceDirectory("someDir") ~> check { handled shouldEqual false }
     }
     "reject requests to directory resources from an archive" in {
-      Get() ~> getFromResourceDirectory("com/typesafe/config") ~> check { handled shouldEqual (false) }
+      Get() ~> getFromResourceDirectory("com/typesafe/config") ~> check { handled shouldEqual false }
     }
     "reject requests to directory resources from an archive with trailing slash" in {
-      Get() ~> getFromResourceDirectory("com/typesafe/config/") ~> check { handled shouldEqual (false) }
+      Get() ~> getFromResourceDirectory("com/typesafe/config/") ~> check { handled shouldEqual false }
     }
   }
 
@@ -358,7 +390,7 @@ class FileAndResourceDirectivesSpec extends RoutingSpec with Inspectors with Ins
       }
     }
     "reject requests to file resources" in {
-      Get() ~> listDirectoryContents(base + "subDirectory/empty.pdf") ~> check { handled shouldEqual (false) }
+      Get() ~> listDirectoryContents(base + "subDirectory/empty.pdf") ~> check { handled shouldEqual false }
     }
   }
 

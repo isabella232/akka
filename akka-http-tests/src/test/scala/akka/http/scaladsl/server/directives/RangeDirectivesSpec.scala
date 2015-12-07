@@ -78,13 +78,13 @@ class RangeDirectivesSpec extends RoutingSpec with Inspectors with Inside {
 
     "reject an unsatisfiable single range" in {
       Get() ~> addHeader(Range(ByteRange(100, 200))) ~> completeWithRangedBytes(10) ~> check {
-        rejection shouldEqual UnsatisfiableRangeRejection(Seq(ByteRange(100, 200)), 10)
+        rejection shouldEqual UnsatisfiableRangeRejection(ByteRange(100, 200) :: Nil, 10)
       }
     }
 
     "reject an unsatisfiable single suffix range with length 0" in {
       Get() ~> addHeader(Range(ByteRange.suffix(0))) ~> completeWithRangedBytes(42) ~> check {
-        rejection shouldEqual UnsatisfiableRangeRejection(Seq(ByteRange.suffix(0)), 42)
+        rejection shouldEqual UnsatisfiableRangeRejection(ByteRange.suffix(0) :: Nil, 42)
       }
     }
 
@@ -121,7 +121,7 @@ class RangeDirectivesSpec extends RoutingSpec with Inspectors with Inside {
       def entityData() = StreamUtils.oneTimeSource(Source.single(ByteString(content)))
 
       Get() ~> addHeader(Range(ByteRange(5, 10), ByteRange(0, 1), ByteRange(1, 2))) ~> {
-        wrs { complete(HttpEntity.Default(MediaTypes.`text/plain`, content.length, entityData())) }
+        wrs { complete(HttpEntity.Default(ContentTypes.`text/plain(UTF-8)`, content.length, entityData())) }
       } ~> check {
         header[`Content-Range`] should be(None)
         val parts = Await.result(responseAs[Multipart.ByteRanges].parts.grouped(1000).runWith(Sink.head), 1.second)

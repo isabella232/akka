@@ -6,10 +6,7 @@ package akka.stream.impl
 import akka.actor._
 import akka.stream.{ AbruptTerminationException, ActorMaterializerSettings, InPort, Shape }
 import akka.stream.actor.{ ActorSubscriberMessage, ActorSubscriber }
-import akka.stream.scaladsl.FlexiMerge.MergeLogic
 import org.reactivestreams.{ Subscription, Subscriber }
-
-import scala.collection.immutable
 
 /**
  * INTERNAL API
@@ -58,6 +55,9 @@ private[akka] object FanIn {
     private var markedPending = 0
     private var markedDepleted = 0
 
+    private var receivedInput = false
+    private var completedCounter = 0
+
     private[this] final def hasState(index: Int, flag: Int): Boolean =
       (states(index) & flag) != 0
     private[this] final def setState(index: Int, flag: Int, on: Boolean): Unit =
@@ -67,7 +67,10 @@ private[akka] object FanIn {
     private[this] final def cancelled(index: Int, on: Boolean): Unit = setState(index, Cancelled, on)
 
     private[this] final def completed(index: Int): Boolean = hasState(index, Completed)
-    private[this] final def completed(index: Int, on: Boolean): Unit = setState(index, Completed, on)
+    private[this] final def registerCompleted(index: Int): Unit = {
+      completedCounter += 1
+      setState(index, Completed, true)
+    }
 
     private[this] final def depleted(index: Int): Boolean = hasState(index, Depleted)
     private[this] final def depleted(index: Int, on: Boolean): Unit = setState(index, Depleted, on)
@@ -105,7 +108,7 @@ private[akka] object FanIn {
     def cancel(input: Int) =
       if (!cancelled(input)) {
         inputs(input).cancel()
-        cancelled(input, true)
+        cancelled(input, on = true)
         unmarkInput(input)
       }
 
@@ -113,11 +116,13 @@ private[akka] object FanIn {
 
     def onDepleted(input: Int): Unit = ()
 
+    def onCompleteWhenNoInput(): Unit = ()
+
     def markInput(input: Int): Unit = {
       if (!marked(input)) {
         if (depleted(input)) markedDepleted += 1
         if (pending(input)) markedPending += 1
-        marked(input, true)
+        marked(input, on = true)
         markCount += 1
       }
     }
@@ -126,7 +131,7 @@ private[akka] object FanIn {
       if (marked(input)) {
         if (depleted(input)) markedDepleted -= 1
         if (pending(input)) markedPending -= 1
-        marked(input, false)
+        marked(input, on = false)
         markCount -= 1
       }
     }
@@ -153,12 +158,14 @@ private[akka] object FanIn {
 
     def isCancelled(input: Int): Boolean = cancelled(input)
 
+    def isAllCompleted(): Boolean = inputCount == completedCounter
+
     def idToDequeue(): Int = {
       var id = preferredId
       while (!(marked(id) && pending(id))) {
         id += 1
         if (id == inputCount) id = 0
-        assert(id != preferredId, "Tried to dequeue without waiting for any input")
+        require(id != preferredId, "Tried to dequeue without waiting for any input")
       }
       id
     }
@@ -171,11 +178,11 @@ private[akka] object FanIn {
       val elem = input.dequeueInputElement()
       if (!input.inputsAvailable) {
         if (marked(id)) markedPending -= 1
-        pending(id, false)
+        pending(id, on = false)
       }
       if (input.inputsDepleted) {
         if (marked(id)) markedDepleted += 1
-        depleted(id, true)
+        depleted(id, on = true)
         onDepleted(id)
       }
       elem
@@ -202,12 +209,12 @@ private[akka] object FanIn {
     }
 
     val AnyOfMarkedInputs = new TransferState {
-      override def isCompleted: Boolean = (markedDepleted == markCount && markedPending == 0)
+      override def isCompleted: Boolean = markedDepleted == markCount && markedPending == 0
       override def isReady: Boolean = markedPending > 0
     }
 
     def inputsAvailableFor(id: Int) = new TransferState {
-      override def isCompleted: Boolean = depleted(id) || cancelled(id)
+      override def isCompleted: Boolean = depleted(id) || cancelled(id) || (!pending(id) && completed(id))
       override def isReady: Boolean = pending(id)
     }
 
@@ -222,16 +229,18 @@ private[akka] object FanIn {
         inputs(id).subreceive(ActorSubscriber.OnSubscribe(subscription))
       case OnNext(id, elem) ⇒
         if (marked(id) && !pending(id)) markedPending += 1
-        pending(id, true)
+        pending(id, on = true)
+        receivedInput = true
         inputs(id).subreceive(ActorSubscriberMessage.OnNext(elem))
       case OnComplete(id) ⇒
         if (!pending(id)) {
           if (marked(id) && !depleted(id)) markedDepleted += 1
-          depleted(id, true)
+          depleted(id, on = true)
           onDepleted(id)
         }
-        completed(id, true)
+        registerCompleted(id)
         inputs(id).subreceive(ActorSubscriberMessage.OnComplete)
+        if (!receivedInput && isAllCompleted) onCompleteWhenNoInput()
       case OnError(id, e) ⇒
         onError(id, e)
     })
@@ -249,6 +258,7 @@ private[akka] abstract class FanIn(val settings: ActorMaterializerSettings, val 
   protected val primaryOutputs: Outputs = new SimpleOutputs(self, this)
   protected val inputBunch = new InputBunch(inputCount, settings.maxInputBufferSize, this) {
     override def onError(input: Int, e: Throwable): Unit = fail(e)
+    override def onCompleteWhenNoInput(): Unit = pumpFinished()
   }
 
   override def pumpFinished(): Unit = {
@@ -281,86 +291,3 @@ private[akka] abstract class FanIn(val settings: ActorMaterializerSettings, val 
 
 }
 
-/**
- * INTERNAL API
- */
-private[akka] object FairMerge {
-  def props(settings: ActorMaterializerSettings, inputPorts: Int): Props =
-    Props(new FairMerge(settings, inputPorts)).withDeploy(Deploy.local)
-}
-
-/**
- * INTERNAL API
- */
-private[akka] final class FairMerge(_settings: ActorMaterializerSettings, _inputPorts: Int) extends FanIn(_settings, _inputPorts) {
-  inputBunch.markAllInputs()
-
-  initialPhase(inputCount, TransferPhase(inputBunch.AnyOfMarkedInputs && primaryOutputs.NeedsDemand) { () ⇒
-    val elem = inputBunch.dequeueAndYield()
-    primaryOutputs.enqueueOutputElement(elem)
-  })
-
-}
-
-/**
- * INTERNAL API
- */
-private[akka] object UnfairMerge {
-  val DefaultPreferred = 0
-
-  def props(settings: ActorMaterializerSettings, inputPorts: Int): Props =
-    Props(new UnfairMerge(settings, inputPorts, DefaultPreferred)).withDeploy(Deploy.local)
-}
-
-/**
- * INTERNAL API
- */
-private[akka] final class UnfairMerge(_settings: ActorMaterializerSettings,
-                                      _inputPorts: Int,
-                                      val preferred: Int) extends FanIn(_settings, _inputPorts) {
-  inputBunch.markAllInputs()
-
-  initialPhase(inputCount, TransferPhase(inputBunch.AnyOfMarkedInputs && primaryOutputs.NeedsDemand) { () ⇒
-    val elem = inputBunch.dequeuePrefering(preferred)
-    primaryOutputs.enqueueOutputElement(elem)
-  })
-}
-
-/**
- * INTERNAL API
- */
-private[akka] object FlexiMerge {
-  def props[T, S <: Shape](settings: ActorMaterializerSettings, ports: S, mergeLogic: MergeLogic[T]): Props =
-    Props(new FlexiMergeImpl(settings, ports, mergeLogic)).withDeploy(Deploy.local)
-}
-
-/**
- * INTERNAL API
- */
-private[akka] object Concat {
-  def props(settings: ActorMaterializerSettings): Props = Props(new Concat(settings)).withDeploy(Deploy.local)
-}
-
-/**
- * INTERNAL API
- */
-private[akka] final class Concat(_settings: ActorMaterializerSettings) extends FanIn(_settings, inputCount = 2) {
-  val First = 0
-  val Second = 1
-
-  def drainFirst = TransferPhase(inputBunch.inputsOrCompleteAvailableFor(First) && primaryOutputs.NeedsDemand) { () ⇒
-    if (!inputBunch.isDepleted(First)) {
-      val elem = inputBunch.dequeue(First)
-      primaryOutputs.enqueueOutputElement(elem)
-    } else {
-      nextPhase(drainSecond)
-    }
-  }
-
-  def drainSecond = TransferPhase(inputBunch.inputsAvailableFor(Second) && primaryOutputs.NeedsDemand) { () ⇒
-    val elem = inputBunch.dequeue(Second)
-    primaryOutputs.enqueueOutputElement(elem)
-  }
-
-  initialPhase(inputCount, drainFirst)
-}

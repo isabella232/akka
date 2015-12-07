@@ -1,10 +1,11 @@
 /*
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package docs.http.scaladsl.server
 package directives
 
+import akka.http.scaladsl.model.StatusCodes._
 import akka.http.scaladsl.server._
 
 class PathDirectivesExamplesSpec extends RoutingSpec {
@@ -16,7 +17,7 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
 
   //# path-dsl
   // matches /foo/
-  path("foo" /)
+  path("foo"./)
 
   // matches e.g. /foo/123 and extracts "123" as a String
   path("foo" / """\d+""".r)
@@ -65,6 +66,7 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
             }
         }
 
+    // tests:
     Get("/") ~> route ~> check {
       handled shouldEqual false
     }
@@ -93,6 +95,7 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
           }
       }
 
+    // tests:
     Get("/foo") ~> route ~> check {
       responseAs[String] shouldEqual "/foo"
     }
@@ -117,6 +120,7 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
           }
       }
 
+    // tests:
     Get("/foo") ~> route ~> check {
       responseAs[String] shouldEqual "/foo"
     }
@@ -141,6 +145,7 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
           }
       }
 
+    // tests:
     Get("/") ~> route ~> check {
       handled shouldEqual false
     }
@@ -161,6 +166,7 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
           pathPrefix("bar") { completeWithUnmatchedPath }
       }
 
+    // tests:
     Get("/foo/doo") ~> route ~> check {
       responseAs[String] shouldEqual "/doo"
     }
@@ -184,6 +190,7 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
             }
         }
 
+    // tests:
     Get("/") ~> route ~> check {
       responseAs[String] shouldEqual "root"
     }
@@ -212,6 +219,7 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
           }
       }
 
+    // tests:
     Get("/start/middle/end") ~> route ~> check {
       responseAs[String] shouldEqual "/middle/"
     }
@@ -228,6 +236,7 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
       } ~
         complete("unslashed")
 
+    // tests:
     Get("/foo/") ~> route ~> check {
       responseAs[String] shouldEqual "slashed"
     }
@@ -243,6 +252,7 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
           rawPathPrefix("doo") { completeWithUnmatchedPath }
       }
 
+    // tests:
     Get("/foobar/baz") ~> route ~> check {
       responseAs[String] shouldEqual "/baz"
     }
@@ -260,11 +270,110 @@ class PathDirectivesExamplesSpec extends RoutingSpec {
         }
       }
 
+    // tests:
     Get("/foobar") ~> route ~> check {
       responseAs[String] shouldEqual "bar"
     }
 
     Get("/foobaz") ~> route ~> check {
+      handled shouldEqual false
+    }
+  }
+
+  "redirectToTrailingSlashIfMissing-0" in {
+    import akka.http.scaladsl.model.StatusCodes
+
+    val route =
+      redirectToTrailingSlashIfMissing(StatusCodes.MovedPermanently) {
+        path("foo"./) {
+          // We require the explicit trailing slash in the path
+          complete("OK")
+        } ~
+          path("bad-1") {
+            // MISTAKE!
+            // Missing `/` in path, causes this path to never match,
+            // because it is inside a `redirectToTrailingSlashIfMissing`
+            ???
+          } ~
+          path("bad-2/") {
+            // MISTAKE!
+            // / should be explicit as path element separator and not *in* the path element
+            // So it should be: "bad-1" /
+            ???
+          }
+      }
+
+    // tests:
+    // Redirected:
+    Get("/foo") ~> route ~> check {
+      status shouldEqual StatusCodes.MovedPermanently
+
+      // results in nice human readable message,
+      // in case the redirect can't be followed automatically:
+      responseAs[String] shouldEqual {
+        "This and all future requests should be directed to " +
+          "<a href=\"http://example.com/foo/\">this URI</a>."
+      }
+    }
+
+    // Properly handled:
+    Get("/foo/") ~> route ~> check {
+      status shouldEqual StatusCodes.OK
+      responseAs[String] shouldEqual "OK"
+    }
+
+    // MISTAKE! will never match - reason explained in routes
+    Get("/bad-1/") ~> route ~> check {
+      handled shouldEqual false
+    }
+
+    // MISTAKE! will never match - reason explained in routes
+    Get("/bad-2/") ~> route ~> check {
+      handled shouldEqual false
+    }
+  }
+
+  "redirectToNoTrailingSlashIfPresent-0" in {
+    import akka.http.scaladsl.model.StatusCodes
+
+    val route =
+      redirectToNoTrailingSlashIfPresent(StatusCodes.MovedPermanently) {
+        path("foo") {
+          // We require the explicit trailing slash in the path
+          complete("OK")
+        } ~
+          path("bad"./) {
+            // MISTAKE!
+            // Since inside a `redirectToNoTrailingSlashIfPresent` directive
+            // the matched path here will never contain a trailing slash,
+            // thus this path will never match.
+            //
+            // It should be `path("bad")` instead.
+            ???
+          }
+      }
+
+    // tests:
+    // Redirected:
+    Get("/foo/") ~> route ~> check {
+      status shouldEqual StatusCodes.MovedPermanently
+
+      // results in nice human readable message,
+      // in case the redirect can't be followed automatically:
+      responseAs[String] shouldEqual {
+        "This and all future requests should be directed to " +
+          "<a href=\"http://example.com/foo\">this URI</a>."
+      }
+    }
+
+    // Properly handled:
+    Get("/foo") ~> route ~> check {
+      status shouldEqual StatusCodes.OK
+      responseAs[String] shouldEqual "OK"
+    }
+
+    // MISTAKE! will never match - reason explained in routes
+    Get("/bad") ~> route ~> check {
       handled shouldEqual false
     }
   }

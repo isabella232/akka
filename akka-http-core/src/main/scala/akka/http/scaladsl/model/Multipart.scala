@@ -7,6 +7,7 @@ package akka.http.scaladsl.model
 import java.io.File
 
 import akka.event.{ NoLogging, LoggingAdapter }
+import akka.stream.impl.ConstantFun
 
 import scala.collection.immutable.VectorBuilder
 import scala.concurrent.duration.FiniteDuration
@@ -14,15 +15,14 @@ import scala.concurrent.{ Future, ExecutionContext }
 import scala.collection.immutable
 import scala.util.{ Failure, Success, Try }
 import akka.stream.Materializer
-import akka.stream.io.SynchronousFileSource
-import akka.stream.scaladsl.{ FlattenStrategy, Source }
+import akka.stream.scaladsl.Source
 import akka.http.scaladsl.util.FastFuture
 import akka.http.scaladsl.model.headers._
 import akka.http.impl.engine.rendering.BodyPartRenderer
 import FastFuture._
 
 sealed trait Multipart {
-  def mediaType: MultipartMediaType
+  def mediaType: MediaType.Multipart
   def parts: Source[Multipart.BodyPart, Any]
 
   /**
@@ -40,8 +40,8 @@ sealed trait Multipart {
     val chunks =
       parts
         .transform(() ⇒ BodyPartRenderer.streamed(boundary, charset.nioCharset, partHeadersSizeHint = 128, log))
-        .flatten(FlattenStrategy.concat)
-    HttpEntity.Chunked(mediaType withBoundary boundary, chunks)
+        .flatMapConcat(ConstantFun.scalaIdentityFunction)
+    HttpEntity.Chunked(mediaType withBoundary boundary withCharset charset, chunks)
   }
 }
 
@@ -52,7 +52,7 @@ object Multipart {
 
     override def toEntity(charset: HttpCharset, boundary: String)(implicit log: LoggingAdapter = NoLogging): HttpEntity.Strict = {
       val data = BodyPartRenderer.strict(strictParts, boundary, charset.nioCharset, partHeadersSizeHint = 128, log)
-      HttpEntity(mediaType withBoundary boundary, data)
+      HttpEntity(mediaType withBoundary boundary withCharset charset, data)
     }
   }
 
@@ -91,27 +91,27 @@ object Multipart {
    * Basic model for multipart content as defined by http://tools.ietf.org/html/rfc2046.
    */
   sealed abstract class General extends Multipart {
-    def mediaType: MultipartMediaType
+    def mediaType: MediaType.Multipart
     def parts: Source[General.BodyPart, Any]
     def toStrict(timeout: FiniteDuration)(implicit ec: ExecutionContext, fm: Materializer): Future[General.Strict] =
       strictify(parts)(_.toStrict(timeout)).fast.map(General.Strict(mediaType, _))
   }
   object General {
-    def apply(mediaType: MultipartMediaType, parts: BodyPart.Strict*): Strict = Strict(mediaType, parts.toVector)
+    def apply(mediaType: MediaType.Multipart, parts: BodyPart.Strict*): Strict = Strict(mediaType, parts.toVector)
 
-    def apply(_mediaType: MultipartMediaType, _parts: Source[BodyPart, Any]): General =
+    def apply(_mediaType: MediaType.Multipart, _parts: Source[BodyPart, Any]): General =
       new General {
         def mediaType = _mediaType
         def parts = _parts
         override def toString = s"General($mediaType, $parts)"
       }
 
-    def unapply(value: General): Option[(MultipartMediaType, Source[BodyPart, Any])] = Some(value.mediaType -> value.parts)
+    def unapply(value: General): Option[(MediaType.Multipart, Source[BodyPart, Any])] = Some(value.mediaType -> value.parts)
 
     /**
      * Strict [[General]].
      */
-    case class Strict(mediaType: MultipartMediaType, strictParts: immutable.Seq[BodyPart.Strict]) extends General with Multipart.Strict {
+    case class Strict(mediaType: MediaType.Multipart, strictParts: immutable.Seq[BodyPart.Strict]) extends General with Multipart.Strict {
       def parts: Source[BodyPart.Strict, Any] = Source(strictParts)
       override def toStrict(timeout: FiniteDuration)(implicit ec: ExecutionContext, fm: Materializer) =
         FastFuture.successful(this)
@@ -194,7 +194,7 @@ object Multipart {
      * To create an instance with several parts or for multiple files, use
      * ``FormData(BodyPart.fromFile("field1", ...), BodyPart.fromFile("field2", ...)``
      */
-    def fromFile(name: String, contentType: ContentType, file: File, chunkSize: Int = SynchronousFileSource.DefaultChunkSize): FormData =
+    def fromFile(name: String, contentType: ContentType, file: File, chunkSize: Int = -1): FormData =
       FormData(Source.single(BodyPart.fromFile(name, contentType, file, chunkSize)))
 
     /**
@@ -235,9 +235,9 @@ object Multipart {
         }
 
       /**
-       * Creates a BodyPart backed by a File that will be streamed using a SynchronousFileSource.
+       * Creates a BodyPart backed by a File that will be streamed using a FileSource.
        */
-      def fromFile(name: String, contentType: ContentType, file: File, chunkSize: Int = SynchronousFileSource.DefaultChunkSize): BodyPart =
+      def fromFile(name: String, contentType: ContentType, file: File, chunkSize: Int = -1): BodyPart =
         BodyPart(name, HttpEntity(contentType, file, chunkSize), Map("filename" -> file.getName))
 
       def unapply(value: BodyPart): Option[(String, BodyPartEntity, Map[String, String], immutable.Seq[HttpHeader])] =

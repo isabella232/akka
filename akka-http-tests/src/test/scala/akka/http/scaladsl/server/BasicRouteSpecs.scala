@@ -7,6 +7,7 @@ package akka.http.scaladsl.server
 import akka.http.scaladsl.model
 import model.HttpMethods._
 import model.StatusCodes
+import akka.testkit.EventFilter
 
 class BasicRouteSpecs extends RoutingSpec {
 
@@ -27,11 +28,10 @@ class BasicRouteSpecs extends RoutingSpec {
       } ~> check { rejections shouldEqual Seq(MethodRejection(GET), MethodRejection(PUT)) }
     }
     "clear rejections that have already been 'overcome' by previous directives" in {
-      pending
-      /*Put() ~> {
+      Put() ~> {
         put { parameter('yeah) { echoComplete } } ~
           get { completeOk }
-      } ~> check { rejection shouldEqual MissingQueryParamRejection("yeah") }*/
+      } ~> check { rejection shouldEqual MissingQueryParamRejection("yeah") }
     }
   }
 
@@ -135,7 +135,7 @@ class BasicRouteSpecs extends RoutingSpec {
 
   case object MyException extends RuntimeException
   "Route sealing" should {
-    "catch route execution exceptions" in {
+    "catch route execution exceptions" in EventFilter[MyException.type](occurrences = 1).intercept {
       Get("/abc") ~> Route.seal {
         get { ctx ⇒
           throw MyException
@@ -144,7 +144,7 @@ class BasicRouteSpecs extends RoutingSpec {
         status shouldEqual StatusCodes.InternalServerError
       }
     }
-    "catch route building exceptions" in {
+    "catch route building exceptions" in EventFilter[MyException.type](occurrences = 1).intercept {
       Get("/abc") ~> Route.seal {
         get {
           throw MyException
@@ -153,7 +153,7 @@ class BasicRouteSpecs extends RoutingSpec {
         status shouldEqual StatusCodes.InternalServerError
       }
     }
-    "convert all rejections to responses" in {
+    "convert all rejections to responses" in EventFilter[RuntimeException](occurrences = 1).intercept {
       object MyRejection extends Rejection
       Get("/abc") ~> Route.seal {
         get {

@@ -4,6 +4,9 @@
 
 package akka.http.impl.model.parser
 
+import akka.http.ParserSettings
+import akka.http.ParserSettings.CookieParsingMode
+import akka.http.scaladsl.model.headers.HttpCookiePair
 import scala.util.control.NonFatal
 import akka.http.impl.util.SingletonException
 import akka.parboiled2._
@@ -13,7 +16,7 @@ import akka.http.scaladsl.model._
 /**
  * INTERNAL API.
  */
-private[http] class HeaderParser(val input: ParserInput) extends Parser with DynamicRuleHandler[HeaderParser, HttpHeader :: HNil]
+private[http] class HeaderParser(val input: ParserInput, settings: HeaderParser.Settings = HeaderParser.DefaultSettings) extends Parser with DynamicRuleHandler[HeaderParser, HttpHeader :: HNil]
   with CommonRules
   with AcceptCharsetHeader
   with AcceptEncodingHeader
@@ -52,13 +55,28 @@ private[http] class HeaderParser(val input: ParserInput) extends Parser with Dyn
   type Result = Either[ErrorInfo, HttpHeader]
   def parser: HeaderParser = this
   def success(result: HttpHeader :: HNil): Result = Right(result.head)
-  def parseError(error: ParseError): Result =
-    Left(ErrorInfo(formatError(error, showLine = false), formatErrorLine(error)))
+  def parseError(error: ParseError): Result = {
+    val formatter = new ErrorFormatter(showLine = false)
+    Left(ErrorInfo(formatter.format(error, input), formatter.formatErrorLine(error, input)))
+  }
   def failure(error: Throwable): Result = error match {
     case IllegalUriException(info) ⇒ Left(info)
     case NonFatal(e)               ⇒ Left(ErrorInfo.fromCompoundString(e.getMessage))
   }
   def ruleNotFound(ruleName: String): Result = throw HeaderParser.RuleNotFoundException
+
+  def newUriParser(input: ParserInput): UriParser = new UriParser(input, uriParsingMode = settings.uriParsingMode)
+
+  def `cookie-value`: Rule1[String] =
+    settings.cookieParsingMode match {
+      case CookieParsingMode.RFC6265 ⇒ rule { `cookie-value-rfc-6265` }
+      case CookieParsingMode.Raw     ⇒ rule { `cookie-value-raw` }
+    }
+
+  def createCookiePair(name: String, value: String): HttpCookiePair = settings.cookieParsingMode match {
+    case CookieParsingMode.RFC6265 ⇒ HttpCookiePair(name, value)
+    case CookieParsingMode.Raw     ⇒ HttpCookiePair.raw(name, value)
+  }
 }
 
 /**
@@ -66,11 +84,12 @@ private[http] class HeaderParser(val input: ParserInput) extends Parser with Dyn
  */
 private[http] object HeaderParser {
   object RuleNotFoundException extends SingletonException
+  object EmptyCookieException extends SingletonException("Cookie header contained no parsable cookie values.")
 
-  def parseFull(headerName: String, value: String): HeaderParser#Result = {
+  def parseFull(headerName: String, value: String, settings: Settings = DefaultSettings): HeaderParser#Result = {
     import akka.parboiled2.EOI
     val v = value + EOI // this makes sure the parser isn't broken even if there's no trailing garbage in this value
-    val parser = new HeaderParser(v)
+    val parser = new HeaderParser(v, settings)
     dispatch(parser, headerName) match {
       case r @ Right(_) if parser.cursor == v.length ⇒ r
       case r @ Right(_) ⇒
@@ -136,4 +155,20 @@ private[http] object HeaderParser {
     "user-agent",
     "www-authenticate",
     "x-forwarded-for")
+
+  trait Settings {
+    def uriParsingMode: Uri.ParsingMode
+    def cookieParsingMode: ParserSettings.CookieParsingMode
+  }
+  def Settings(uriParsingMode: Uri.ParsingMode = Uri.ParsingMode.Relaxed,
+               cookieParsingMode: ParserSettings.CookieParsingMode = ParserSettings.CookieParsingMode.RFC6265): Settings = {
+    val _uriParsingMode = uriParsingMode
+    val _cookieParsingMode = cookieParsingMode
+
+    new Settings {
+      def uriParsingMode: Uri.ParsingMode = _uriParsingMode
+      def cookieParsingMode: CookieParsingMode = _cookieParsingMode
+    }
+  }
+  val DefaultSettings: Settings = Settings()
 }

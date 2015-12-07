@@ -14,9 +14,20 @@ import akka.util.ByteString
 import org.scalatest.matchers.Matcher
 
 class CodingDirectivesExamplesSpec extends RoutingSpec {
+  "responseEncodingAccepted" in {
+    val route = responseEncodingAccepted(gzip) { complete("content") }
+
+    Get("/") ~> route ~> check {
+      responseAs[String] shouldEqual "content"
+    }
+    Get("/") ~> `Accept-Encoding`(deflate) ~> route ~> check {
+      rejection shouldEqual UnacceptedResponseEncodingRejection(gzip)
+    }
+  }
   "encodeResponse" in {
     val route = encodeResponse { complete("content") }
 
+    // tests:
     Get("/") ~> route ~> check {
       response should haveContentEncoding(identity)
     }
@@ -33,11 +44,9 @@ class CodingDirectivesExamplesSpec extends RoutingSpec {
   "encodeResponseWith" in {
     val route = encodeResponseWith(Gzip) { complete("content") }
 
+    // tests:
     Get("/") ~> route ~> check {
       response should haveContentEncoding(gzip)
-    }
-    Get("/") ~> `Accept-Encoding`() ~> route ~> check {
-      rejection shouldEqual UnacceptedResponseEncodingRejection(gzip)
     }
     Get("/") ~> `Accept-Encoding`(gzip, deflate) ~> route ~> check {
       response should haveContentEncoding(gzip)
@@ -60,6 +69,7 @@ class CodingDirectivesExamplesSpec extends RoutingSpec {
         }
       }
 
+    // tests:
     Post("/", helloGzipped) ~> `Content-Encoding`(gzip) ~> route ~> check {
       responseAs[String] shouldEqual "Request content: 'Hello'"
     }
@@ -78,6 +88,7 @@ class CodingDirectivesExamplesSpec extends RoutingSpec {
         }
       }
 
+    // tests:
     Post("/", helloGzipped) ~> `Content-Encoding`(gzip) ~> route ~> check {
       responseAs[String] shouldEqual "Request content: 'Hello'"
     }
@@ -96,6 +107,7 @@ class CodingDirectivesExamplesSpec extends RoutingSpec {
         }
       }
 
+    // tests:
     Post("/", helloGzipped) ~> `Content-Encoding`(gzip) ~> route ~> check {
       responseAs[String] shouldEqual "Request content: 'Hello'"
     }

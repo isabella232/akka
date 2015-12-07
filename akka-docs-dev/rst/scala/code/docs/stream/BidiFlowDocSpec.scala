@@ -44,21 +44,21 @@ object BidiFlowDocSpec {
   }
   //#codec-impl
 
-  val codecVerbose = BidiFlow() { b =>
+  val codecVerbose = BidiFlow.fromGraph(GraphDSL.create() { b =>
     // construct and add the top flow, going outbound
     val outbound = b.add(Flow[Message].map(toBytes))
     // construct and add the bottom flow, going inbound
     val inbound = b.add(Flow[ByteString].map(fromBytes))
     // fuse them together into a BidiShape
-    BidiShape(outbound, inbound)
-  }
+    BidiShape.fromFlows(outbound, inbound)
+  })
 
   // this is the same as the above
-  val codec = BidiFlow(toBytes _, fromBytes _)
+  val codec = BidiFlow.fromFunctions(toBytes _, fromBytes _)
   //#codec
 
   //#framing
-  val framing = BidiFlow() { b =>
+  val framing = BidiFlow.fromGraph(GraphDSL.create() { b =>
     implicit val order = ByteOrder.LITTLE_ENDIAN
 
     def addLengthHeader(bytes: ByteString) = {
@@ -112,19 +112,19 @@ object BidiFlowDocSpec {
 
     val outbound = b.add(Flow[ByteString].map(addLengthHeader))
     val inbound = b.add(Flow[ByteString].transform(() => new FrameParser))
-    BidiShape(outbound, inbound)
-  }
+    BidiShape.fromFlows(outbound, inbound)
+  })
   //#framing
 
-  val chopUp = BidiFlow() { b =>
+  val chopUp = BidiFlow.fromGraph(GraphDSL.create() { b =>
     val f = Flow[ByteString].mapConcat(_.map(ByteString(_)))
-    BidiShape(b.add(f), b.add(f))
-  }
+    BidiShape.fromFlows(b.add(f), b.add(f))
+  })
 
-  val accumulate = BidiFlow() { b =>
+  val accumulate = BidiFlow.fromGraph(GraphDSL.create() { b =>
     val f = Flow[ByteString].grouped(1000).map(_.fold(ByteString.empty)(_ ++ _))
-    BidiShape(b.add(f), b.add(f))
-  }
+    BidiShape.fromFlows(b.add(f), b.add(f))
+  })
 }
 
 class BidiFlowDocSpec extends AkkaSpec with ConversionCheckedTripleEquals {

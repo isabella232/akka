@@ -3,7 +3,7 @@
  */
 package akka.stream.impl
 
-import java.util.concurrent.atomic.{ AtomicInteger, AtomicBoolean, AtomicReference }
+import java.util.concurrent.atomic.{ AtomicInteger, AtomicReference }
 import akka.stream.impl.MaterializerSession.MaterializationPanic
 import akka.stream.impl.StreamLayout.Module
 import akka.stream.scaladsl.Keep
@@ -58,7 +58,8 @@ private[akka] object StreamLayout {
     if (downs != ups2) problems ::= s"inconsistent maps: ups ${pairs(ups2 -- inter)} downs ${pairs(downs -- inter)}"
     val (allIn, dupIn, allOut, dupOut) =
       subModules.foldLeft((Set.empty[InPort], Set.empty[InPort], Set.empty[OutPort], Set.empty[OutPort])) {
-        case ((ai, di, ao, doo), m) ⇒ (ai ++ m.inPorts, di ++ ai.intersect(m.inPorts), ao ++ m.outPorts, doo ++ ao.intersect(m.outPorts))
+        case ((ai, di, ao, doo), sm) ⇒
+          (ai ++ sm.inPorts, di ++ ai.intersect(sm.inPorts), ao ++ sm.outPorts, doo ++ ao.intersect(sm.outPorts))
       }
     if (dupIn.nonEmpty) problems ::= s"duplicate ports in submodules ${ins(dupIn)}"
     if (dupOut.nonEmpty) problems ::= s"duplicate ports in submodules ${outs(dupOut)}"
@@ -73,7 +74,7 @@ private[akka] object StreamLayout {
       n match {
         case Ignore                  ⇒ Set.empty
         case Transform(f, dep)       ⇒ atomics(dep)
-        case Atomic(m)               ⇒ Set(m)
+        case Atomic(module)          ⇒ Set(module)
         case Combine(f, left, right) ⇒ atomics(left) ++ atomics(right)
       }
     val atomic = atomics(materializedValueComputation)
@@ -183,7 +184,7 @@ private[akka] object StreamLayout {
         downstreams,
         upstreams,
         Transform(f, if (this.isSealed) Atomic(this) else this.materializedValueComputation),
-        attributes)
+        if (this.isSealed) Attributes.none else attributes)
     }
 
     /**
@@ -224,7 +225,7 @@ private[akka] object StreamLayout {
         upstreams ++ that.upstreams,
         // would like to optimize away this allocation for Keep.{left,right} but that breaks side-effecting transformations
         Combine(f.asInstanceOf[(Any, Any) ⇒ Any], matComputation1, matComputation2),
-        attributes)
+        Attributes.none)
     }
 
     /**
@@ -334,12 +335,10 @@ private[akka] object StreamLayout {
     override def toString =
       s"""
         | Module: ${this.attributes.nameOrDefault("unnamed")}
-        | Modules: ${subModules.iterator.map(m ⇒ "   " + m.attributes.nameOrDefault(m.getClass.getName)).mkString("\n")}
-        | Downstreams:
-        | ${downstreams.iterator.map { case (in, out) ⇒ s"   $in -> $out" }.mkString("\n")}
-        | Upstreams:
-        | ${upstreams.iterator.map { case (out, in) ⇒ s"   $out -> $in" }.mkString("\n")}
-      """.stripMargin
+        | Modules: ${subModules.iterator.map(m ⇒ "\n   " + m.attributes.nameOrDefault(m.getClass.getName)).mkString("")}
+        | Downstreams: ${downstreams.iterator.map { case (in, out) ⇒ s"\n   $in -> $out" }.mkString("")}
+        | Upstreams: ${upstreams.iterator.map { case (out, in) ⇒ s"\n   $out -> $in" }.mkString("")}
+        |""".stripMargin
   }
 }
 
@@ -371,10 +370,10 @@ private[stream] final class VirtualProcessor[T] extends Processor[T, T] {
             tryOnSubscribe(s, sub)
             sub.closeLatch() // allow onNext only now
             terminationStatus.getAndSet(Allowed) match {
-              case null       ⇒ // nothing happened yet
-              case Completed  ⇒ tryOnComplete(s)
-              case Failed(ex) ⇒ tryOnError(s, ex)
-              case Allowed    ⇒ // all good
+              case null                        ⇒ // nothing happened yet
+              case VirtualProcessor.Completed  ⇒ tryOnComplete(s)
+              case VirtualProcessor.Failed(ex) ⇒ tryOnError(s, ex)
+              case VirtualProcessor.Allowed    ⇒ // all good
             }
           } catch {
             case NonFatal(ex) ⇒ sub.cancel()
@@ -594,7 +593,7 @@ private[stream] object MaterializerSession {
 /**
  * INTERNAL API
  */
-private[stream] abstract class MaterializerSession(val topLevel: StreamLayout.Module) {
+private[stream] abstract class MaterializerSession(val topLevel: StreamLayout.Module, val initialAttributes: Attributes) {
   import StreamLayout._
 
   private var subscribersStack: List[mutable.Map[InPort, Subscriber[Any]]] =
@@ -652,7 +651,7 @@ private[stream] abstract class MaterializerSession(val topLevel: StreamLayout.Mo
     require(
       topLevel.isRunnable,
       s"The top level module cannot be materialized because it has unconnected ports: ${(topLevel.inPorts ++ topLevel.outPorts).mkString(", ")}")
-    try materializeModule(topLevel, topLevel.attributes)
+    try materializeModule(topLevel, initialAttributes and topLevel.attributes)
     catch {
       case NonFatal(cause) ⇒
         // PANIC!!! THE END OF THE MATERIALIZATION IS NEAR!

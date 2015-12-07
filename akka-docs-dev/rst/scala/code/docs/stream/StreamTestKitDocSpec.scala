@@ -66,7 +66,7 @@ class StreamTestKitDocSpec extends AkkaSpec {
   "sink actor ref" in {
     //#sink-actorref
     case object Tick
-    val sourceUnderTest = Source(0.seconds, 200.millis, Tick)
+    val sourceUnderTest = Source.tick(0.seconds, 200.millis, Tick)
 
     val probe = TestProbe()
     val cancellable = sourceUnderTest.to(Sink.actorRef(probe.ref, "completed")).run()
@@ -153,7 +153,7 @@ class StreamTestKitDocSpec extends AkkaSpec {
     sub.expectNextUnordered(1, 2, 3)
 
     pub.sendError(new Exception("Power surge in the linear subroutine C-47!"))
-    val ex = sub.expectError
+    val ex = sub.expectError()
     assert(ex.getMessage.contains("C-47"))
     //#test-source-and-sink
   }

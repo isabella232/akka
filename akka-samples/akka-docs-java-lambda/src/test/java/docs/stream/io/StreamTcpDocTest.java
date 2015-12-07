@@ -3,12 +3,10 @@
  */
 package docs.stream.io;
 
-import static org.junit.Assert.assertEquals;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import akka.stream.io.Framing;
 import docs.stream.SilenceSystemOut;
-import docs.stream.cookbook.RecipeParseLines;
 import java.net.InetSocketAddress;
 
 import org.junit.AfterClass;
@@ -19,7 +17,6 @@ import scala.runtime.BoxedUnit;
 import util.SocketUtils;
 
 import akka.actor.ActorSystem;
-import akka.japi.Pair;
 import akka.stream.*;
 import akka.stream.javadsl.*;
 import akka.stream.javadsl.Tcp.*;
@@ -130,17 +127,17 @@ public class StreamTcpDocTest {
             .map(s -> ByteString.fromString(s));
 
       final Flow<ByteString, ByteString, BoxedUnit> serverLogic =
-          Flow.factory().create(builder -> {
+          Flow.fromGraph(GraphDSL.create(builder -> {
             final UniformFanInShape<ByteString, ByteString> concat =
-                builder.graph(Concat.create());
-            final FlowShape<ByteString, ByteString> echo = builder.graph(echoFlow);
+                builder.add(Concat.create());
+            final FlowShape<ByteString, ByteString> echo = builder.add(echoFlow);
 
             builder
-              .from(welcome).to(concat)
-              .from(echo).to(concat);
+              .from(builder.add(welcome)).toFanIn(concat)
+              .from(echo).toFanIn(concat);
 
-            return new Pair<>(echo.inlet(), concat.out());
-      });
+            return FlowShape.of(echo.inlet(), concat.out());
+      }));
 
       connection.handleWith(serverLogic, mat);
     }, mat);

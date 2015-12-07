@@ -60,7 +60,7 @@ object ActorPublisherMessage {
 
   /**
    * This message is delivered to the [[ActorPublisher]] actor in order to signal the exceeding of an subscription timeout.
-   * Once the actor receives this message, this publisher will already be in cancelled state, thus the actor should clean-up and stop itself.
+   * Once the actor receives this message, this publisher will already be in canceled state, thus the actor should clean-up and stop itself.
    */
   final case object SubscriptionTimeoutExceeded extends SubscriptionTimeoutExceeded with NoSerializationVerificationNeeded
   sealed abstract class SubscriptionTimeoutExceeded extends ActorPublisherMessage
@@ -174,7 +174,7 @@ trait ActorPublisher[T] extends Actor {
    * otherwise `onNext` will throw `IllegalStateException`.
    */
   def onNext(element: T): Unit = lifecycleState match {
-    case Active | PreSubscriber ⇒
+    case Active | PreSubscriber | CompleteThenStop ⇒
       if (demand > 0) {
         demand -= 1
         tryOnNext(subscriber, element)
@@ -193,7 +193,7 @@ trait ActorPublisher[T] extends Actor {
    * call [[#onNext]], [[#onError]] and [[#onComplete]].
    */
   def onComplete(): Unit = lifecycleState match {
-    case Active | PreSubscriber ⇒
+    case Active | PreSubscriber | CompleteThenStop ⇒
       lifecycleState = Completed
       if (subscriber ne null) // otherwise onComplete will be called when the subscription arrives
         try tryOnComplete(subscriber) finally subscriber = null
@@ -208,7 +208,7 @@ trait ActorPublisher[T] extends Actor {
    * Complete the stream. After that you are not allowed to
    * call [[#onNext]], [[#onError]] and [[#onComplete]].
    *
-   * After signalling completion the Actor will then stop itself as it has completed the protocol.
+   * After signaling completion the Actor will then stop itself as it has completed the protocol.
    * When [[#onComplete]] is called before any [[Subscriber]] has had the chance to subscribe
    * to this [[ActorPublisher]] the completion signal (and therefore stopping of the Actor as well)
    * will be delayed until such [[Subscriber]] arrives.
@@ -226,8 +226,8 @@ trait ActorPublisher[T] extends Actor {
    * call [[#onNext]], [[#onError]] and [[#onComplete]].
    */
   def onError(cause: Throwable): Unit = lifecycleState match {
-    case Active | PreSubscriber ⇒
-      lifecycleState = ErrorEmitted(cause, false)
+    case Active | PreSubscriber | CompleteThenStop ⇒
+      lifecycleState = ErrorEmitted(cause, stop = false)
       if (subscriber ne null) // otherwise onError will be called when the subscription arrives
         try tryOnError(subscriber, cause) finally subscriber = null
     case _: ErrorEmitted ⇒
@@ -240,7 +240,7 @@ trait ActorPublisher[T] extends Actor {
    * Terminate the stream with failure. After that you are not allowed to
    * call [[#onNext]], [[#onError]] and [[#onComplete]].
    *
-   * After signalling the Error the Actor will then stop itself as it has completed the protocol.
+   * After signaling the Error the Actor will then stop itself as it has completed the protocol.
    * When [[#onError]] is called before any [[Subscriber]] has had the chance to subscribe
    * to this [[ActorPublisher]] the error signal (and therefore stopping of the Actor as well)
    * will be delayed until such [[Subscriber]] arrives.

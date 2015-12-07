@@ -171,7 +171,7 @@ class StreamLayoutSpec extends AkkaSpec {
     override def onNext(t: Any): Unit = ()
   }
 
-  class FlatTestMaterializer(_module: Module) extends MaterializerSession(_module) {
+  class FlatTestMaterializer(_module: Module) extends MaterializerSession(_module, Attributes()) {
     var publishers = Vector.empty[TestPublisher]
     var subscribers = Vector.empty[TestSubscriber]
 
@@ -212,7 +212,7 @@ class StreamLayoutSpec extends AkkaSpec {
 
     def getAllAtomic(module: Module): Set[Module] = {
       val (atomics, composites) = module.subModules.partition(_.isAtomic)
-      atomics ++ composites.map(getAllAtomic).flatten
+      atomics ++ composites.flatMap(getAllAtomic)
     }
 
     val allAtomic = getAllAtomic(topLevel)

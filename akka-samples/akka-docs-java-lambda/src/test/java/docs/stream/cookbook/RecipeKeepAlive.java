@@ -7,19 +7,20 @@ import akka.actor.ActorSystem;
 import akka.stream.ActorMaterializer;
 import akka.stream.Materializer;
 import akka.stream.javadsl.*;
-import akka.stream.scaladsl.MergePreferred.MergePreferredShape;
 import akka.stream.testkit.TestPublisher;
 import akka.stream.testkit.TestSubscriber;
 import akka.stream.testkit.javadsl.TestSink;
 import akka.stream.testkit.javadsl.TestSource;
 import akka.testkit.JavaTestKit;
 import akka.util.ByteString;
-import scala.Tuple3;
 import scala.runtime.BoxedUnit;
 
+import org.reactivestreams.Subscription;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.concurrent.TimeUnit;
 
 public class RecipeKeepAlive extends RecipeTest {
   static ActorSystem system;
@@ -44,63 +45,18 @@ public class RecipeKeepAlive extends RecipeTest {
   public void workForVersion1() throws Exception {
     new JavaTestKit(system) {
       {
-        final Source<Tick, TestPublisher.Probe<Tick>> ticks = TestSource.probe(system);
-        final Source<ByteString, TestPublisher.Probe<ByteString>> data = TestSource.probe(system);
-        final Sink<ByteString, TestSubscriber.Probe<ByteString>> sink = TestSink.probe(system);
-
-        ByteString keepAliveMessage = ByteString.fromArray(new byte[] { 11 });
+        final ByteString keepAliveMessage = ByteString.fromArray(new byte[]{11});
 
         //@formatter:off
         //#inject-keepalive
-        Flow<Tick, ByteString, BoxedUnit> tickToKeepAlivePacket =
-          Flow.of(Tick.class).conflate(tick -> keepAliveMessage, (msg, newTick) -> msg);
-
-        final Tuple3<
-            TestPublisher.Probe<Tick>,
-            TestPublisher.Probe<ByteString>,
-            TestSubscriber.Probe<ByteString>
-          > ticksDataRes =
-          FlowGraph.factory().closed3(ticks, data, sink,
-            (t, d, s) -> new Tuple3(t, d, s),
-            (builder, t, d, s) -> {
-              final int secondaryPorts = 1;
-              final MergePreferredShape<ByteString> unfairMerge =
-                builder.graph(MergePreferred.create(secondaryPorts));
-              // If data is available then no keepalive is injected
-              builder.from(d).to(unfairMerge.preferred());
-              builder.from(t).via(tickToKeepAlivePacket).to(unfairMerge.in(0));
-              builder.from(unfairMerge.out()).to(s);
-            }
-          ).run(mat);
+        Flow<ByteString, ByteString, BoxedUnit> keepAliveInject =
+          Flow.of(ByteString.class).keepAlive(
+              scala.concurrent.duration.Duration.create(1, TimeUnit.SECONDS),
+              () -> keepAliveMessage);
         //#inject-keepalive
         //@formatter:on
 
-        final TestPublisher.Probe<Tick> manualTicks = ticksDataRes._1();
-        final TestPublisher.Probe<ByteString> manualData = ticksDataRes._2();
-        final TestSubscriber.Probe<ByteString> sub = ticksDataRes._3();
-
-        manualTicks.sendNext(TICK);
-
-        // pending data will overcome the keepalive
-        manualData.sendNext(ByteString.fromArray(new byte[] { 1 }));
-        manualData.sendNext(ByteString.fromArray(new byte[] { 2 }));
-        manualData.sendNext(ByteString.fromArray(new byte[] { 3 }));
-
-        sub.requestNext(ByteString.fromArray(new byte[] { 1 }));
-        sub.request(2);
-        sub.expectNext(ByteString.fromArray(new byte[] { 2 }));
-        sub.expectNext(ByteString.fromArray(new byte[] { 3 }));
-
-        sub.requestNext(keepAliveMessage);
-
-        sub.request(1);
-        manualTicks.sendNext(TICK);
-        sub.expectNext(keepAliveMessage);
-
-        manualData.sendComplete();
-        manualTicks.sendComplete();
-
-        sub.expectComplete();
+        // Enough to compile, tested elsewhere as a built-in stage
       }
     };
   }

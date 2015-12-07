@@ -3,12 +3,17 @@
  */
 package akka.stream.impl
 
-import akka.actor.{ Deploy, ActorRef, Props }
+import akka.actor.{ ActorRef, Props }
+import akka.stream.actor.ActorPublisherMessage.Request
 import akka.stream.impl.StreamLayout.Module
-import akka.stream.{ Attributes, Inlet, Shape, SinkShape, MaterializationContext, ActorMaterializer }
-import org.reactivestreams.{ Publisher, Subscriber, Subscription }
+import akka.stream._
+import akka.stream.stage.{ InHandler, GraphStageLogic, SinkStage }
+import akka.util.Timeout
+import org.reactivestreams.{ Publisher, Subscriber }
 import scala.annotation.unchecked.uncheckedVariance
+import scala.concurrent.duration.{ FiniteDuration, _ }
 import scala.concurrent.{ Future, Promise }
+import scala.language.postfixOps
 
 /**
  * INTERNAL API
@@ -61,79 +66,24 @@ private[akka] class PublisherSink[In](val attributes: Attributes, shape: SinkSha
  * INTERNAL API
  */
 private[akka] final class FanoutPublisherSink[In](
-  initialBufferSize: Int,
-  maximumBufferSize: Int,
   val attributes: Attributes,
   shape: SinkShape[In])
   extends SinkModule[In, Publisher[In]](shape) {
 
   override def create(context: MaterializationContext): (Subscriber[In], Publisher[In]) = {
     val actorMaterializer = ActorMaterializer.downcast(context.materializer)
-    val fanoutActor = actorMaterializer.actorOf(context,
-      Props(new FanoutProcessorImpl(actorMaterializer.effectiveSettings(context.effectiveAttributes),
-        initialBufferSize, maximumBufferSize)).withDeploy(Deploy.local))
-    val fanoutProcessor = ActorProcessorFactory[In, In](fanoutActor)
+    val fanoutProcessor = ActorProcessorFactory[In, In](
+      actorMaterializer.actorOf(
+        context,
+        FanoutProcessorImpl.props(actorMaterializer.effectiveSettings(attributes))))
     (fanoutProcessor, fanoutProcessor)
   }
 
   override protected def newInstance(shape: SinkShape[In]): SinkModule[In, Publisher[In]] =
-    new FanoutPublisherSink[In](initialBufferSize, maximumBufferSize, attributes, shape)
+    new FanoutPublisherSink[In](attributes, shape)
 
   override def withAttributes(attr: Attributes): Module =
-    new FanoutPublisherSink[In](initialBufferSize, maximumBufferSize, attr, amendShape(attr))
-}
-
-/**
- * INTERNAL API
- */
-private[akka] object HeadSink {
-  final class HeadSinkSubscriber[In] extends Subscriber[In] {
-    private[this] var subscription: Subscription = null
-    private[this] val promise: Promise[In] = Promise[In]()
-    def future: Future[In] = promise.future
-    override def onSubscribe(s: Subscription): Unit = {
-      ReactiveStreamsCompliance.requireNonNullSubscription(s)
-      if (subscription ne null) s.cancel()
-      else {
-        subscription = s
-        s.request(1)
-      }
-    }
-
-    override def onNext(elem: In): Unit = {
-      ReactiveStreamsCompliance.requireNonNullElement(elem)
-      promise.trySuccess(elem)
-      subscription.cancel()
-      subscription = null
-    }
-
-    override def onError(t: Throwable): Unit = {
-      ReactiveStreamsCompliance.requireNonNullException(t)
-      promise.tryFailure(t)
-    }
-
-    override def onComplete(): Unit =
-      promise.tryFailure(new NoSuchElementException("empty stream"))
-  }
-
-}
-
-/**
- * INTERNAL API
- * Holds a [[scala.concurrent.Future]] that will be fulfilled with the first
- * thing that is signaled to this stream, which can be either an element (after
- * which the upstream subscription is canceled), an error condition (putting
- * the Future into the corresponding failed state) or the end-of-stream
- * (failing the Future with a NoSuchElementException).
- */
-private[akka] final class HeadSink[In](val attributes: Attributes, shape: SinkShape[In]) extends SinkModule[In, Future[In]](shape) {
-  override def create(context: MaterializationContext) = {
-    val sub = new HeadSink.HeadSinkSubscriber[In]
-    (sub, sub.future)
-  }
-  override protected def newInstance(shape: SinkShape[In]): SinkModule[In, Future[In]] = new HeadSink[In](attributes, shape)
-  override def withAttributes(attr: Attributes): Module = new HeadSink[In](attr, amendShape(attr))
-  override def toString: String = "HeadSink"
+    new FanoutPublisherSink[In](attr, amendShape(attr))
 }
 
 /**
@@ -141,17 +91,17 @@ private[akka] final class HeadSink[In](val attributes: Attributes, shape: SinkSh
  * Attaches a subscriber to this stream which will just discard all received
  * elements.
  */
-private[akka] final class BlackholeSink(val attributes: Attributes, shape: SinkShape[Any]) extends SinkModule[Any, Future[Unit]](shape) {
+private[akka] final class SinkholeSink(val attributes: Attributes, shape: SinkShape[Any]) extends SinkModule[Any, Future[Unit]](shape) {
 
   override def create(context: MaterializationContext) = {
     val effectiveSettings = ActorMaterializer.downcast(context.materializer).effectiveSettings(context.effectiveAttributes)
     val p = Promise[Unit]()
-    (new BlackholeSubscriber[Any](effectiveSettings.maxInputBufferSize, p), p.future)
+    (new SinkholeSubscriber[Any](p), p.future)
   }
 
-  override protected def newInstance(shape: SinkShape[Any]): SinkModule[Any, Future[Unit]] = new BlackholeSink(attributes, shape)
-  override def withAttributes(attr: Attributes): Module = new BlackholeSink(attr, amendShape(attr))
-  override def toString: String = "BlackholeSink"
+  override protected def newInstance(shape: SinkShape[Any]): SinkModule[Any, Future[Unit]] = new SinkholeSink(attributes, shape)
+  override def withAttributes(attr: Attributes): Module = new SinkholeSink(attr, amendShape(attr))
+  override def toString: String = "SinkholeSink"
 }
 
 /**
@@ -217,3 +167,83 @@ private[akka] final class ActorRefSink[In](ref: ActorRef, onCompleteMessage: Any
   override def toString: String = "ActorRefSink"
 }
 
+/**
+ * INTERNAL API
+ */
+private[akka] final class AcknowledgeSink[In](bufferSize: Int, val attributes: Attributes,
+                                              shape: SinkShape[In], timeout: FiniteDuration) extends SinkModule[In, SinkQueue[In]](shape) {
+
+  override def create(context: MaterializationContext) = {
+    import akka.pattern.ask
+    val actorMaterializer = ActorMaterializer.downcast(context.materializer)
+
+    implicit val t = Timeout(timeout)
+    val subscriberRef = actorMaterializer.actorOf(context,
+      AcknowledgeSubscriber.props(bufferSize))
+    (akka.stream.actor.ActorSubscriber[In](subscriberRef),
+      new SinkQueue[In] {
+        override def pull(): Future[Option[In]] = (subscriberRef ? Request(1)).mapTo[Option[In]]
+      })
+  }
+
+  override protected def newInstance(shape: SinkShape[In]): SinkModule[In, SinkQueue[In]] =
+    new AcknowledgeSink[In](bufferSize, attributes, shape, timeout)
+  override def withAttributes(attr: Attributes): Module =
+    new AcknowledgeSink[In](bufferSize, attr, amendShape(attr), timeout)
+  override def toString: String = "AcknowledgeSink"
+}
+
+private[akka] final class LastOptionStage[T] extends SinkStage[T, Future[Option[T]]]("lastOption") {
+  override def createLogicAndMaterializedValue(inheritedAttributes: Attributes) = {
+    val p: Promise[Option[T]] = Promise()
+    (new GraphStageLogic(shape) {
+      override def preStart(): Unit = pull(in)
+      setHandler(in, new InHandler {
+        private[this] var prev: T = null.asInstanceOf[T]
+
+        override def onPush(): Unit = {
+          prev = grab(in)
+          pull(in)
+        }
+
+        override def onUpstreamFinish(): Unit = {
+          val head = prev
+          prev = null.asInstanceOf[T]
+          p.trySuccess(Option(head))
+          completeStage()
+        }
+
+        override def onUpstreamFailure(ex: Throwable): Unit = {
+          prev = null.asInstanceOf[T]
+          p.tryFailure(ex)
+          failStage(ex)
+        }
+      })
+    }, p.future)
+  }
+}
+
+private[akka] final class HeadOptionStage[T] extends SinkStage[T, Future[Option[T]]]("headOption") {
+  override def createLogicAndMaterializedValue(inheritedAttributes: Attributes) = {
+    val p: Promise[Option[T]] = Promise()
+    (new GraphStageLogic(shape) {
+      override def preStart(): Unit = pull(in)
+      setHandler(in, new InHandler {
+        override def onPush(): Unit = {
+          p.trySuccess(Option(grab(in)))
+          completeStage()
+        }
+
+        override def onUpstreamFinish(): Unit = {
+          p.trySuccess(None)
+          completeStage()
+        }
+
+        override def onUpstreamFailure(ex: Throwable): Unit = {
+          p.tryFailure(ex)
+          failStage(ex)
+        }
+      })
+    }, p.future)
+  }
+}

@@ -13,12 +13,16 @@ import akka.stream.testkit.Utils._
 import akka.stream.testkit._
 import akka.stream.{ ActorMaterializer, BindFailedException, StreamTcpException }
 import akka.util.{ ByteString, Helpers }
-
 import scala.collection.immutable
-import scala.concurrent.Await
+import scala.concurrent.{ Promise, Await }
 import scala.concurrent.duration._
+import java.net.BindException
+import akka.testkit.EventFilter
 
-class TcpSpec extends AkkaSpec("akka.io.tcp.windows-connection-abort-workaround-enabled=auto\nakka.stream.materializer.subscription-timeout.timeout = 3s") with TcpHelper {
+class TcpSpec extends AkkaSpec(
+  """
+    |akka.io.tcp.windows-connection-abort-workaround-enabled=auto
+    |akka.stream.materializer.subscription-timeout.timeout = 2s""".stripMargin) with TcpHelper {
   var demand = 0L
 
   "Outgoing TCP stream" must {
@@ -340,11 +344,9 @@ class TcpSpec extends AkkaSpec("akka.io.tcp.windows-connection-abort-workaround-
     }
 
     "properly full-close if requested" in assertAllStagesStopped {
-      import system.dispatcher
-
       val serverAddress = temporaryServerAddress()
       val writeButIgnoreRead: Flow[ByteString, ByteString, Unit] =
-        Flow.wrap(Sink.ignore, Source.single(ByteString("Early response")))(Keep.right)
+        Flow.fromSinkAndSourceMat(Sink.ignore, Source.single(ByteString("Early response")))(Keep.right)
 
       val binding =
         Await.result(
@@ -352,18 +354,18 @@ class TcpSpec extends AkkaSpec("akka.io.tcp.windows-connection-abort-workaround-
             conn.flow.join(writeButIgnoreRead).run()
           })(Keep.left).run(), 3.seconds)
 
-      val result = Source.lazyEmpty[ByteString]
+      val (promise, result) = Source.maybe[ByteString]
         .via(Tcp().outgoingConnection(serverAddress.getHostName, serverAddress.getPort))
-        .runFold(ByteString.empty)(_ ++ _)
+        .toMat(Sink.fold(ByteString.empty)(_ ++ _))(Keep.both)
+        .run()
 
       Await.result(result, 3.seconds) should ===(ByteString("Early response"))
 
+      promise.success(None) // close client upstream, no more data
       binding.unbind()
     }
 
     "Echo should work even if server is in full close mode" in {
-      import system.dispatcher
-
       val serverAddress = temporaryServerAddress()
 
       val binding =
@@ -372,11 +374,11 @@ class TcpSpec extends AkkaSpec("akka.io.tcp.windows-connection-abort-workaround-
             conn.flow.join(Flow[ByteString]).run()
           })(Keep.left).run(), 3.seconds)
 
-      val result = Source(immutable.Iterable.fill(10000)(ByteString(0)))
+      val result = Source(immutable.Iterable.fill(1000)(ByteString(0)))
         .via(Tcp().outgoingConnection(serverAddress, halfClose = true))
         .runFold(0)(_ + _.size)
 
-      Await.result(result, 3.seconds) should ===(10000)
+      Await.result(result, 3.seconds) should ===(1000)
 
       binding.unbind()
     }
@@ -389,7 +391,7 @@ class TcpSpec extends AkkaSpec("akka.io.tcp.windows-connection-abort-workaround-
       val serverAddress = temporaryServerAddress()
       val binding = Tcp(system2).bindAndHandle(Flow[ByteString], serverAddress.getHostName, serverAddress.getPort)(mat2)
 
-      val result = Source.lazyEmpty[ByteString].via(Tcp(system2).outgoingConnection(serverAddress)).runFold(0)(_ + _.size)(mat2)
+      val result = Source.maybe[ByteString].via(Tcp(system2).outgoingConnection(serverAddress)).runFold(0)(_ + _.size)(mat2)
 
       // Getting rid of existing connection actors by using a blunt instrument
       system2.actorSelection(akka.io.Tcp(system2).getManager.path / "selectors" / "$a" / "*") ! Kill
@@ -457,7 +459,7 @@ class TcpSpec extends AkkaSpec("akka.io.tcp.windows-connection-abort-workaround-
       Await.result(echoServerFinish, 1.second)
     }
 
-    "bind and unbind correctly" in {
+    "bind and unbind correctly" in EventFilter[BindException](occurrences = 2).intercept {
       if (Helpers.isWindows) {
         info("On Windows unbinding is not immediate")
         pending
@@ -496,7 +498,10 @@ class TcpSpec extends AkkaSpec("akka.io.tcp.windows-connection-abort-workaround-
 
     "not shut down connections after the connection stream cancelled" in assertAllStagesStopped {
       val address = temporaryServerAddress()
-      Tcp().bind(address.getHostName, address.getPort).take(1).runForeach(_.flow.join(Flow[ByteString]).run())
+      Tcp().bind(address.getHostName, address.getPort).take(1).runForeach { tcp ⇒
+        Thread.sleep(1000) // we're testing here to see if it survives such race
+        tcp.flow.join(Flow[ByteString]).run()
+      }
 
       val total = Source(immutable.Iterable.fill(1000)(ByteString(0)))
         .via(Tcp().outgoingConnection(address))
@@ -505,24 +510,30 @@ class TcpSpec extends AkkaSpec("akka.io.tcp.windows-connection-abort-workaround-
       Await.result(total, 3.seconds) should ===(1000)
     }
 
-    "shut down properly even if some accepted connection Flows have not been subscribed to" in assertAllStagesStopped {
+    "xoxoxo shut down properly even if some accepted connection Flows have not been subscribed to" in assertAllStagesStopped {
       val address = temporaryServerAddress()
-      val takeTwoAndDropSecond = Flow[IncomingConnection].grouped(2).take(1).map(_.head)
+      val firstClientConnected = Promise[Unit]()
+      val takeTwoAndDropSecond = Flow[IncomingConnection].map(conn ⇒ {
+        firstClientConnected.trySuccess(())
+        conn
+      }).grouped(2).take(1).map(_.head)
       Tcp().bind(address.getHostName, address.getPort)
         .via(takeTwoAndDropSecond)
         .runForeach(_.flow.join(Flow[ByteString]).run())
 
-      val folder = Source(immutable.Iterable.fill(1000)(ByteString(0)))
+      val folder = Source(immutable.Iterable.fill(100)(ByteString(0)))
         .via(Tcp().outgoingConnection(address))
         .fold(0)(_ + _.size).toMat(Sink.head)(Keep.right)
 
       val total = folder.run()
+
+      awaitAssert(firstClientConnected.future, 2.seconds)
       val rejected = folder.run()
 
-      Await.result(total, 3.seconds) should ===(1000)
+      Await.result(total, 10.seconds) should ===(100)
 
       a[StreamTcpException] should be thrownBy {
-        Await.result(rejected, 5.seconds) should ===(1000)
+        Await.result(rejected, 5.seconds) should ===(100)
       }
     }
   }

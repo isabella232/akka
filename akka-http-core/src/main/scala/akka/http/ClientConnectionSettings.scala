@@ -4,6 +4,9 @@
 
 package akka.http
 
+import java.util.Random
+
+import akka.http.impl.engine.ws.Randoms
 import akka.io.Inet.SocketOption
 
 import scala.concurrent.duration.{ Duration, FiniteDuration }
@@ -21,6 +24,7 @@ final case class ClientConnectionSettings(
   connectingTimeout: FiniteDuration,
   idleTimeout: Duration,
   requestHeaderSizeHint: Int,
+  websocketRandomFactory: () ⇒ Random,
   socketOptions: immutable.Traversable[SocketOption],
   parserSettings: ParserSettings) {
 
@@ -29,14 +33,16 @@ final case class ClientConnectionSettings(
 }
 
 object ClientConnectionSettings extends SettingsCompanion[ClientConnectionSettings]("akka.http.client") {
-  def fromSubConfig(c: Config) = {
+  def fromSubConfig(root: Config, inner: Config) = {
+    val c = inner.withFallback(root.getConfig(prefix))
     apply(
       c.getString("user-agent-header").toOption.map(`User-Agent`(_)),
       c getFiniteDuration "connecting-timeout",
       c getPotentiallyInfiniteDuration "idle-timeout",
       c getIntBytes "request-header-size-hint",
-      SocketOptionSettings fromSubConfig c.getConfig("socket-options"),
-      ParserSettings fromSubConfig c.getConfig("parsing"))
+      Randoms.SecureRandomInstances, // can currently only be overridden from code
+      SocketOptionSettings.fromSubConfig(root, c.getConfig("socket-options")),
+      ParserSettings.fromSubConfig(root, c.getConfig("parsing")))
   }
 
   /**

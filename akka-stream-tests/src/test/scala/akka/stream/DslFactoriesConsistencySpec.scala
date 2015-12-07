@@ -17,9 +17,9 @@ class DslFactoriesConsistencySpec extends WordSpec with Matchers {
     Set("adapt") // the scaladsl -> javadsl bridge
 
   val `scala -> java aliases` =
-    ("apply" → "create") ::
-      ("apply" → "of") ::
-      ("apply" → "from") ::
+    ("apply" -> "create") ::
+      ("apply" -> "of") ::
+      ("apply" -> "from") ::
       ("apply" -> "fromGraph") ::
       ("apply" -> "fromIterator") ::
       ("apply" -> "fromFunctions") ::
@@ -29,6 +29,7 @@ class DslFactoriesConsistencySpec extends WordSpec with Matchers {
   val `scala -> java types` =
     (classOf[scala.collection.immutable.Iterable[_]],   classOf[java.lang.Iterable[_]]) ::
       (classOf[scala.collection.Iterator[_]],           classOf[java.util.Iterator[_]]) ::
+      (classOf[scala.collection.Seq[_]],                classOf[java.util.List[_]]) ::
       (classOf[scala.Function0[_]],                     classOf[akka.japi.function.Creator[_]]) ::
       (classOf[scala.Function0[_]],                     classOf[java.util.concurrent.Callable[_]]) ::
       (classOf[scala.Function0[_]],                     classOf[akka.japi.function.Creator[_]]) ::
@@ -65,11 +66,11 @@ class DslFactoriesConsistencySpec extends WordSpec with Matchers {
   }
 
   val testCases = Seq(
-    TestCase("Source", scaladsl.Source.getClass, javadsl.Source.getClass, classOf[javadsl.SourceCreate]),
-    TestCase("Flow", scaladsl.Flow.getClass, javadsl.Flow.getClass, classOf[javadsl.FlowCreate]),
-    TestCase("Sink", scaladsl.Sink.getClass, javadsl.Sink.getClass, classOf[javadsl.SinkCreate]),
-    TestCase("FlowGraph", scaladsl.FlowGraph.getClass, javadsl.FlowGraph.getClass, classOf[javadsl.GraphCreate]),
-    TestCase("BidiFlow", scaladsl.BidiFlow.getClass, javadsl.BidiFlow.getClass, classOf[javadsl.BidiFlowCreate]),
+    TestCase("Source", scaladsl.Source.getClass, javadsl.Source.getClass),
+    TestCase("Flow", scaladsl.Flow.getClass, javadsl.Flow.getClass),
+    TestCase("Sink", scaladsl.Sink.getClass, javadsl.Sink.getClass),
+    TestCase("BidiFlow", scaladsl.BidiFlow.getClass, javadsl.BidiFlow.getClass),
+    TestCase("GraphDSL", scaladsl.GraphDSL.getClass, javadsl.GraphDSL.getClass, classOf[javadsl.GraphCreate]),
     TestCase("ZipWith", Some(scaladsl.ZipWith.getClass), None, Some(javadsl.ZipWith.getClass)),
     TestCase("Merge", scaladsl.Merge.getClass, javadsl.Merge.getClass),
     TestCase("MergePreferred", scaladsl.MergePreferred.getClass, javadsl.MergePreferred.getClass),
@@ -112,8 +113,8 @@ class DslFactoriesConsistencySpec extends WordSpec with Matchers {
       Ignore(_ == akka.stream.scaladsl.Flow.getClass, _ == "apply", _ == 24, _ ⇒ true),
       Ignore(_ == akka.stream.scaladsl.Sink.getClass, _ == "apply", _ == 24, _ ⇒ true),
       Ignore(_ == akka.stream.scaladsl.BidiFlow.getClass, _ == "apply", _ == 24, _ ⇒ true),
-      Ignore(_ == akka.stream.scaladsl.FlowGraph.getClass, _ == "closed", _ == 24, _ ⇒ true),
-      Ignore(_ == akka.stream.scaladsl.FlowGraph.getClass, _ == "partial", _ == 24, _ ⇒ true),
+      Ignore(_ == akka.stream.scaladsl.GraphDSL.getClass, _ == "runnable", _ == 24, _ ⇒ true),
+      Ignore(_ == akka.stream.scaladsl.GraphDSL.getClass, _ == "create", _ == 24, _ ⇒ true),
       // all generated methods like scaladsl.Sink$.akka$stream$scaladsl$Sink$$newOnCompleteStage$1
       Ignore(_ ⇒ true, _.contains("$"), _ ⇒ true, _ ⇒ true))
 
@@ -126,8 +127,8 @@ class DslFactoriesConsistencySpec extends WordSpec with Matchers {
   /**
    * Rename
    *   createN => create
-   *   closedN => closed
-   *   partialN => partial
+   *   runnableN => runnable
+   *   createN => create
    */
   private val unspecializeName: PartialFunction[Method, Method] = {
     case m ⇒ m.copy(name = m.name.filter(Character.isLetter))
@@ -182,6 +183,7 @@ class DslFactoriesConsistencySpec extends WordSpec with Matchers {
   def returnTypeString(m: Method): String =
     m.returnType.getName.drop("akka.stream.".length)
 
+  import language.existentials
   case class Method(name: String, parameterTypes: List[Class[_]], returnType: Class[_], declaringClass: Class[_])
 
   sealed trait MatchResult {

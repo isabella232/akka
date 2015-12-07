@@ -57,8 +57,8 @@ class ConnectionPoolSpec extends AkkaSpec("""
 
       requestIn.sendNext(HttpRequest(uri = "/") -> 42)
 
-      acceptIncomingConnection()
       responseOutSub.request(1)
+      acceptIncomingConnection()
       val (Success(response), 42) = responseOut.expectNext()
       response.headers should contain(RawHeader("Req-Host", s"$serverHostName:$serverPort"))
     }
@@ -116,8 +116,8 @@ class ConnectionPoolSpec extends AkkaSpec("""
       val (requestIn, responseOut, responseOutSub, hcp) = cachedHostConnectionPool[Int]()
 
       requestIn.sendNext(HttpRequest(uri = "/a") -> 42)
-      acceptIncomingConnection()
       responseOutSub.request(1)
+      acceptIncomingConnection()
       val (Success(response1), 42) = responseOut.expectNext()
       connNr(response1) shouldEqual 1
 
@@ -209,8 +209,8 @@ class ConnectionPoolSpec extends AkkaSpec("""
       val PoolGateway.Running(_, shutdownStartedPromise, shutdownCompletedPromise) = gateway.currentState
       shutdownStartedPromise.isCompleted shouldEqual false
       shutdownCompletedPromise.isCompleted shouldEqual false
-      Await.result(shutdownStartedPromise.future, 1500.millis) shouldEqual () // verify shutdown start (after idle)
-      Await.result(shutdownCompletedPromise.future, 1500.millis) shouldEqual () // verify shutdown completed
+      Await.result(shutdownStartedPromise.future, 1500.millis) // verify shutdown start (after idle)
+      Await.result(shutdownCompletedPromise.future, 1500.millis) // verify shutdown completed
     }
 
     "transparently restart after idle shutdown" in new TestSetup() {
@@ -218,12 +218,12 @@ class ConnectionPoolSpec extends AkkaSpec("""
 
       val gateway = Await.result(hcp.gatewayFuture, 500.millis)
       val PoolGateway.Running(_, _, shutdownCompletedPromise) = gateway.currentState
-      Await.result(shutdownCompletedPromise.future, 1500.millis) shouldEqual () // verify shutdown completed
+      Await.result(shutdownCompletedPromise.future, 1500.millis) // verify shutdown completed
 
       requestIn.sendNext(HttpRequest(uri = "/") -> 42)
 
-      acceptIncomingConnection()
       responseOutSub.request(1)
+      acceptIncomingConnection()
       val (Success(_), 42) = responseOut.expectNext()
     }
   }
@@ -298,12 +298,10 @@ class ConnectionPoolSpec extends AkkaSpec("""
     val incomingConnectionCounter = new AtomicInteger
     val incomingConnections = TestSubscriber.manualProbe[Http.IncomingConnection]
     val incomingConnectionsSub = {
-      val rawBytesInjection = BidiFlow() { b ⇒
-        val top = b.add(Flow[SslTlsOutbound].collect[ByteString] { case SendBytes(x) ⇒ mapServerSideOutboundRawBytes(x) }
-          .transform(StreamUtils.recover { case NoErrorComplete ⇒ ByteString.empty }))
-        val bottom = b.add(Flow[ByteString].map(SessionBytes(null, _)))
-        BidiShape(top.inlet, top.outlet, bottom.inlet, bottom.outlet)
-      }
+      val rawBytesInjection = BidiFlow.fromFlows(
+        Flow[SslTlsOutbound].collect[ByteString] { case SendBytes(x) ⇒ mapServerSideOutboundRawBytes(x) }
+          .transform(StreamUtils.recover { case NoErrorComplete ⇒ ByteString.empty }),
+        Flow[ByteString].map(SessionBytes(null, _)))
       val sink = if (autoAccept) Sink.foreach[Http.IncomingConnection](handleConnection) else Sink(incomingConnections)
       // TODO getHostString in Java7
       Tcp().bind(serverEndpoint.getHostName, serverEndpoint.getPort, idleTimeout = serverSettings.timeouts.idleTimeout)
@@ -348,7 +346,7 @@ class ConnectionPoolSpec extends AkkaSpec("""
     def flowTestBench[T, Mat](poolFlow: Flow[(HttpRequest, T), (Try[HttpResponse], T), Mat]) = {
       val requestIn = TestPublisher.probe[(HttpRequest, T)]()
       val responseOut = TestSubscriber.manualProbe[(Try[HttpResponse], T)]
-      val hcp = Source(requestIn).viaMat(poolFlow)(Keep.right).toMat(Sink(responseOut))(Keep.left).run()
+      val hcp = Source(requestIn).viaMat(poolFlow)(Keep.right).to(Sink(responseOut)).run()
       val responseOutSub = responseOut.expectSubscription()
       (requestIn, responseOut, responseOutSub, hcp)
     }

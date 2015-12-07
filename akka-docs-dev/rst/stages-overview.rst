@@ -12,7 +12,7 @@ All stages stop and propagate the failure downstream as soon as any of their ups
 is used. This happens to ensure reliable teardown of streams and cleanup when failures happen. Failures are meant to
 be to model unrecoverable conditions, therefore they are always eagerly propagated.
 For in-band error handling of normal errors (dropping elements if a map fails for example) you should use the
-upervision support, or explicitly wrap your element types in a proper container that can express error or success
+supervision support, or explicitly wrap your element types in a proper container that can express error or success
 states (for example ``Try`` in Scala).
 
 Custom components are not covered by this table since their semantics are defined by the user.
@@ -34,6 +34,7 @@ mapConcat              the mapping function returns an element or there are stil
 filter                 the given predicate returns true for the element                                                                            the given predicate returns true for the element and downstream backpressures                                                   upstream completes
 collect                the provided partial function is defined for the element                                                                    the partial function is defined for the element and downstream backpressures                                                    upstream completes
 grouped                the specified number of elements has been accumulated or upstream completed                                                 a group has been assembled and downstream backpressures                                                                         upstream completes
+sliding                the specified number of elements has been accumulated or upstream completed                                                 a group has been assembled and downstream backpressures                                                                         upstream completes
 scan                   the function scanning the element returns a new element                                                                     downstream backpressures                                                                                                        upstream completes
 fold                   upstream completes                                                                                                          downstream backpressures                                                                                                        upstream completes
 drop                   the specified number of elements has been dropped already                                                                   the specified number of elements has been dropped and downstream backpressures                                                  upstream completes
@@ -48,8 +49,6 @@ Asynchronous processing stages
 
 These stages encapsulate an asynchronous computation, properly handling backpressure while taking care of the asynchronous
 operation at the same time (usually handling the completion of a Future).
-
-**It is currently not possible to build custom asynchronous processing stages**
 
 =====================  =========================================================================================================================   ==============================================================================================================================  =============================================================================================
 Stage                  Emits when                                                                                                                  Backpressures when                                                                                                              Completes when
@@ -106,13 +105,14 @@ prefixAndTail          the configured number of prefix elements are available. E
 groupBy                an element for which the grouping function returns a group that has not yet been created. Emits the new group                               there is an element pending for a group whose substream backpressures                                                           upstream completes [3]_
 splitWhen              an element for which the provided predicate is true, opening and emitting a new substream for subsequent elements                           there is an element pending for the next substream, but the previous is not fully consumed yet, or the substream backpressures  upstream completes [3]_
 splitAfter             an element passes through. When the provided predicate is true it emitts the element * and opens a new substream for subsequent element     there is an element pending for the next substream, but the previous is not fully consumed yet, or the substream backpressures  upstream completes [3]_
-flatten (Concat)       the current consumed substream has an element available                                                                                     downstream backpressures                                                                                                        upstream completes and all consumed substreams complete
+flatMapConcat          the current consumed substream has an element available                                                                                     downstream backpressures                                                                                                        upstream completes and all consumed substreams complete
+flatMapMerge           one of the currently consumed substreams has an element available                                                                           downstream backpressures                                                                                                        upstream completes and all consumed substreams complete
 =====================  =========================================================================================================================================   ==============================================================================================================================  =====================================================================================
 
 Fan-in stages
 ^^^^^^^^^^^^^
 
-Most of these stages can be expressible as a ``FlexiMerge``. These stages take multiple streams as their input and provide
+Most of these stages can be expressible as a ``GraphStage``. These stages take multiple streams as their input and provide
 a single output combining the elements from all of the inputs in different ways.
 
 **The custom fan-in stages that can be built currently are limited**
@@ -120,17 +120,19 @@ a single output combining the elements from all of the inputs in different ways.
 =====================  =========================================================================================================================   ==============================================================================================================================  =====================================================================================
 Stage                  Emits when                                                                                                                  Backpressures when                                                                                                              Completes when
 =====================  =========================================================================================================================   ==============================================================================================================================  =====================================================================================
-merge                  one of the inputs has an element available                                                                                  downstream backpressures                                                                                                        all upstreams complete
-mergePreferred         one of the inputs has an element available, preferring a defined input if multiple have elements available                  downstream backpressures                                                                                                        all upstreams complete
+merge                  one of the inputs has an element available                                                                                  downstream backpressures                                                                                                        all upstreams complete (*)
+mergePreferred         one of the inputs has an element available, preferring a defined input if multiple have elements available                  downstream backpressures                                                                                                        all upstreams complete (*)
 zip                    all of the inputs has an element available                                                                                  downstream backpressures                                                                                                        any upstream completes
 zipWith                all of the inputs has an element available                                                                                  downstream backpressures                                                                                                        any upstream completes
 concat                 the current stream has an element available; if the current input completes, it tries the next one                          downstream backpressures                                                                                                        all upstreams complete
 =====================  =========================================================================================================================   ==============================================================================================================================  =====================================================================================
 
+(*) This behavior is changeable to completing when any upstream completes by setting ``eagerClose=true``.
+
 Fan-out stages
 ^^^^^^^^^^^^^^
 
-Most of these stages can be expressible as a ``FlexiRoute``. These have one input and multiple outputs. They might
+Most of these stages can be expressible as a ``GraphStage``. These have one input and multiple outputs. They might
 route the elements between different outputs, or emit elements on multiple outputs at the same time.
 
 **The custom fan-out stages that can be built currently are limited**

@@ -76,26 +76,28 @@ class CompositionDocSpec extends AkkaSpec {
   "complex graph" in {
     // format: OFF
     //#complex-graph
-    import FlowGraph.Implicits._
-    FlowGraph.closed() { implicit builder =>
-      val A: Outlet[Int]                  = builder.add(Source.single(0))
+    import GraphDSL.Implicits._
+    RunnableGraph.fromGraph(GraphDSL.create() { implicit builder =>
+      val A: Outlet[Int]                  = builder.add(Source.single(0)).outlet
       val B: UniformFanOutShape[Int, Int] = builder.add(Broadcast[Int](2))
       val C: UniformFanInShape[Int, Int]  = builder.add(Merge[Int](2))
       val D: FlowShape[Int, Int]          = builder.add(Flow[Int].map(_ + 1))
       val E: UniformFanOutShape[Int, Int] = builder.add(Balance[Int](2))
       val F: UniformFanInShape[Int, Int]  = builder.add(Merge[Int](2))
-      val G: Inlet[Any]                   = builder.add(Sink.foreach(println))
+      val G: Inlet[Any]                   = builder.add(Sink.foreach(println)).inlet
 
                     C     <~      F
       A  ~>  B  ~>  C     ~>      F
              B  ~>  D  ~>  E  ~>  F
                            E  ~>  G
-    }
+
+      ClosedShape
+    })
     //#complex-graph
 
     //#complex-graph-alt
-    import FlowGraph.Implicits._
-    FlowGraph.closed() { implicit builder =>
+    import GraphDSL.Implicits._
+    RunnableGraph.fromGraph(GraphDSL.create() { implicit builder =>
       val B = builder.add(Broadcast[Int](2))
       val C = builder.add(Merge[Int](2))
       val E = builder.add(Balance[Int](2))
@@ -106,7 +108,8 @@ class CompositionDocSpec extends AkkaSpec {
 
       B.out(1).map(_ + 1) ~> E.in; E.out(0) ~> F.in(1)
       E.out(1) ~> Sink.foreach(println)
-    }
+      ClosedShape
+    })
     //#complex-graph-alt
     // format: ON
   }
@@ -114,8 +117,8 @@ class CompositionDocSpec extends AkkaSpec {
   "partial graph" in {
     // format: OFF
     //#partial-graph
-    import FlowGraph.Implicits._
-    val partial = FlowGraph.partial() { implicit builder =>
+    import GraphDSL.Implicits._
+    val partial = GraphDSL.create() { implicit builder =>
       val B = builder.add(Broadcast[Int](2))
       val C = builder.add(Merge[Int](2))
       val E = builder.add(Balance[Int](2))
@@ -137,17 +140,17 @@ class CompositionDocSpec extends AkkaSpec {
     //#partial-flow-dsl
     // Convert the partial graph of FlowShape to a Flow to get
     // access to the fluid DSL (for example to be able to call .filter())
-    val flow = Flow.wrap(partial)
+    val flow = Flow.fromGraph(partial)
 
     // Simple way to create a graph backed Source
-    val source = Source() { implicit builder =>
+    val source = Source.fromGraph( GraphDSL.create() { implicit builder =>
       val merge = builder.add(Merge[Int](2))
       Source.single(0)      ~> merge
       Source(List(2, 3, 4)) ~> merge
 
       // Exposing exactly one output port
-      merge.out
-    }
+      SourceShape(merge.out)
+    })
 
     // Building a Sink with a nested Flow, using the fluid DSL
     val sink = {
@@ -164,22 +167,24 @@ class CompositionDocSpec extends AkkaSpec {
   "closed graph" in {
     //#embed-closed
     val closed1 = Source.single(0).to(Sink.foreach(println))
-    val closed2 = FlowGraph.closed() { implicit builder =>
+    val closed2 = RunnableGraph.fromGraph(GraphDSL.create() { implicit builder =>
       val embeddedClosed: ClosedShape = builder.add(closed1)
-    }
+      // …
+      embeddedClosed
+    })
     //#embed-closed
   }
 
   "materialized values" in {
     //#mat-combine-1
-    // Materializes to Promise[Unit]                                          (red)
-    val source: Source[Int, Promise[Unit]] = Source.lazyEmpty[Int]
+    // Materializes to Promise[Option[Int]]                                   (red)
+    val source: Source[Int, Promise[Option[Int]]] = Source.maybe[Int]
 
     // Materializes to Unit                                                   (black)
     val flow1: Flow[Int, Int, Unit] = Flow[Int].take(100)
 
-    // Materializes to Promise[Unit]                                          (red)
-    val nestedSource: Source[Int, Promise[Unit]] =
+    // Materializes to Promise[Int]                                          (red)
+    val nestedSource: Source[Int, Promise[Option[Int]]] =
       source.viaMat(flow1)(Keep.left).named("nestedSource")
     //#mat-combine-1
 
@@ -206,11 +211,11 @@ class CompositionDocSpec extends AkkaSpec {
     //#mat-combine-3
 
     //#mat-combine-4
-    case class MyClass(private val p: Promise[Unit], conn: OutgoingConnection) {
-      def close() = p.success(())
+    case class MyClass(private val p: Promise[Option[Int]], conn: OutgoingConnection) {
+      def close() = p.trySuccess(None)
     }
 
-    def f(p: Promise[Unit],
+    def f(p: Promise[Option[Int]],
           rest: (Future[OutgoingConnection], Future[String])): Future[MyClass] = {
 
       val connFuture = rest._1

@@ -49,7 +49,7 @@ private[parser] trait LinkHeader { this: Parser with CommonRules with CommonActi
   ////////////////////////////// helpers ///////////////////////////////////
 
   def UriReference(terminationChar: Char) = rule {
-    capture(oneOrMore(!terminationChar ~ VCHAR)) ~> (new UriParser(_).parseUriReference())
+    capture(oneOrMore(!terminationChar ~ VCHAR)) ~> (newUriParser(_).parseUriReference())
   }
 
   def URI = rule {
@@ -62,7 +62,7 @@ private[parser] trait LinkHeader { this: Parser with CommonRules with CommonActi
     }
   }
 
-  def `link-media-type` = rule { `media-type` ~> ((mt, st, pm) ⇒ getMediaType(mt, st, pm.toMap)) }
+  def `link-media-type` = rule { `media-type` ~> ((mt, st, pm) ⇒ getMediaType(mt, st, pm contains "charset", pm.toMap)) }
 
   // filter out subsequent `rel`, `media`, `title`, `type` and `type*` params
   @tailrec private def sanitize(params: Seq[LinkParam], result: Seq[LinkParam] = Nil, seenRel: Boolean = false,

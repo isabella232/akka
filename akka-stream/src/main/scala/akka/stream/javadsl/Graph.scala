@@ -5,74 +5,95 @@ package akka.stream.javadsl
 
 import akka.stream._
 import akka.japi.Pair
+import scala.annotation.unchecked.uncheckedVariance
+import akka.stream.impl.ConstantFun
 
 /**
  * Merge several streams, taking elements as they arrive from input streams
  * (picking randomly when several have elements ready).
  *
- * When building the [[FlowGraph]] you must connect one or more input sources
- * and one output sink to the `Merge` vertex.
- *
- * Note that a junction instance describes exactly one place (vertex) in the `FlowGraph`
- * that multiple flows can be attached to; if you want to have multiple independent
- * junctions within the same `FlowGraph` then you will have to create multiple such
- * instances.
- *
  * '''Emits when''' one of the inputs has an element available
  *
  * '''Backpressures when''' downstream backpressures
  *
- * '''Completes when''' all upstreams complete
+ * '''Completes when''' all upstreams complete (eagerClose=false) or one upstream completes (eagerClose=true)
  *
  * '''Cancels when''' downstream cancels
  */
 object Merge {
 
   /**
-   * Create a new `Merge` vertex with the specified output type.
+   * Create a new `Merge` stage with the specified output type.
    */
   def create[T](inputPorts: Int): Graph[UniformFanInShape[T, T], Unit] =
     scaladsl.Merge(inputPorts)
 
   /**
-   * Create a new `Merge` vertex with the specified output type.
+   * Create a new `Merge` stage with the specified output type.
    */
   def create[T](clazz: Class[T], inputPorts: Int): Graph[UniformFanInShape[T, T], Unit] = create(inputPorts)
 
+  /**
+   * Create a new `Merge` stage with the specified output type.
+   *
+   * @param eagerClose set to true in order to make this stage eagerly
+   *                   finish as soon as one of its inputs completes
+   */
+  def create[T](inputPorts: Int, eagerClose: Boolean): Graph[UniformFanInShape[T, T], Unit] =
+    scaladsl.Merge(inputPorts, eagerClose = eagerClose)
+
+  /**
+   * Create a new `Merge` stage with the specified output type.
+   *
+   * @param eagerClose set to true in order to make this stage eagerly
+   *                   finish as soon as one of its inputs completes
+   */
+  def create[T](clazz: Class[T], inputPorts: Int, eagerClose: Boolean): Graph[UniformFanInShape[T, T], Unit] =
+    create(inputPorts, eagerClose)
 }
 
 /**
  * Merge several streams, taking elements as they arrive from input streams
  * (picking from preferred when several have elements ready).
  *
- * When building the [[FlowGraph]] you must connect one or more input streams
- * and one output sink to the `Merge` vertex.
- *
- * Note that a junction instance describes exactly one place (vertex) in the `FlowGraph`
- * that multiple flows can be attached to; if you want to have multiple independent
- * junctions within the same `FlowGraph` then you will have to create multiple such
- * instances.
- *
  * '''Emits when''' one of the inputs has an element available, preferring
  * a specified input if multiple have elements available
  *
  * '''Backpressures when''' downstream backpressures
  *
- * '''Completes when''' all upstreams complete
+ * '''Completes when''' all upstreams complete (eagerClose=false) or one upstream completes (eagerClose=true)
  *
  * '''Cancels when''' downstream cancels
  */
 object MergePreferred {
   /**
-   * Create a new `MergePreferred` vertex with the specified output type.
+   * Create a new `MergePreferred` stage with the specified output type.
    */
   def create[T](secondaryPorts: Int): Graph[scaladsl.MergePreferred.MergePreferredShape[T], Unit] =
     scaladsl.MergePreferred(secondaryPorts)
 
   /**
-   * Create a new `MergePreferred` vertex with the specified output type.
+   * Create a new `MergePreferred` stage with the specified output type.
    */
   def create[T](clazz: Class[T], secondaryPorts: Int): Graph[scaladsl.MergePreferred.MergePreferredShape[T], Unit] = create(secondaryPorts)
+
+  /**
+   * Create a new `MergePreferred` stage with the specified output type.
+   *
+   * @param eagerClose set to true in order to make this stage eagerly
+   *                   finish as soon as one of its inputs completes
+   */
+  def create[T](secondaryPorts: Int, eagerClose: Boolean): Graph[scaladsl.MergePreferred.MergePreferredShape[T], Unit] =
+    scaladsl.MergePreferred(secondaryPorts, eagerClose = eagerClose)
+
+  /**
+   * Create a new `MergePreferred` stage with the specified output type.
+   *
+   * @param eagerClose set to true in order to make this stage eagerly
+   *                   finish as soon as one of its inputs completes
+   */
+  def create[T](clazz: Class[T], secondaryPorts: Int, eagerClose: Boolean): Graph[scaladsl.MergePreferred.MergePreferredShape[T], Unit] =
+    create(secondaryPorts, eagerClose)
 
 }
 
@@ -80,11 +101,6 @@ object MergePreferred {
  * Fan-out the stream to several streams. emitting each incoming upstream element to all downstream consumers.
  * It will not shutdown until the subscriptions for at least
  * two downstream subscribers have been established.
- *
- * Note that a junction instance describes exactly one place (vertex) in the `FlowGraph`
- * that multiple flows can be attached to; if you want to have multiple independent
- * junctions within the same `FlowGraph` then you will have to create multiple such
- * instances.
  *
  * '''Emits when''' all of the outputs stops backpressuring and there is an input element available
  *
@@ -97,23 +113,23 @@ object MergePreferred {
  */
 object Broadcast {
   /**
-   * Create a new `Broadcast` vertex with the specified input type.
+   * Create a new `Broadcast` stage with the specified input type.
    *
    * @param outputCount number of output ports
    * @param eagerCancel if true, broadcast cancels upstream if any of its downstreams cancel.
    */
   def create[T](outputCount: Int, eagerCancel: Boolean): Graph[UniformFanOutShape[T, T], Unit] =
-    scaladsl.Broadcast(outputCount)
+    scaladsl.Broadcast(outputCount, eagerCancel = eagerCancel)
 
   /**
-   * Create a new `Broadcast` vertex with the specified input type.
+   * Create a new `Broadcast` stage with the specified input type.
    *
    * @param outputCount number of output ports
    */
   def create[T](outputCount: Int): Graph[UniformFanOutShape[T, T], Unit] = create(outputCount, eagerCancel = false)
 
   /**
-   * Create a new `Broadcast` vertex with the specified input type.
+   * Create a new `Broadcast` stage with the specified input type.
    */
   def create[T](clazz: Class[T], outputCount: Int): Graph[UniformFanOutShape[T, T], Unit] = create(outputCount)
 
@@ -123,11 +139,6 @@ object Broadcast {
  * Fan-out the stream to several streams. Each upstream element is emitted to the first available downstream consumer.
  * It will not shutdown until the subscriptions for at least
  * two downstream subscribers have been established.
- *
- * Note that a junction instance describes exactly one place (vertex) in the `FlowGraph`
- * that multiple flows can be attached to; if you want to have multiple independent
- * junctions within the same `FlowGraph` then you will have to create multiple such
- * instances.
  *
  * '''Emits when''' any of the outputs stops backpressuring; emits the element to the first available output
  *
@@ -139,7 +150,7 @@ object Broadcast {
  */
 object Balance {
   /**
-   * Create a new `Balance` vertex with the specified input type.
+   * Create a new `Balance` stage with the specified input type.
    *
    * @param waitForAllDownstreams if `true` it will not start emitting
    *   elements to downstream outputs until all of them have requested at least one element
@@ -148,17 +159,19 @@ object Balance {
     scaladsl.Balance(outputCount, waitForAllDownstreams)
 
   /**
-   * Create a new `Balance` vertex with the specified input type.
+   * Create a new `Balance` stage with the specified input type.
    */
-  def create[T](outputCount: Int): Graph[UniformFanOutShape[T, T], Unit] = create(outputCount, false)
+  def create[T](outputCount: Int): Graph[UniformFanOutShape[T, T], Unit] =
+    create(outputCount, waitForAllDownstreams = false)
 
   /**
-   * Create a new `Balance` vertex with the specified input type.
+   * Create a new `Balance` stage with the specified input type.
    */
-  def create[T](clazz: Class[T], outputCount: Int): Graph[UniformFanOutShape[T, T], Unit] = create(outputCount)
+  def create[T](clazz: Class[T], outputCount: Int): Graph[UniformFanOutShape[T, T], Unit] =
+    create(outputCount)
 
   /**
-   * Create a new `Balance` vertex with the specified input type.
+   * Create a new `Balance` stage with the specified input type.
    *
    * @param waitForAllDownstreams if `true` it will not start emitting
    *   elements to downstream outputs until all of them have requested at least one element
@@ -185,7 +198,7 @@ object Zip {
   import akka.japi.Pair
 
   /**
-   * Create a new `Zip` vertex with the specified input types and zipping-function
+   * Create a new `Zip` stage with the specified input types and zipping-function
    * which creates `akka.japi.Pair`s.
    */
   def create[A, B]: Graph[FanInShape2[A, B, A Pair B], Unit] =
@@ -212,13 +225,13 @@ object Unzip {
   import akka.japi.function.Function
 
   /**
-   * Creates a new `Unzip` vertex with the specified output types.
+   * Creates a new `Unzip` stage with the specified output types.
    */
   def create[A, B](): Graph[FanOutShape2[A Pair B, A, B], Unit] =
-    UnzipWith.create(JavaIdentityFunction.asInstanceOf[Function[Pair[A, B], Pair[A, B]]])
+    UnzipWith.create(ConstantFun.javaIdentityFunction[Pair[A, B]])
 
   /**
-   * Creates a new `Unzip` vertex with the specified output types.
+   * Creates a new `Unzip` stage with the specified output types.
    */
   def create[A, B](left: Class[A], right: Class[B]): Graph[FanOutShape2[A Pair B, A, B], Unit] = create[A, B]()
 
@@ -228,11 +241,6 @@ object Unzip {
  * Takes two streams and outputs an output stream formed from the two input streams
  * by consuming one stream first emitting all of its elements, then consuming the
  * second stream emitting all of its elements.
- *
- * Note that a junction instance describes exactly one place (vertex) in the `FlowGraph`
- * that multiple flows can be attached to; if you want to have multiple independent
- * junctions within the same `FlowGraph` then you will have to create multiple such
- * instances.
  *
  * '''Emits when''' the current stream has an element available; if the current input completes, it tries the next one
  *
@@ -244,18 +252,17 @@ object Unzip {
  */
 object Concat {
   /**
-   * Create a new anonymous `Concat` vertex with the specified input types.
-   * Note that a `Concat` instance can only be used at one place (one vertex)
-   * in the `FlowGraph`. This method creates a new instance every time it
-   * is called and those instances are not `equal`.
+   * Create a new anonymous `Concat` stage with the specified input types.
    */
   def create[T](): Graph[UniformFanInShape[T, T], Unit] = scaladsl.Concat[T]()
 
   /**
-   * Create a new anonymous `Concat` vertex with the specified input types.
-   * Note that a `Concat` instance can only be used at one place (one vertex)
-   * in the `FlowGraph`. This method creates a new instance every time it
-   * is called and those instances are not `equal`.
+   * Create a new anonymous `Concat` stage with the specified input types.
+   */
+  def create[T](inputCount: Int): Graph[UniformFanInShape[T, T], Unit] = scaladsl.Concat[T](inputCount)
+
+  /**
+   * Create a new anonymous `Concat` stage with the specified input types.
    */
   def create[T](clazz: Class[T]): Graph[UniformFanInShape[T, T], Unit] = create()
 
@@ -263,35 +270,25 @@ object Concat {
 
 // flow graph //
 
-object FlowGraph {
-
-  val factory: GraphCreate = new GraphCreate {}
+object GraphDSL extends GraphCreate {
 
   /**
-   * Start building a [[FlowGraph]].
+   * Start building a [[GraphDSL]].
    *
    * The [[Builder]] is mutable and not thread-safe,
-   * thus you should construct your Graph and then share the constructed immutable [[FlowGraph]].
+   * thus you should construct your Graph and then share the constructed immutable [[GraphDSL]].
    */
-  def builder[M](): Builder[M] = new Builder()(new scaladsl.FlowGraph.Builder[M])
+  def builder[M](): Builder[M] = new Builder()(new scaladsl.GraphDSL.Builder[M])
 
-  final class Builder[+Mat]()(private implicit val delegate: scaladsl.FlowGraph.Builder[Mat]) { self ⇒
-    import akka.stream.scaladsl.FlowGraph.Implicits._
-
-    def flow[A, B, M](from: Outlet[A], via: Graph[FlowShape[A, B], M], to: Inlet[B]): Unit = delegate.addEdge(from, via, to)
-
-    def edge[T](from: Outlet[T], to: Inlet[T]): Unit = delegate.addEdge(from, to)
+  final class Builder[+Mat]()(private implicit val delegate: scaladsl.GraphDSL.Builder[Mat]) { self ⇒
+    import akka.stream.scaladsl.GraphDSL.Implicits._
 
     /**
      * Import a graph into this module, performing a deep copy, discarding its
      * materialized value and returning the copied Ports that are now to be
      * connected.
      */
-    def graph[S <: Shape](graph: Graph[S, _]): S = delegate.add(graph)
-
-    def source[T](source: Graph[SourceShape[T], _]): Outlet[T] = delegate.add(source).outlet
-
-    def sink[T](sink: Graph[SinkShape[T], _]): Inlet[T] = delegate.add(sink).inlet
+    def add[S <: Shape](graph: Graph[S, _]): S = delegate.add(graph)
 
     /**
      * Returns an [[Outlet]] that gives access to the materialized value of this graph. Once the graph is materialized
@@ -307,49 +304,39 @@ object FlowGraph {
      *
      * @return The outlet that will emit the materialized value.
      */
-    def materializedValue: Outlet[Mat] = delegate.materializedValue
-
-    def run(mat: Materializer): Unit = delegate.buildRunnable().run()(mat)
+    def materializedValue: Outlet[Mat @uncheckedVariance] = delegate.materializedValue
 
     def from[T](out: Outlet[T]): ForwardOps[T] = new ForwardOps(out)
-    def from[T, M](src: Graph[SourceShape[T], M]): ForwardOps[T] = new ForwardOps(delegate.add(src).outlet)
     def from[T](src: SourceShape[T]): ForwardOps[T] = new ForwardOps(src.outlet)
     def from[I, O](f: FlowShape[I, O]): ForwardOps[O] = new ForwardOps(f.outlet)
     def from[I, O](j: UniformFanInShape[I, O]): ForwardOps[O] = new ForwardOps(j.out)
     def from[I, O](j: UniformFanOutShape[I, O]): ForwardOps[O] = new ForwardOps(findOut(delegate, j, 0))
 
     def to[T](in: Inlet[T]): ReverseOps[T] = new ReverseOps(in)
-    def to[T, M](dst: Graph[SinkShape[T], M]): ReverseOps[T] = new ReverseOps(delegate.add(dst).inlet)
     def to[T](dst: SinkShape[T]): ReverseOps[T] = new ReverseOps(dst.inlet)
     def to[I, O](f: FlowShape[I, O]): ReverseOps[I] = new ReverseOps(f.inlet)
     def to[I, O](j: UniformFanInShape[I, O]): ReverseOps[I] = new ReverseOps(findIn(delegate, j, 0))
     def to[I, O](j: UniformFanOutShape[I, O]): ReverseOps[I] = new ReverseOps(j.in)
 
     final class ForwardOps[T](out: Outlet[T]) {
-      def to(in: Inlet[T]): Builder[Mat] = { out ~> in; self }
-      def to[M](dst: Graph[SinkShape[T], M]): Builder[Mat] = { out ~> dst; self }
-      def to(dst: SinkShape[T]): Builder[Mat] = { out ~> dst; self }
-      def to[U](f: FlowShape[T, U]): Builder[Mat] = { out ~> f; self }
-      def to[U](j: UniformFanInShape[T, U]): Builder[Mat] = { out ~> j; self }
-      def to[U](j: UniformFanOutShape[T, U]): Builder[Mat] = { out ~> j; self }
-      def via[U, M](f: Graph[FlowShape[T, U], M]): ForwardOps[U] = from((out ~> f).outlet)
-      def via[U](f: FlowShape[T, U]): ForwardOps[U] = from((out ~> f).outlet)
-      def via[U](j: UniformFanInShape[T, U]): ForwardOps[U] = from((out ~> j).outlet)
-      def via[U](j: UniformFanOutShape[T, U]): ForwardOps[U] = from((out ~> j).outlet)
+      def toInlet(in: Inlet[_ >: T]): Builder[Mat] = { out ~> in; self }
+      def to(dst: SinkShape[_ >: T]): Builder[Mat] = { out ~> dst; self }
+      def toFanIn[U](j: UniformFanInShape[_ >: T, U]): Builder[Mat] = { out ~> j; self }
+      def toFanOut[U](j: UniformFanOutShape[_ >: T, U]): Builder[Mat] = { out ~> j; self }
+      def via[U](f: FlowShape[_ >: T, U]): ForwardOps[U] = from((out ~> f).outlet)
+      def viaFanIn[U](j: UniformFanInShape[_ >: T, U]): ForwardOps[U] = from((out ~> j).outlet)
+      def viaFanOut[U](j: UniformFanOutShape[_ >: T, U]): ForwardOps[U] = from((out ~> j).outlet)
       def out(): Outlet[T] = out
     }
 
     final class ReverseOps[T](out: Inlet[T]) {
-      def from(dst: Outlet[T]): Builder[Mat] = { out <~ dst; self }
-      def from[M](dst: Graph[SourceShape[T], M]): Builder[Mat] = { out <~ dst; self }
-      def from(dst: SourceShape[T]): Builder[Mat] = { out <~ dst; self }
-      def from[U](f: FlowShape[U, T]): Builder[Mat] = { out <~ f; self }
-      def from[U](j: UniformFanInShape[U, T]): Builder[Mat] = { out <~ j; self }
-      def from[U](j: UniformFanOutShape[U, T]): Builder[Mat] = { out <~ j; self }
-      def via[U, M](f: Graph[FlowShape[U, T], M]): ReverseOps[U] = to((out <~ f).inlet)
-      def via[U](f: FlowShape[U, T]): ReverseOps[U] = to((out <~ f).inlet)
-      def via[U](j: UniformFanInShape[U, T]): ReverseOps[U] = to((out <~ j).inlet)
-      def via[U](j: UniformFanOutShape[U, T]): ReverseOps[U] = to((out <~ j).inlet)
+      def fromOutlet(dst: Outlet[_ <: T]): Builder[Mat] = { out <~ dst; self }
+      def from(dst: SourceShape[_ <: T]): Builder[Mat] = { out <~ dst; self }
+      def fromFanIn[U](j: UniformFanInShape[U, _ <: T]): Builder[Mat] = { out <~ j; self }
+      def fromFanOut[U](j: UniformFanOutShape[U, _ <: T]): Builder[Mat] = { out <~ j; self }
+      def via[U](f: FlowShape[U, _ <: T]): ReverseOps[U] = to((out <~ f).inlet)
+      def viaFanIn[U](j: UniformFanInShape[U, _ <: T]): ReverseOps[U] = to((out <~ j).inlet)
+      def viaFanOut[U](j: UniformFanOutShape[U, _ <: T]): ReverseOps[U] = to((out <~ j).inlet)
     }
   }
 }

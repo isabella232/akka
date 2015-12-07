@@ -43,14 +43,22 @@ object WSTestUtils {
     val lengthByte = lengthByteComponent | maskMask
     ByteString(opcodeByte.toByte, lengthByte.toByte) ++ lengthBytes ++ maskBytes
   }
-  def closeFrame(closeCode: Int, mask: Boolean): ByteString =
+  def frame(opcode: Opcode, data: ByteString, fin: Boolean, mask: Boolean): ByteString =
     if (mask) {
       val mask = Random.nextInt()
-      frameHeader(Opcode.Close, 2, fin = true, mask = Some(mask)) ++
-        maskedBytes(shortBE(closeCode), mask)._1
+      frameHeader(opcode, data.size, fin, mask = Some(mask)) ++
+        maskedBytes(data, mask)._1
     } else
-      frameHeader(Opcode.Close, 2, fin = true) ++
-        shortBE(closeCode)
+      frameHeader(opcode, data.size, fin, mask = None) ++ data
+
+  def closeFrame(closeCode: Int, mask: Boolean, msg: String = ""): ByteString =
+    closeFrame(closeCode, mask, ByteString(msg, "UTF-8"))
+
+  def closeFrame(closeCode: Int, mask: Boolean, msgBytes: ByteString): ByteString =
+    frame(Opcode.Close, closeFrameData(closeCode, msgBytes), fin = true, mask)
+
+  def closeFrameData(closeCode: Int, msgBytes: ByteString = ByteString.empty): ByteString =
+    shortBE(closeCode) ++ msgBytes
 
   def maskedASCII(str: String, mask: Int): (ByteString, Int) =
     FrameEventParser.mask(ByteString(str, "ASCII"), mask)

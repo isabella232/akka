@@ -12,6 +12,7 @@ import org.scalatest.{ FreeSpec, Matchers, BeforeAndAfterAll }
 import org.scalatest.matchers.Matcher
 import akka.actor.ActorSystem
 import akka.event.NoLogging
+import akka.util.ByteString
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.model.headers._
 import akka.http.impl.util._
@@ -99,7 +100,7 @@ class RequestRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll 
         HttpRequest(PUT, "/abc/xyz", List(
           RawHeader("X-Fancy", "naa"),
           RawHeader("Cache-Control", "public"),
-          Host("spray.io")), HttpEntity(ContentTypes.NoContentType, "The content please!")) should renderTo {
+          Host("spray.io")), HttpEntity(ContentTypes.NoContentType, ByteString("The content please!"))) should renderTo {
           """PUT /abc/xyz HTTP/1.1
             |X-Fancy: naa
             |Cache-Control: public
@@ -124,17 +125,27 @@ class RequestRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll 
               |The content please!"""
           }
       }
+
+      "DELETE request without headers and without body" in new TestSetup() {
+        HttpRequest(DELETE, "/abc") should renderTo {
+          """DELETE /abc HTTP/1.1
+            |Host: test.com:8080
+            |User-Agent: akka-http/1.0.0
+            |
+            |"""
+        }
+      }
     }
 
     "proper render a chunked" - {
 
       "PUT request with empty chunk stream and custom Content-Type" in new TestSetup() {
         pending // Disabled until #15981 is fixed
-        HttpRequest(PUT, "/abc/xyz", entity = Chunked(ContentTypes.`text/plain`, source())) should renderTo {
+        HttpRequest(PUT, "/abc/xyz", entity = Chunked(ContentTypes.`text/plain(UTF-8)`, source())) should renderTo {
           """PUT /abc/xyz HTTP/1.1
             |Host: test.com:8080
             |User-Agent: akka-http/1.0.0
-            |Content-Type: text/plain
+            |Content-Type: text/plain; charset=UTF-8
             |Content-Length: 0
             |
             |"""
@@ -142,13 +153,13 @@ class RequestRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll 
       }
 
       "POST request with body" in new TestSetup() {
-        HttpRequest(POST, "/abc/xyz", entity = Chunked(ContentTypes.`text/plain`,
+        HttpRequest(POST, "/abc/xyz", entity = Chunked(ContentTypes.`text/plain(UTF-8)`,
           source("XXXX", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"))) should renderTo {
           """POST /abc/xyz HTTP/1.1
               |Host: test.com:8080
               |User-Agent: akka-http/1.0.0
               |Transfer-Encoding: chunked
-              |Content-Type: text/plain
+              |Content-Type: text/plain; charset=UTF-8
               |
               |4
               |XXXX
@@ -167,13 +178,13 @@ class RequestRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll 
             ChunkStreamPart("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
             LastChunk)
 
-        HttpRequest(POST, "/abc/xyz", entity = Chunked(ContentTypes.`text/plain`,
+        HttpRequest(POST, "/abc/xyz", entity = Chunked(ContentTypes.`text/plain(UTF-8)`,
           Source(chunks))) should renderTo {
           """POST /abc/xyz HTTP/1.1
             |Host: test.com:8080
             |User-Agent: akka-http/1.0.0
             |Transfer-Encoding: chunked
-            |Content-Type: text/plain
+            |Content-Type: text/plain; charset=UTF-8
             |
             |4
             |XXXX
@@ -193,13 +204,13 @@ class RequestRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll 
             LastChunk,
             LastChunk)
 
-        HttpRequest(POST, "/abc/xyz", entity = Chunked(ContentTypes.`text/plain`,
+        HttpRequest(POST, "/abc/xyz", entity = Chunked(ContentTypes.`text/plain(UTF-8)`,
           Source(chunks))) should renderTo {
           """POST /abc/xyz HTTP/1.1
             |Host: test.com:8080
             |User-Agent: akka-http/1.0.0
             |Transfer-Encoding: chunked
-            |Content-Type: text/plain
+            |Content-Type: text/plain; charset=UTF-8
             |
             |4
             |XXXX
@@ -213,12 +224,12 @@ class RequestRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll 
 
       "POST request with custom Transfer-Encoding header" in new TestSetup() {
         HttpRequest(POST, "/abc/xyz", List(`Transfer-Encoding`(TransferEncodings.Extension("fancy"))),
-          entity = Chunked(ContentTypes.`text/plain`, source("XXXX", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"))) should renderTo {
+          entity = Chunked(ContentTypes.`text/plain(UTF-8)`, source("XXXX", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"))) should renderTo {
             """POST /abc/xyz HTTP/1.1
               |Transfer-Encoding: fancy, chunked
               |Host: test.com:8080
               |User-Agent: akka-http/1.0.0
-              |Content-Type: text/plain
+              |Content-Type: text/plain; charset=UTF-8
               |
               |4
               |XXXX
@@ -311,10 +322,7 @@ class RequestRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll 
 
     def renderTo(expected: String): Matcher[HttpRequest] =
       equal(expected.stripMarginWithNewline("\r\n")).matcher[String] compose { request ⇒
-        val renderer = newRenderer
-        val byteStringSource = Await.result(Source.single(RequestRenderingContext(request, Host(serverAddress)))
-          .transform(() ⇒ renderer).named("renderer")
-          .runWith(Sink.head), 1.second)
+        val byteStringSource = renderToSource(RequestRenderingContext(request, Host(serverAddress)))
         val future = byteStringSource.grouped(1000).runWith(Sink.head).map(_.reduceLeft(_ ++ _).utf8String)
         Await.result(future, 250.millis)
       }

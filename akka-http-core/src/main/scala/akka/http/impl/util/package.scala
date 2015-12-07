@@ -11,7 +11,7 @@ import language.higherKinds
 import java.nio.charset.Charset
 import java.util.concurrent.atomic.AtomicInteger
 import com.typesafe.config.Config
-import akka.stream.scaladsl.{ FlattenStrategy, Flow, Source }
+import akka.stream.scaladsl.{ Flow, Source }
 import akka.stream.stage._
 import scala.concurrent.duration.Duration
 import scala.concurrent.{ Await, Future }
@@ -44,17 +44,16 @@ package object util {
     new EnhancedInetSocketAddress(address)
   private[http] implicit def enhanceByteStrings(byteStrings: TraversableOnce[ByteString]): EnhancedByteStringTraversableOnce =
     new EnhancedByteStringTraversableOnce(byteStrings)
-  private[http] implicit def enhanceByteStrings[Mat](byteStrings: Source[ByteString, Mat]): EnhancedByteStringSource[Mat] =
+  private[http] implicit def enhanceByteStringsMat[Mat](byteStrings: Source[ByteString, Mat]): EnhancedByteStringSource[Mat] =
     new EnhancedByteStringSource(byteStrings)
 
   private[http] def headAndTailFlow[T]: Flow[Source[T, Any], (T, Source[T, Unit]), Unit] =
     Flow[Source[T, Any]]
-      .map {
+      .flatMapConcat {
         _.prefixAndTail(1)
           .filter(_._1.nonEmpty)
           .map { case (prefix, tail) ⇒ (prefix.head, tail) }
       }
-      .flatten(FlattenStrategy.concat)
 
   private[http] def printEvent[T](marker: String): Flow[T, T, Unit] =
     Flow[T].transform(() ⇒ new PushPullStage[T, T] {
@@ -127,13 +126,55 @@ package object util {
 
 package util {
 
-  private[http] class EventStreamLogger extends Actor with ActorLogging {
-    def receive = { case x ⇒ log.warning(x.toString) }
+  import akka.http.scaladsl.model.{ ContentType, HttpEntity }
+  import akka.stream.{ Attributes, Outlet, Inlet, FlowShape }
+  import scala.concurrent.duration.FiniteDuration
+
+  private[http] class ToStrict(timeout: FiniteDuration, contentType: ContentType)
+    extends GraphStage[FlowShape[ByteString, HttpEntity.Strict]] {
+
+    val in = Inlet[ByteString]("in")
+    val out = Outlet[HttpEntity.Strict]("out")
+    override val shape = FlowShape(in, out)
+
+    override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new TimerGraphStageLogic(shape) {
+      var bytes = ByteString.newBuilder
+      private var emptyStream = false
+
+      override def preStart(): Unit = scheduleOnce("ToStrictTimeoutTimer", timeout)
+
+      setHandler(out, new OutHandler {
+        override def onPull(): Unit = {
+          if (emptyStream) {
+            push(out, HttpEntity.Strict(contentType, ByteString.empty))
+            completeStage()
+          } else pull(in)
+        }
+      })
+
+      setHandler(in, new InHandler {
+        override def onPush(): Unit = {
+          bytes ++= grab(in)
+          pull(in)
+        }
+        override def onUpstreamFinish(): Unit = {
+          if (isAvailable(out)) {
+            push(out, HttpEntity.Strict(contentType, bytes.result()))
+            completeStage()
+          } else emptyStream = true
+        }
+      })
+
+      override def onTimer(key: Any): Unit =
+        failStage(new java.util.concurrent.TimeoutException(
+          s"HttpEntity.toStrict timed out after $timeout while still waiting for outstanding data"))
+    }
+
+    override def toString = "ToStrict"
   }
 
-  // Provisioning of actor names composed of a common prefix + a counter. According to #16613 not in scope as public API.
-  private[http] final class SeqActorName(prefix: String) extends AtomicInteger {
-    def next(): String = prefix + '-' + getAndIncrement()
+  private[http] class EventStreamLogger extends Actor with ActorLogging {
+    def receive = { case x ⇒ log.warning(x.toString) }
   }
 
   private[http] trait LogMessages extends ActorLogging { this: Actor ⇒

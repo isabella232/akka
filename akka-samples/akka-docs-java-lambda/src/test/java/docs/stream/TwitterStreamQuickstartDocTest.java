@@ -279,15 +279,19 @@ public class TwitterStreamQuickstartDocTest {
     final Sink<Hashtag, Future<BoxedUnit>> writeHashtags = Sink.ignore();
 
     //#flow-graph-broadcast
-    FlowGraph.factory().closed(b -> {
-      final UniformFanOutShape<Tweet, Tweet> bcast = b.graph(Broadcast.create(2));
-      final Flow<Tweet, Author, BoxedUnit> toAuthor = Flow.of(Tweet.class).map(t -> t.author);
-      final Flow<Tweet, Hashtag, BoxedUnit> toTags =
-          Flow.of(Tweet.class).mapConcat(t -> new ArrayList<Hashtag>(t.hashtags()));
+    RunnableGraph.fromGraph(GraphDSL.create(b -> {
+      final UniformFanOutShape<Tweet, Tweet> bcast = b.add(Broadcast.create(2));
+      final FlowShape<Tweet, Author> toAuthor =
+    	  b.add(Flow.of(Tweet.class).map(t -> t.author));
+      final FlowShape<Tweet, Hashtag> toTags =
+          b.add(Flow.of(Tweet.class).mapConcat(t -> new ArrayList<Hashtag>(t.hashtags())));
+      final SinkShape<Author> authors = b.add(writeAuthors);
+      final SinkShape<Hashtag> hashtags = b.add(writeHashtags);
 
-      b.from(tweets).via(bcast).via(toAuthor).to(writeAuthors);
-                  b.from(bcast).via(toTags).to(writeHashtags);
-    }).run(mat);
+      b.from(b.add(tweets)).viaFanOut(bcast).via(toAuthor).to(authors);
+                                 b.from(bcast).via(toTags).to(hashtags);
+      return ClosedShape.getInstance();
+    })).run(mat);
     //#flow-graph-broadcast
   }
 

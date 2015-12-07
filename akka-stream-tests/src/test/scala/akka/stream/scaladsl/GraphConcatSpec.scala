@@ -15,7 +15,7 @@ class GraphConcatSpec extends TwoStreamsSetup {
 
   override type Outputs = Int
 
-  override def fixture(b: FlowGraph.Builder[_]): Fixture = new Fixture(b) {
+  override def fixture(b: GraphDSL.Builder[_]): Fixture = new Fixture(b) {
     val concat = b add Concat[Outputs]()
 
     override def left: Inlet[Outputs] = concat.in(0)
@@ -25,12 +25,12 @@ class GraphConcatSpec extends TwoStreamsSetup {
   }
 
   "Concat" must {
-    import FlowGraph.Implicits._
+    import GraphDSL.Implicits._
 
     "work in the happy case" in assertAllStagesStopped {
       val probe = TestSubscriber.manualProbe[Int]()
 
-      FlowGraph.closed() { implicit b ⇒
+      RunnableGraph.fromGraph(GraphDSL.create() { implicit b ⇒
 
         val concat1 = b add Concat[Int]()
         val concat2 = b add Concat[Int]()
@@ -42,7 +42,8 @@ class GraphConcatSpec extends TwoStreamsSetup {
         Source(5 to 10) ~> concat2.in(1)
 
         concat2.out ~> Sink(probe)
-      }.run()
+        ClosedShape
+      }).run()
 
       val subscription = probe.expectSubscription()
 
@@ -140,12 +141,13 @@ class GraphConcatSpec extends TwoStreamsSetup {
       val promise = Promise[Int]()
       val subscriber = TestSubscriber.manualProbe[Int]()
 
-      FlowGraph.closed() { implicit b ⇒
+      RunnableGraph.fromGraph(GraphDSL.create() { implicit b ⇒
         val concat = b add Concat[Int]()
         Source(List(1, 2, 3)) ~> concat.in(0)
         Source(promise.future) ~> concat.in(1)
         concat.out ~> Sink(subscriber)
-      }.run()
+        ClosedShape
+      }).run()
 
       val subscription = subscriber.expectSubscription()
       subscription.request(4)
@@ -154,33 +156,6 @@ class GraphConcatSpec extends TwoStreamsSetup {
       subscriber.expectNext(3)
       promise.failure(TestException)
       subscriber.expectError(TestException)
-    }
-
-    "work with Source DSL" in {
-      val testSource = Source(1 to 5).concat(Source(6 to 10)).grouped(1000)
-      Await.result(testSource.runWith(Sink.head), 3.seconds) should ===(1 to 10)
-
-      val runnable = testSource.toMat(Sink.ignore)(Keep.left)
-      val (m1, m2) = runnable.run()
-      m1.isInstanceOf[Unit] should be(true)
-      m2.isInstanceOf[Unit] should be(true)
-
-      runnable.mapMaterializedValue((_) ⇒ "boo").run() should be("boo")
-
-    }
-
-    "work with Flow DSL" in {
-      val testFlow = Flow[Int].concat(Source(6 to 10)).grouped(1000)
-      Await.result(Source(1 to 5).viaMat(testFlow)(Keep.both).runWith(Sink.head), 3.seconds) should ===(1 to 10)
-
-      val runnable = Source(1 to 5).viaMat(testFlow)(Keep.both).to(Sink.ignore)
-      val (m1, (m2, m3)) = runnable.run()
-      m1.isInstanceOf[Unit] should be(true)
-      m2.isInstanceOf[Unit] should be(true)
-      m3.isInstanceOf[Unit] should be(true)
-
-      runnable.mapMaterializedValue((_) ⇒ "boo").run() should be("boo")
-
     }
   }
 }

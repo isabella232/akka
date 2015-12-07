@@ -31,7 +31,7 @@ class IncomingConnection private[http] (delegate: akka.http.scaladsl.Http.Incomi
    *
    * Use `Flow.join` or one of the handleXXX methods to consume handle requests on this connection.
    */
-  def flow: Flow[HttpResponse, HttpRequest, Unit] = Flow.adapt(delegate.flow).asInstanceOf[Flow[HttpResponse, HttpRequest, Unit]]
+  def flow: Flow[HttpResponse, HttpRequest, Unit] = Flow.fromGraph(delegate.flow).asInstanceOf[Flow[HttpResponse, HttpRequest, Unit]]
 
   /**
    * Handles the connection with the given flow, which is materialized exactly once
@@ -42,15 +42,19 @@ class IncomingConnection private[http] (delegate: akka.http.scaladsl.Http.Incomi
 
   /**
    * Handles the connection with the given handler function.
-   * Returns the materialization result of the underlying flow materialization.
    */
   def handleWithSyncHandler(handler: Function[HttpRequest, HttpResponse], materializer: Materializer): Unit =
     delegate.handleWithSyncHandler(handler.apply(_).asInstanceOf[sm.HttpResponse])(materializer)
 
   /**
    * Handles the connection with the given handler function.
-   * Returns the materialization result of the underlying flow materialization.
    */
   def handleWithAsyncHandler(handler: Function[HttpRequest, Future[HttpResponse]], materializer: Materializer): Unit =
     delegate.handleWithAsyncHandler(handler.apply(_).asInstanceOf[Future[sm.HttpResponse]])(materializer)
+
+  /**
+   * Handles the connection with the given handler function.
+   */
+  def handleWithAsyncHandler(handler: Function[HttpRequest, Future[HttpResponse]], parallelism: Int, materializer: Materializer): Unit =
+    delegate.handleWithAsyncHandler(handler.apply(_).asInstanceOf[Future[sm.HttpResponse]], parallelism)(materializer)
 }

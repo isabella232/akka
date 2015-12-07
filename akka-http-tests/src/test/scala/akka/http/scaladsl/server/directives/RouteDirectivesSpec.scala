@@ -4,9 +4,11 @@
 
 package akka.http.scaladsl.server.directives
 
+import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
+import akka.http.scaladsl.marshallers.xml.ScalaXmlSupport
 import org.scalatest.FreeSpec
-
-import scala.concurrent.Promise
+import scala.concurrent.{ Future, Promise }
+import akka.testkit.EventFilter
 import akka.http.scaladsl.marshallers.xml.ScalaXmlSupport._
 import akka.http.scaladsl.marshalling._
 import akka.http.scaladsl.server._
@@ -14,7 +16,6 @@ import akka.http.scaladsl.model._
 import akka.http.impl.util._
 import headers._
 import StatusCodes._
-import MediaTypes._
 
 class RouteDirectivesSpec extends FreeSpec with GenericRoutingSpec {
 
@@ -42,7 +43,7 @@ class RouteDirectivesSpec extends FreeSpec with GenericRoutingSpec {
       "for successful futures and marshalling" in {
         Get() ~> complete(Promise.successful("yes").future) ~> check { responseAs[String] shouldEqual "yes" }
       }
-      "for failed futures and marshalling" in {
+      "for failed futures and marshalling" in EventFilter[RuntimeException](occurrences = 1).intercept {
         object TestException extends RuntimeException
         Get() ~> complete(Promise.failed[String](TestException).future) ~>
           check {
@@ -57,7 +58,7 @@ class RouteDirectivesSpec extends FreeSpec with GenericRoutingSpec {
           }
       }
     }
-    "allow easy handling of futured ToResponseMarshallers" in pending /*{
+    "allow easy handling of futured ToResponseMarshallers" in {
       trait RegistrationStatus
       case class Registered(name: String) extends RegistrationStatus
       case object AlreadyRegistered extends RegistrationStatus
@@ -76,8 +77,8 @@ class RouteDirectivesSpec extends FreeSpec with GenericRoutingSpec {
                 case Registered(_) ⇒ HttpEntity.Empty
                 case AlreadyRegistered ⇒
                   import spray.json.DefaultJsonProtocol._
-                  import spray.httpx.SprayJsonSupport._
-                  (StatusCodes.BadRequest, Map("error" -> "User already Registered"))
+                  import SprayJsonSupport._
+                  StatusCodes.BadRequest -> Map("error" -> "User already Registered")
               }
             }
           }
@@ -88,10 +89,10 @@ class RouteDirectivesSpec extends FreeSpec with GenericRoutingSpec {
       }
       Get("/register/karl") ~> route ~> check {
         status shouldEqual StatusCodes.OK
-        entity shouldEqual HttpEntity.Empty
+        responseAs[String] shouldEqual ""
       }
-    }*/
-    "do Content-Type negotiation for multi-marshallers" in pendingUntilFixed {
+    }
+    "do Content-Type negotiation for multi-marshallers" in {
       val route = get & complete(Data("Ida", 83))
 
       import akka.http.scaladsl.model.headers.Accept
@@ -105,10 +106,9 @@ class RouteDirectivesSpec extends FreeSpec with GenericRoutingSpec {
       Get().withHeaders(Accept(MediaTypes.`text/xml`)) ~> route ~> check {
         responseAs[xml.NodeSeq] shouldEqual <data><name>Ida</name><age>83</age></data>
       }
-      pending
-      /*Get().withHeaders(Accept(MediaTypes.`text/plain`)) ~> HttpService.sealRoute(route) ~> check {
+      Get().withHeaders(Accept(MediaTypes.`text/plain`)) ~> Route.seal(route) ~> check {
         status shouldEqual StatusCodes.NotAcceptable
-      }*/
+      }
     }
   }
 
@@ -119,7 +119,8 @@ class RouteDirectivesSpec extends FreeSpec with GenericRoutingSpec {
       } ~> check {
         response shouldEqual HttpResponse(
           status = 302,
-          entity = HttpEntity(`text/html`, "The requested resource temporarily resides under <a href=\"/foo\">this URI</a>."),
+          entity = HttpEntity(ContentTypes.`text/html(UTF-8)`,
+            "The requested resource temporarily resides under <a href=\"/foo\">this URI</a>."),
           headers = Location("/foo") :: Nil)
       }
     }
@@ -133,16 +134,17 @@ class RouteDirectivesSpec extends FreeSpec with GenericRoutingSpec {
 
   case class Data(name: String, age: Int)
   object Data {
-    //import spray.json.DefaultJsonProtocol._
-    //import spray.httpx.SprayJsonSupport._
+    import spray.json.DefaultJsonProtocol._
+    import SprayJsonSupport._
+    import ScalaXmlSupport._
 
-    val jsonMarshaller: ToEntityMarshaller[Data] = FIXME // jsonFormat2(Data.apply)
-    val xmlMarshaller: ToEntityMarshaller[Data] = FIXME
-    /*Marshaller.delegate[Data, xml.NodeSeq](MediaTypes.`text/xml`) { (data: Data) ⇒
-        <data><name>{ data.name }</name><age>{ data.age }</age></data>
-      }*/
+    val jsonMarshaller: ToEntityMarshaller[Data] = jsonFormat2(Data.apply)
 
-    implicit val dataMarshaller: ToResponseMarshaller[Data] = FIXME
-    //ToResponseMarshaller.oneOf(MediaTypes.`application/json`, MediaTypes.`text/xml`)(jsonMarshaller, xmlMarshaller)
+    val xmlMarshaller: ToEntityMarshaller[Data] = Marshaller.combined { (data: Data) ⇒
+      <data><name>{ data.name }</name><age>{ data.age }</age></data>
+    }
+
+    implicit val dataMarshaller: ToResponseMarshaller[Data] =
+      Marshaller.oneOf(jsonMarshaller, xmlMarshaller)
   }
 }

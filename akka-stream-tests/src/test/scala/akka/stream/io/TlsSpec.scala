@@ -1,6 +1,5 @@
 package akka.stream.io
 
-import java.net.InetSocketAddress
 import java.security.KeyStore
 import java.security.SecureRandom
 import java.util.concurrent.TimeoutException
@@ -13,32 +12,27 @@ import scala.util.Random
 
 import akka.actor.ActorSystem
 import akka.pattern.{ after ⇒ later }
-import akka.stream.ActorMaterializer
+import akka.stream._
 import akka.stream.scaladsl._
-import akka.stream.scaladsl.FlowGraph.Implicits._
 import akka.stream.stage._
 import akka.stream.testkit._
 import akka.stream.testkit.Utils._
 import akka.testkit.EventFilter
 import akka.util.ByteString
-import javax.net.ssl.KeyManagerFactory
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSession
-import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl._
 
 object TlsSpec {
 
   val rnd = new Random
 
-  def initSslContext(): SSLContext = {
-
+  def initWithTrust(trustPath: String) = {
     val password = "changeme"
 
     val keyStore = KeyStore.getInstance(KeyStore.getDefaultType)
     keyStore.load(getClass.getResourceAsStream("/keystore"), password.toCharArray)
 
     val trustStore = KeyStore.getInstance(KeyStore.getDefaultType)
-    trustStore.load(getClass.getResourceAsStream("/truststore"), password.toCharArray)
+    trustStore.load(getClass.getResourceAsStream(trustPath), password.toCharArray)
 
     val keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm)
     keyManagerFactory.init(keyStore, password.toCharArray)
@@ -51,53 +45,36 @@ object TlsSpec {
     context
   }
 
+  def initSslContext(): SSLContext = initWithTrust("/truststore")
+
   /**
    * This is a stage that fires a TimeoutException failure 2 seconds after it was started,
    * independent of the traffic going through. The purpose is to include the last seen
    * element in the exception message to help in figuring out what went wrong.
    */
-  class Timeout(duration: FiniteDuration)(implicit system: ActorSystem) extends AsyncStage[ByteString, ByteString, Unit] {
-    private var last: ByteString = _
+  class Timeout(duration: FiniteDuration)(implicit system: ActorSystem) extends GraphStage[FlowShape[ByteString, ByteString]] {
 
-    override def preStart(ctx: AsyncContext[ByteString, Unit]) = {
-      val cb = ctx.getAsyncCallback()
-      system.scheduler.scheduleOnce(duration)(cb.invoke(()))(system.dispatcher)
-    }
+    private val in = Inlet[ByteString]("in")
+    private val out = Outlet[ByteString]("out")
+    override val shape = FlowShape(in, out)
 
-    override def onAsyncInput(u: Unit, ctx: AsyncContext[ByteString, Unit]) =
-      ctx.fail(new TimeoutException(s"timeout expired, last element was $last"))
+    override def createLogic(attr: Attributes) = new TimerGraphStageLogic(shape) {
+      override def preStart(): Unit = scheduleOnce((), duration)
 
-    override def onPush(elem: ByteString, ctx: AsyncContext[ByteString, Unit]) = {
-      last = elem
-      if (ctx.isHoldingDownstream) ctx.pushAndPull(elem)
-      else ctx.holdUpstream()
-    }
-
-    override def onPull(ctx: AsyncContext[ByteString, Unit]) =
-      if (ctx.isFinishing) ctx.pushAndFinish(last)
-      else if (ctx.isHoldingUpstream) ctx.pushAndPull(last)
-      else ctx.holdDownstream()
-
-    override def onUpstreamFinish(ctx: AsyncContext[ByteString, Unit]) =
-      if (ctx.isHoldingUpstream) ctx.absorbTermination()
-      else ctx.finish()
-
-    override def onDownstreamFinish(ctx: AsyncContext[ByteString, Unit]) = {
-      system.log.debug("cancelled")
-      ctx.finish()
-    }
-  }
-
-  // FIXME #17226 replace by .dropWhile when implemented
-  class DropWhile[T](p: T ⇒ Boolean) extends PushStage[T, T] {
-    private var open = false
-    override def onPush(elem: T, ctx: Context[T]) =
-      if (open) ctx.push(elem)
-      else if (p(elem)) ctx.pull()
-      else {
-        open = true
-        ctx.push(elem)
+      var last: ByteString = _
+      setHandler(in, new InHandler {
+        override def onPush(): Unit = {
+          last = grab(in)
+          push(out, last)
+        }
+      })
+      setHandler(out, new OutHandler {
+        override def onPull(): Unit = pull(in)
+      })
+      override def onTimer(x: Any): Unit = {
+        failStage(new TimeoutException(s"timeout expired, last element was $last"))
       }
+    }
   }
 
 }
@@ -108,7 +85,7 @@ class TlsSpec extends AkkaSpec("akka.loglevel=INFO\nakka.actor.debug.receive=off
   import system.dispatcher
   implicit val materializer = ActorMaterializer()
 
-  import FlowGraph.Implicits._
+  import GraphDSL.Implicits._
 
   "SslTls" must {
 
@@ -124,6 +101,7 @@ class TlsSpec extends AkkaSpec("akka.loglevel=INFO\nakka.actor.debug.receive=off
 
     val cipherSuites = NegotiateNewSession.withCipherSuites("TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", "TLS_RSA_WITH_AES_128_CBC_SHA")
     def clientTls(closing: Closing) = SslTls(sslContext, cipherSuites, Client, closing)
+    def badClientTls(closing: Closing) = SslTls(initWithTrust("/badtruststore"), cipherSuites, Client, closing)
     def serverTls(closing: Closing) = SslTls(sslContext, cipherSuites, Server, closing)
 
     trait Named {
@@ -378,8 +356,8 @@ class TlsSpec extends AkkaSpec("akka.loglevel=INFO\nakka.actor.debug.receive=off
             .via(debug)
             .collect { case SessionBytes(_, b) ⇒ b }
             .scan(ByteString.empty)(_ ++ _)
-            .transform(() ⇒ new Timeout(6.seconds))
-            .transform(() ⇒ new DropWhile(_.size < scenario.output.size))
+            .via(new Timeout(6.seconds))
+            .dropWhile(_.size < scenario.output.size)
             .runWith(Sink.head)
 
         Await.result(f, 8.seconds).utf8String should be(scenario.output.utf8String)
@@ -394,15 +372,40 @@ class TlsSpec extends AkkaSpec("akka.loglevel=INFO\nakka.actor.debug.receive=off
       }
     }
 
+    "emit an error if the TLS handshake fails certificate checks" in assertAllStagesStopped {
+      val getError = Flow[SslTlsInbound]
+        .map[Either[SslTlsInbound, SSLException]](i ⇒ Left(i))
+        .recover { case e: SSLException ⇒ Right(e) }
+        .collect { case Right(e) ⇒ e }.toMat(Sink.head)(Keep.right)
+
+      val simple = Flow.fromSinkAndSourceMat(getError, Source.maybe[SslTlsOutbound])(Keep.left)
+
+      // The creation of actual TCP connections is necessary. It is the easiest way to decouple the client and server
+      // under error conditions, and has the bonus of matching most actual SSL deployments.
+      val (server, serverErr) = Tcp()
+        .bind("localhost", 0)
+        .map(c ⇒ {
+          c.flow.joinMat(serverTls(IgnoreBoth).reversed.joinMat(simple)(Keep.right))(Keep.right).run()
+        })
+        .toMat(Sink.head)(Keep.both).run()
+
+      val clientErr = simple.join(badClientTls(IgnoreBoth))
+        .join(Tcp().outgoingConnection(Await.result(server, 1.second).localAddress)).run()
+
+      Await.result(serverErr.flatMap(identity), 1.second).getMessage should include("certificate_unknown")
+      Await.result(clientErr, 1.second).getMessage should equal("General SSLEngine problem")
+    }
+
     "reliably cancel subscriptions when TransportIn fails early" in assertAllStagesStopped {
       val ex = new Exception("hello")
       val (sub, out1, out2) =
-        FlowGraph.closed(Source.subscriber[SslTlsOutbound], Sink.head[ByteString], Sink.head[SslTlsInbound])((_, _, _)) { implicit b ⇒
+        RunnableGraph.fromGraph(GraphDSL.create(Source.subscriber[SslTlsOutbound], Sink.head[ByteString], Sink.head[SslTlsInbound])((_, _, _)) { implicit b ⇒
           (s, o1, o2) ⇒
             val tls = b.add(clientTls(EagerClose))
             s ~> tls.in1; tls.out1 ~> o1
             o2 <~ tls.out2; tls.in2 <~ Source.failed(ex)
-        }.run()
+            ClosedShape
+        }).run()
       the[Exception] thrownBy Await.result(out1, 1.second) should be(ex)
       the[Exception] thrownBy Await.result(out2, 1.second) should be(ex)
       Thread.sleep(500)
@@ -414,12 +417,13 @@ class TlsSpec extends AkkaSpec("akka.loglevel=INFO\nakka.actor.debug.receive=off
     "reliably cancel subscriptions when UserIn fails early" in assertAllStagesStopped {
       val ex = new Exception("hello")
       val (sub, out1, out2) =
-        FlowGraph.closed(Source.subscriber[ByteString], Sink.head[ByteString], Sink.head[SslTlsInbound])((_, _, _)) { implicit b ⇒
+        RunnableGraph.fromGraph(GraphDSL.create(Source.subscriber[ByteString], Sink.head[ByteString], Sink.head[SslTlsInbound])((_, _, _)) { implicit b ⇒
           (s, o1, o2) ⇒
             val tls = b.add(clientTls(EagerClose))
             Source.failed[SslTlsOutbound](ex) ~> tls.in1; tls.out1 ~> o1
             o2 <~ tls.out2; tls.in2 <~ s
-        }.run()
+            ClosedShape
+        }).run()
       the[Exception] thrownBy Await.result(out1, 1.second) should be(ex)
       the[Exception] thrownBy Await.result(out2, 1.second) should be(ex)
       Thread.sleep(500)

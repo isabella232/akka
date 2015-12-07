@@ -7,14 +7,16 @@ package directives
 
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.server.Route
+import akka.http.scaladsl.unmarshalling.PredefinedFromStringUnmarshallers
 
-class ParameterDirectivesExamplesSpec extends RoutingSpec {
+class ParameterDirectivesExamplesSpec extends RoutingSpec with PredefinedFromStringUnmarshallers {
   "example-1" in {
     val route =
       parameter('color) { color =>
         complete(s"The color is '$color'")
       }
 
+    // tests:
     Get("/?color=blue") ~> route ~> check {
       responseAs[String] shouldEqual "The color is 'blue'"
     }
@@ -30,6 +32,7 @@ class ParameterDirectivesExamplesSpec extends RoutingSpec {
         complete(s"The color is '$color' and the background is '$backgroundColor'")
       }
 
+    // tests:
     Get("/?color=blue&backgroundColor=red") ~> route ~> check {
       responseAs[String] shouldEqual "The color is 'blue' and the background is 'red'"
     }
@@ -45,6 +48,7 @@ class ParameterDirectivesExamplesSpec extends RoutingSpec {
         complete(s"The color is '$color' and the background is '$backgroundStr'")
       }
 
+    // tests:
     Get("/?color=blue&backgroundColor=red") ~> route ~> check {
       responseAs[String] shouldEqual "The color is 'blue' and the background is 'red'"
     }
@@ -58,6 +62,7 @@ class ParameterDirectivesExamplesSpec extends RoutingSpec {
         complete(s"The color is '$color' and the background is '$backgroundColor'")
       }
 
+    // tests:
     Get("/?color=blue&backgroundColor=red") ~> route ~> check {
       responseAs[String] shouldEqual "The color is 'blue' and the background is 'red'"
     }
@@ -71,6 +76,7 @@ class ParameterDirectivesExamplesSpec extends RoutingSpec {
         complete(s"The color is '$color'.")
       }
 
+    // tests:
     Get("/?color=blue&action=true") ~> route ~> check {
       responseAs[String] shouldEqual "The color is 'blue'."
     }
@@ -86,6 +92,7 @@ class ParameterDirectivesExamplesSpec extends RoutingSpec {
         complete(s"The color is '$color' and you have $count of it.")
       }
 
+    // tests:
     Get("/?color=blue&count=42") ~> route ~> check {
       responseAs[String] shouldEqual "The color is 'blue' and you have 42 of it."
     }
@@ -105,6 +112,7 @@ class ParameterDirectivesExamplesSpec extends RoutingSpec {
         }
       }
 
+    // tests:
     Get("/?color=blue") ~> route ~> check {
       responseAs[String] === "The color is 'blue' and there are no cities."
     }
@@ -127,6 +135,7 @@ class ParameterDirectivesExamplesSpec extends RoutingSpec {
         }
       }
 
+    // tests:
     Get("/?color=blue") ~> route ~> check {
       responseAs[String] === "The color is 'blue' and there are no distances."
     }
@@ -146,6 +155,7 @@ class ParameterDirectivesExamplesSpec extends RoutingSpec {
         complete(s"The parameters are ${params.map(paramString).mkString(", ")}")
       }
 
+    // tests:
     Get("/?color=blue&count=42") ~> route ~> check {
       responseAs[String] shouldEqual "The parameters are color = 'blue', count = '42'"
     }
@@ -159,6 +169,7 @@ class ParameterDirectivesExamplesSpec extends RoutingSpec {
         complete(s"There are parameters ${params.map(x => x._1 + " -> " + x._2.size).mkString(", ")}")
       }
 
+    // tests:
     Get("/?color=blue&count=42") ~> route ~> check {
       responseAs[String] shouldEqual "There are parameters color -> 1, count -> 1"
     }
@@ -173,11 +184,26 @@ class ParameterDirectivesExamplesSpec extends RoutingSpec {
         complete(s"The parameters are ${params.map(paramString).mkString(", ")}")
       }
 
+    // tests:
     Get("/?color=blue&count=42") ~> route ~> check {
       responseAs[String] shouldEqual "The parameters are color = 'blue', count = '42'"
     }
     Get("/?x=1&x=2") ~> route ~> check {
       responseAs[String] shouldEqual "The parameters are x = '1', x = '2'"
+    }
+  }
+  "csv" in {
+    val route =
+      parameter("names".as(CsvString)) { names =>
+        complete(s"The parameters are ${names.mkString(", ")}")
+      }
+
+    // tests:
+    Get("/?names=Caplin") ~> route ~> check {
+      responseAs[String] shouldEqual "The parameters are Caplin"
+    }
+    Get("/?names=Caplin,John") ~> route ~> check {
+      responseAs[String] shouldEqual "The parameters are Caplin, John"
     }
   }
 }

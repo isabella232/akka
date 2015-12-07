@@ -41,7 +41,7 @@ object AkkaBuild extends Build {
 
   val requestedScalaVersion = System.getProperty("akka.scalaVersion", "2.10.5")
   val Seq(scalaEpoch, scalaMajor) = """(\d+)\.(\d+)\..*""".r.unapplySeq(requestedScalaVersion).get.map(_.toInt)
-  val streamAndHttpVersion = "1.0-SNAPSHOT"
+  val streamAndHttpVersion = "2.0-SNAPSHOT"
 
   lazy val buildSettings = Seq(
     organization := "com.typesafe.akka",
@@ -86,7 +86,8 @@ object AkkaBuild extends Build {
       test in Test in httpTestkit,
       test in Test in httpTests, test in Test in httpTestsJava8,
       test in Test in docsDev,
-      compile in Compile in benchJmh
+      compile in Compile in benchJmh,
+      compile in Compile in benchJmhDev
       ).dependOn
     ),
     aggregate = Seq(actor, testkit, actorTests, dataflow, remote, remoteTests, camel, cluster, slf4j, agent, transactor,
@@ -181,11 +182,20 @@ object AkkaBuild extends Build {
   lazy val benchJmh = Project(
     id = "akka-bench-jmh",
     base = file("akka-bench-jmh"),
-    dependencies = Seq(actor, persistence, testkit, stream, http, httpCore).map(_ % "compile;compile->test"),
+    dependencies = Seq(actor, persistence, testkit).map(_ % "compile;compile->test"),
     settings = defaultSettings ++ Seq(
       libraryDependencies ++= Dependencies.testkit ++ Dependencies.Compile.metricsAll,
       publishArtifact in Compile := false
     ) ++ settings ++ formatSettings ++ jmhSettings
+  )
+
+  lazy val benchJmhDev = Project(
+    id = "akka-bench-jmh-dev",
+    base = file("akka-bench-jmh-dev"),
+    dependencies = Seq(stream, streamTests % "compile->test", http, httpCore),
+    settings = defaultSettings ++ Seq(
+      publishArtifact in Compile := false
+    ) ++ settings ++ jmhSettings
   )
 
   lazy val actorTests = Project(
@@ -386,7 +396,7 @@ object AkkaBuild extends Build {
   lazy val httpTestkit = Project(
     id = "akka-http-testkit-experimental",
     base = file("akka-http-testkit"),
-    dependencies = Seq(http, testkit),
+    dependencies = Seq(http, testkit, streamTestkit),
     settings =
       defaultSettings ++ formatSettings ++ scaladocSettings ++
         javadocSettings ++ OSGi.httpTestKit ++
@@ -403,7 +413,7 @@ object AkkaBuild extends Build {
   lazy val httpTests = Project(
     id = "akka-http-tests-experimental",
     base = file("akka-http-tests"),
-    dependencies = Seq(httpTestkit, httpSprayJson, httpXml, httpJackson),
+    dependencies = Seq(httpTestkit % "test", httpSprayJson, httpXml, httpJackson),
     settings =
       defaultSettings ++ formatSettings ++
         Seq(
@@ -878,6 +888,7 @@ object AkkaBuild extends Build {
     base = file("akka-docs-dev"),
     dependencies = Seq(streamTestkit % "test->test", stream, httpCore, http, httpTestkit, httpSprayJson, httpXml),
     settings = defaultSettings ++ docFormatSettings ++ site.settings ++ site.sphinxSupport() ++ sphinxPreprocessing ++ Seq(
+      javacOptions in compile ++= Seq("-encoding", "UTF-8", "-source", "1.8", "-target", "1.8", "-Xlint:unchecked", "-Xlint:deprecation"), // docs-dev is allowed to use Java 8
       version := streamAndHttpVersion,
       sourceDirectory in Sphinx <<= baseDirectory / "rst",
       watchSources <++= (sourceDirectory in Sphinx, excludeFilter in Global) map { (source, excl) =>
@@ -1038,7 +1049,9 @@ object AkkaBuild extends Build {
     // compile options
     scalacOptions in Compile ++= Seq("-encoding", "UTF-8", "-target:jvm-1.6", "-deprecation", "-feature", "-unchecked", "-Xlog-reflective-calls", "-Xlint"),
     javacOptions in compile ++= Seq("-encoding", "UTF-8", "-source", "1.6", "-target", "1.6", "-Xlint:unchecked", "-Xlint:deprecation"),
-    javacOptions in doc ++= Seq("-encoding", "UTF-8", "-source", "1.6") ++
+    javacOptions in test ++= Seq("-encoding", "UTF-8", "-source", "1.8") ++
+                            (if (sys.props("java.version").startsWith("1.8")) Seq("-Xdoclint:none") else Seq()),
+    javacOptions in doc ++= Seq("-encoding", "UTF-8", "-source", "1.8") ++
                             (if (sys.props("java.version").startsWith("1.8")) Seq("-Xdoclint:none") else Seq()),
 
     crossVersion := CrossVersion.binary,
@@ -1107,7 +1120,6 @@ object AkkaBuild extends Build {
         Try("/usr/libexec/java_home -v 1.8".!!).toOption.toSeq // OS/X method
         )
         .find(isJavaHome)
-        .orElse { sLog.value.warn("Java 8 installation has not been found. Java 8 tasks will not be run."); None }
         .map(dirName => file(dirName.trim))
     },
     validatePullRequestTask,
@@ -1393,7 +1405,7 @@ object AkkaBuild extends Build {
             streamAndHttpImport("akka.http.*"),
             streamAndHttpImport("akka.parboiled2.*")))
 
-    val httpTestKit = exports(Seq("akka.http.scaladsl.testkit.*", "akka.http.javaadsl.testkit.*"),
+    val httpTestKit = exports(Seq("akka.http.scaladsl.testkit.*", "akka.http.javadsl.testkit.*"),
         imports = Seq(streamAndHttpImport("akka.stream.*"),
             streamAndHttpImport("akka.http.*")))
 
@@ -1543,7 +1555,7 @@ object Dependencies {
     val sigar       = "org.fusesource"                % "sigar"                        % "1.6.4"       // ApacheV2
 
     // For akka-http spray-json support
-    val sprayJson   = "io.spray"                     %% "spray-json"                   % "1.3.1"       // ApacheV2
+    val sprayJson   = "io.spray"                     %% "spray-json"                   % "1.3.2"       // ApacheV2
 
     // For akka-http-jackson support
     val jackson     = "com.fasterxml.jackson.core"    % "jackson-databind"             % "2.4.3"       // ApacheV2
@@ -1617,6 +1629,7 @@ object Dependencies {
   val persistence = deps(levelDB, levelDBNative, protobuf, Test.scalatest, Test.junit, Test.commonsIo, Test.scalaXml)
 
   val httpCore = deps(
+    sprayJson % "test", // for WS Autobahn test metadata
     Dependencies.Compile.quasiquotes % "provided", // needed to depend on akka-parsing
     Test.junitIntf, Test.junit, Test.scalatest)
 

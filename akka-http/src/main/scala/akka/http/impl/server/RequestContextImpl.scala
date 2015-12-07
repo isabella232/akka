@@ -29,7 +29,7 @@ private[http] final case class RequestContextImpl(underlying: ScalaRequestContex
       case r: RouteResultImpl ⇒ r.underlying
     }(executionContext())
   def complete(text: String): RouteResult = underlying.complete(text)
-  def complete(contentType: ContentType, text: String): RouteResult =
+  def complete(contentType: ContentType.NonBinary, text: String): RouteResult =
     underlying.complete(HttpEntity(contentType.asScala, text))
 
   def completeWithStatus(statusCode: Int): RouteResult =
@@ -45,6 +45,8 @@ private[http] final case class RequestContextImpl(underlying: ScalaRequestContex
   def complete(response: jm.HttpResponse): RouteResult = underlying.complete(response.asScala)
 
   def notFound(): RouteResult = underlying.reject()
+
+  def reject(customRejection: CustomRejection): RouteResult = underlying.reject(CustomRejectionWrapper(customRejection))
 
   def executionContext(): ExecutionContext = underlying.executionContext
   def materializer(): Materializer = underlying.materializer

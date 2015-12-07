@@ -4,9 +4,9 @@
 package akka.stream
 
 import akka.util.Collections.EmptyImmutableSeq
-
 import scala.collection.immutable
 import scala.collection.JavaConverters._
+import scala.annotation.unchecked.uncheckedVariance
 
 /**
  * An input port of a StreamLayout.Module. This type logically belongs
@@ -15,8 +15,13 @@ import scala.collection.JavaConverters._
  * for otherwise unreasonable existential types.
  */
 sealed abstract class InPort { self: Inlet[_] ⇒
-  final override def hashCode: Int = System.identityHashCode(this)
+  final override def hashCode: Int = super.hashCode
   final override def equals(that: Any): Boolean = this eq that.asInstanceOf[AnyRef]
+
+  /**
+   * INTERNAL API
+   */
+  private[stream] var id: Int = -1
 }
 /**
  * An output port of a StreamLayout.Module. This type logically belongs
@@ -25,8 +30,13 @@ sealed abstract class InPort { self: Inlet[_] ⇒
  * for otherwise unreasonable existential types.
  */
 sealed abstract class OutPort { self: Outlet[_] ⇒
-  final override def hashCode: Int = System.identityHashCode(this)
+  final override def hashCode: Int = super.hashCode
   final override def equals(that: Any): Boolean = this eq that.asInstanceOf[AnyRef]
+
+  /**
+   * INTERNAL API
+   */
+  private[stream] var id: Int = -1
 }
 
 /**
@@ -35,11 +45,29 @@ sealed abstract class OutPort { self: Outlet[_] ⇒
  * express the internal structural hierarchy of stream topologies).
  */
 object Inlet {
-  def apply[T](toString: String): Inlet[T] = new Inlet[T](toString)
+  /**
+   * Scala API
+   *
+   * Creates a new Inlet with the given name. The name will be used when
+   * displaying debug information or error messages involving the port.
+   */
+  def apply[T](name: String): Inlet[T] = new Inlet[T](name)
+
+  /**
+   * JAVA API
+   *
+   * Creates a new Inlet with the given name. The name will be used when
+   * displaying debug information or error messages involving the port.
+   */
+  def create[T](name: String): Inlet[T] = Inlet(name)
 }
 
-final class Inlet[-T] private (override val toString: String) extends InPort {
+final class Inlet[T] private (override val toString: String) extends InPort {
   def carbonCopy(): Inlet[T] = Inlet(toString)
+  /**
+   * INTERNAL API.
+   */
+  def as[U]: Inlet[U] = this.asInstanceOf[Inlet[U]]
 }
 
 /**
@@ -48,11 +76,30 @@ final class Inlet[-T] private (override val toString: String) extends InPort {
  * express the internal structural hierarchy of stream topologies).
  */
 object Outlet {
-  def apply[T](toString: String): Outlet[T] = new Outlet[T](toString)
+
+  /**
+   * Scala API
+   *
+   * Creates a new Outlet with the given name. The name will be used when
+   * displaying debug information or error messages involving the port.
+   */
+  def apply[T](name: String): Outlet[T] = new Outlet[T](name)
+
+  /**
+   * JAVA API
+   *
+   * Creates a new Outlet with the given name. The name will be used when
+   * displaying debug information or error messages involving the port.
+   */
+  def create[T](name: String): Outlet[T] = Outlet(name)
 }
 
-final class Outlet[+T] private (override val toString: String) extends OutPort {
+final class Outlet[T] private (override val toString: String) extends OutPort {
   def carbonCopy(): Outlet[T] = Outlet(toString)
+  /**
+   * INTERNAL API.
+   */
+  def as[U]: Outlet[U] = this.asInstanceOf[Outlet[U]]
 }
 
 /**
@@ -159,7 +206,7 @@ object ClosedShape extends ClosedShape {
   /**
    * Java API: obtain ClosedShape instance
    */
-  def getInstance: Shape = this
+  def getInstance: ClosedShape = this
 }
 
 /**
@@ -177,7 +224,7 @@ case class AmorphousShape(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Se
  * A Source [[Shape]] has exactly one output and no inputs, it models a source
  * of data.
  */
-final case class SourceShape[+T](outlet: Outlet[T]) extends Shape {
+final case class SourceShape[+T](outlet: Outlet[T @uncheckedVariance]) extends Shape {
   override val inlets: immutable.Seq[Inlet[_]] = EmptyImmutableSeq
   override val outlets: immutable.Seq[Outlet[_]] = List(outlet)
 
@@ -188,13 +235,18 @@ final case class SourceShape[+T](outlet: Outlet[T]) extends Shape {
     SourceShape(outlets.head)
   }
 }
+object SourceShape {
+  /** Java API */
+  def of[T](outlet: Outlet[T @uncheckedVariance]): SourceShape[T] =
+    SourceShape(outlet)
+}
 
 /**
  * A Flow [[Shape]] has exactly one input and one output, it looks from the
  * outside like a pipe (but it can be a complex topology of streams within of
  * course).
  */
-final case class FlowShape[-I, +O](inlet: Inlet[I], outlet: Outlet[O]) extends Shape {
+final case class FlowShape[-I, +O](inlet: Inlet[I @uncheckedVariance], outlet: Outlet[O @uncheckedVariance]) extends Shape {
   override val inlets: immutable.Seq[Inlet[_]] = List(inlet)
   override val outlets: immutable.Seq[Outlet[_]] = List(outlet)
 
@@ -205,11 +257,16 @@ final case class FlowShape[-I, +O](inlet: Inlet[I], outlet: Outlet[O]) extends S
     FlowShape(inlets.head, outlets.head)
   }
 }
+object FlowShape {
+  /** Java API */
+  def of[I, O](inlet: Inlet[I @uncheckedVariance], outlet: Outlet[O @uncheckedVariance]): FlowShape[I, O] =
+    FlowShape(inlet, outlet)
+}
 
 /**
  * A Sink [[Shape]] has exactly one input and no outputs, it models a data sink.
  */
-final case class SinkShape[-T](inlet: Inlet[T]) extends Shape {
+final case class SinkShape[-T](inlet: Inlet[T @uncheckedVariance]) extends Shape {
   override val inlets: immutable.Seq[Inlet[_]] = List(inlet)
   override val outlets: immutable.Seq[Outlet[_]] = EmptyImmutableSeq
 
@@ -219,6 +276,11 @@ final case class SinkShape[-T](inlet: Inlet[T]) extends Shape {
     require(outlets.isEmpty, s"proposed outlets [${outlets.mkString(", ")}] do not fit SinkShape")
     SinkShape(inlets.head)
   }
+}
+object SinkShape {
+  /** Java API */
+  def of[T](inlet: Inlet[T @uncheckedVariance]): SinkShape[T] =
+    SinkShape(inlet)
 }
 
 //#bidi-shape
@@ -234,10 +296,10 @@ final case class SinkShape[-T](inlet: Inlet[T]) extends Shape {
  *        +------+
  * }}}
  */
-final case class BidiShape[-In1, +Out1, -In2, +Out2](in1: Inlet[In1],
-                                                     out1: Outlet[Out1],
-                                                     in2: Inlet[In2],
-                                                     out2: Outlet[Out2]) extends Shape {
+final case class BidiShape[-In1, +Out1, -In2, +Out2](in1: Inlet[In1 @uncheckedVariance],
+                                                     out1: Outlet[Out1 @uncheckedVariance],
+                                                     in2: Inlet[In2 @uncheckedVariance],
+                                                     out2: Outlet[Out2 @uncheckedVariance]) extends Shape {
   //#implementation-details-elided
   override val inlets: immutable.Seq[Inlet[_]] = List(in1, in2)
   override val outlets: immutable.Seq[Outlet[_]] = List(out1, out2)
@@ -258,8 +320,15 @@ final case class BidiShape[-In1, +Out1, -In2, +Out2](in1: Inlet[In1],
   //#implementation-details-elided
 }
 //#bidi-shape
-
 object BidiShape {
-  def apply[I1, O1, I2, O2](top: FlowShape[I1, O1], bottom: FlowShape[I2, O2]): BidiShape[I1, O1, I2, O2] =
+  def fromFlows[I1, O1, I2, O2](top: FlowShape[I1, O1], bottom: FlowShape[I2, O2]): BidiShape[I1, O1, I2, O2] =
     BidiShape(top.inlet, top.outlet, bottom.inlet, bottom.outlet)
+
+  /** Java API */
+  def of[In1, Out1, In2, Out2](in1: Inlet[In1 @uncheckedVariance],
+                               out1: Outlet[Out1 @uncheckedVariance],
+                               in2: Inlet[In2 @uncheckedVariance],
+                               out2: Outlet[Out2 @uncheckedVariance]): BidiShape[In1, Out1, In2, Out2] =
+    BidiShape(in1, out1, in2, out2)
+
 }

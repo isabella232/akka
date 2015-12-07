@@ -27,6 +27,7 @@ import akka.stream.testkit.TestSubscriber;
 import akka.stream.testkit.javadsl.TestSink;
 import akka.stream.testkit.javadsl.TestSource;
 import akka.testkit.JavaTestKit;
+import akka.testkit.TestLatch;
 import scala.collection.Iterator;
 import scala.concurrent.Await;
 import scala.concurrent.Future;
@@ -67,7 +68,7 @@ public class RateTransformationDocTest {
           final Double mean = s.stream().mapToDouble(d -> d).sum() / s.size();
           final DoubleStream se = s.stream().mapToDouble(x -> Math.pow(x - mean, 2));
           final Double stdDev = Math.sqrt(se.sum() / s.size());
-          return new Tuple3(stdDev, mean, s.size());
+          return new Tuple3<>(stdDev, mean, s.size());
         });
     //#conflate-summarize
 
@@ -108,7 +109,7 @@ public class RateTransformationDocTest {
   public void expandShouldRepeatLast() throws Exception {
     //#expand-last
     final Flow<Double, Double, BoxedUnit> lastFlow = Flow.of(Double.class)
-      .expand(d -> d, s -> new Pair(s, s));
+      .expand(d -> d, s -> new Pair<>(s, s));
     //#expand-last
 
     final Pair<TestPublisher.Probe<Double>, Future<List<Double>>> probeFut = TestSource.<Double> probe(system)
@@ -128,15 +129,21 @@ public class RateTransformationDocTest {
 
   @Test
   public void expandShouldTrackDrift() throws Exception {
+    @SuppressWarnings("unused")
     //#expand-drift
-    final Flow<Double, Pair<Double, Integer>, BoxedUnit> driftFlow = Flow.of(Double.class)
+	final Flow<Double, Pair<Double, Integer>, BoxedUnit> driftFlow = Flow.of(Double.class)
       .expand(d -> new Pair<Double, Integer>(d, 0), t -> {
-        return new Pair(t, new Pair(t.first(), t.second() + 1));
+        return new Pair<>(t, new Pair<>(t.first(), t.second() + 1));
       });
     //#expand-drift
+    final TestLatch latch = new TestLatch(2, system);
+    final Flow<Double, Pair<Double, Integer>, BoxedUnit> realDriftFlow = Flow.of(Double.class)
+    	      .expand(d -> { latch.countDown(); return new Pair<Double, Integer>(d, 0); }, t -> {
+    	        return new Pair<>(t, new Pair<>(t.first(), t.second() + 1));
+    	      });
 
     final Pair<TestPublisher.Probe<Double>, TestSubscriber.Probe<Pair<Double, Integer>>> pubSub = TestSource.<Double> probe(system)
-      .via(driftFlow)
+      .via(realDriftFlow)
       .toMat(TestSink.<Pair<Double, Integer>> probe(system), Keep.both())
       .run(mat);
 
@@ -145,13 +152,14 @@ public class RateTransformationDocTest {
 
     sub.request(1);
     pub.sendNext(1.0);
-    sub.expectNext(new Pair(1.0, 0));
+    sub.expectNext(new Pair<>(1.0, 0));
 
-    sub.requestNext(new Pair(1.0, 1));
-    sub.requestNext(new Pair(1.0, 2));
+    sub.requestNext(new Pair<>(1.0, 1));
+    sub.requestNext(new Pair<>(1.0, 2));
 
     pub.sendNext(2.0);
-    sub.requestNext(new Pair(2.0, 0));
+    Await.ready(latch, Duration.create(1, TimeUnit.SECONDS));
+    sub.requestNext(new Pair<>(2.0, 0));
   }
 
 }

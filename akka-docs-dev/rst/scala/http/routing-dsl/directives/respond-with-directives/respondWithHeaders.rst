@@ -3,9 +3,6 @@
 respondWithHeaders
 ==================
 
-Adds the given HTTP headers to all responses coming back from its inner route.
-
-
 Signature
 ---------
 
@@ -15,14 +12,16 @@ Signature
 
 Description
 -----------
+Adds the given HTTP headers to all responses coming back from its inner route.
 
 This directive transforms ``HttpResponse`` and ``ChunkedResponseStart`` messages coming back from its inner route by
 adding the given ``HttpHeader`` instances to the headers list.
-If you'd like to add just a single header you can use the :ref:`-respondWithHeader-` directive instead.
+
+See also :ref:`-respondWithHeader-` if you'd like to add just a single header.
 
 
 Example
 -------
 
-... includecode2:: ../../../../code/docs/http/scaladsl/server/directives/RespondWithDirectivesExamplesSpec.scala
-   :snippet: respondWithHeaders-examples
+.. includecode2:: ../../../../code/docs/http/scaladsl/server/directives/RespondWithDirectivesExamplesSpec.scala
+   :snippet: respondWithHeaders-0

@@ -4,6 +4,8 @@
 
 package akka.http.impl.engine.parsing
 
+import akka.http.ParserSettings
+
 import scala.annotation.tailrec
 import akka.event.LoggingAdapter
 import akka.parboiled2.CharPredicate
@@ -13,6 +15,8 @@ import akka.util.ByteString
 import akka.http.scaladsl.model._
 import akka.http.impl.util._
 import headers._
+
+import scala.collection.mutable.ListBuffer
 
 /**
  * INTERNAL API
@@ -29,8 +33,8 @@ private[http] final class BodyPartParser(defaultContentType: ContentType,
 
   require(boundary.nonEmpty, "'boundary' parameter of multipart Content-Type must be non-empty")
   require(boundary.charAt(boundary.length - 1) != ' ', "'boundary' parameter of multipart Content-Type must not end with a space char")
-  require(boundaryCharNoSpace matchesAll boundary,
-    s"'boundary' parameter of multipart Content-Type contains illegal character '${boundaryCharNoSpace.firstMismatch(boundary).get}'")
+  require(boundaryChar matchesAll boundary,
+    s"'boundary' parameter of multipart Content-Type contains illegal character '${boundaryChar.firstMismatch(boundary).get}'")
 
   sealed trait StateResult // phantom type for ensuring soundness of our parsing method setup
 
@@ -114,7 +118,7 @@ private[http] final class BodyPartParser(defaultContentType: ContentType,
       case NotEnoughDataException ⇒ continue(input.takeRight(needle.length + 2), 0)(parsePreamble)
     }
 
-  @tailrec def parseHeaderLines(input: ByteString, lineStart: Int, headers: List[HttpHeader] = Nil,
+  @tailrec def parseHeaderLines(input: ByteString, lineStart: Int, headers: ListBuffer[HttpHeader] = ListBuffer[HttpHeader](),
                                 headerCount: Int = 0, cth: Option[`Content-Type`] = None): StateResult = {
     def contentType =
       cth match {
@@ -136,27 +140,28 @@ private[http] final class BodyPartParser(defaultContentType: ContentType,
       case null ⇒ continue(input, lineStart)(parseHeaderLinesAux(headers, headerCount, cth))
 
       case BoundaryHeader ⇒
-        emit(BodyPartStart(headers, _ ⇒ HttpEntity.empty(contentType)))
+        emit(BodyPartStart(headers.toList, _ ⇒ HttpEntity.empty(contentType)))
         val ix = lineStart + boundaryLength
         if (crlf(input, ix)) parseHeaderLines(input, ix + 2)
         else if (doubleDash(input, ix)) terminate()
         else fail("Illegal multipart boundary in message content")
 
-      case HttpHeaderParser.EmptyHeader ⇒ parseEntity(headers, contentType)(input, lineEnd)
+      case HttpHeaderParser.EmptyHeader ⇒ parseEntity(headers.toList, contentType)(input, lineEnd)
 
       case h: `Content-Type` ⇒
         if (cth.isEmpty) parseHeaderLines(input, lineEnd, headers, headerCount + 1, Some(h))
         else if (cth.get == h) parseHeaderLines(input, lineEnd, headers, headerCount, cth)
         else fail("multipart part must not contain more than one Content-Type header")
 
-      case h if headerCount < maxHeaderCount ⇒ parseHeaderLines(input, lineEnd, h :: headers, headerCount + 1, cth)
+      case h if headerCount < maxHeaderCount ⇒
+        parseHeaderLines(input, lineEnd, headers += h, headerCount + 1, cth)
 
-      case _                                 ⇒ fail(s"multipart part contains more than the configured limit of $maxHeaderCount headers")
+      case _ ⇒ fail(s"multipart part contains more than the configured limit of $maxHeaderCount headers")
     }
   }
 
   // work-around for compiler complaining about non-tail-recursion if we inline this method
-  def parseHeaderLinesAux(headers: List[HttpHeader], headerCount: Int,
+  def parseHeaderLinesAux(headers: ListBuffer[HttpHeader], headerCount: Int,
                           cth: Option[`Content-Type`])(input: ByteString, lineStart: Int): StateResult =
     parseHeaderLines(input, lineStart, headers, headerCount, cth)
 
@@ -249,7 +254,7 @@ private[http] final class BodyPartParser(defaultContentType: ContentType,
 
 private[http] object BodyPartParser {
   // http://tools.ietf.org/html/rfc2046#section-5.1.1
-  val boundaryCharNoSpace = CharPredicate.Digit ++ CharPredicate.Alpha ++ "'()+_,-./:=?"
+  val boundaryChar = CharPredicate.Digit ++ CharPredicate.Alpha ++ "'()+_,-./:=? "
 
   private object BoundaryHeader extends HttpHeader {
     def name = ""
@@ -270,7 +275,9 @@ private[http] object BodyPartParser {
     maxHeaderValueLength: Int,
     maxHeaderCount: Int,
     illegalHeaderWarnings: Boolean,
-    headerValueCacheLimit: Int) extends HttpHeaderParser.Settings {
+    headerValueCacheLimit: Int,
+    uriParsingMode: Uri.ParsingMode,
+    cookieParsingMode: ParserSettings.CookieParsingMode) extends HttpHeaderParser.Settings {
     require(maxHeaderNameLength > 0, "maxHeaderNameLength must be > 0")
     require(maxHeaderValueLength > 0, "maxHeaderValueLength must be > 0")
     require(maxHeaderCount > 0, "maxHeaderCount must be > 0")
@@ -284,5 +291,7 @@ private[http] object BodyPartParser {
     maxHeaderValueLength = 8192,
     maxHeaderCount = 64,
     illegalHeaderWarnings = true,
-    headerValueCacheLimit = 8)
+    headerValueCacheLimit = 8,
+    uriParsingMode = Uri.ParsingMode.Relaxed,
+    cookieParsingMode = ParserSettings.CookieParsingMode.RFC6265)
 }

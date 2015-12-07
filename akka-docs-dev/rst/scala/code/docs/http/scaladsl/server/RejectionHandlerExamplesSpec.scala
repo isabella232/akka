@@ -23,13 +23,13 @@ object MyRejectionHandler {
         complete(HttpResponse(BadRequest, entity = "No cookies, no service!!!"))
       }
       .handle { case AuthorizationFailedRejection ⇒
-        complete(Forbidden, "You're out of your depth!")
+        complete((Forbidden, "You're out of your depth!"))
       }
       .handleAll[MethodRejection] { methodRejections ⇒
         val names = methodRejections.map(_.supported.name)
-        complete(MethodNotAllowed, s"Can't do that! Supported: ${names mkString " or "}!")
+        complete((MethodNotAllowed, s"Can't do that! Supported: ${names mkString " or "}!"))
       }
-      .handleNotFound { complete(NotFound, "Not here!") }
+      .handleNotFound { complete((NotFound, "Not here!")) }
       .result()
 
   object MyApp extends App {
@@ -66,7 +66,10 @@ class RejectionHandlerExamplesSpec extends RoutingSpec {
 
   "test custom handler example" in {
     import akka.http.scaladsl.server._
-    Get() ~> Route.seal(reject(MissingCookieRejection("abc"))) ~> check {
+    val route = Route.seal(reject(MissingCookieRejection("abc")))
+
+    // tests:
+    Get() ~> route ~> check {
       responseAs[String] === "No cookies, no service!!!"
     }
   }

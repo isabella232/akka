@@ -1,30 +1,31 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.http.scaladsl
 
 import java.io.{ BufferedReader, BufferedWriter, InputStreamReader, OutputStreamWriter }
-import java.net.Socket
-import akka.http.scaladsl.Http.ServerBinding
-import akka.http.{ ClientConnectionSettings, ServerSettings }
-import com.typesafe.config.{ Config, ConfigFactory }
+import java.net.{ BindException, Socket }
+import java.util.concurrent.TimeoutException
 import scala.annotation.tailrec
-import scala.concurrent.{ Promise, Future, Await }
 import scala.concurrent.duration._
-import org.scalatest.{ BeforeAndAfterAll, Matchers, WordSpec }
+import scala.concurrent.{ Await, Future, Promise }
+import scala.util.{ Try, Success }
 import akka.actor.ActorSystem
-import akka.testkit.EventFilter
-import akka.stream.{ StreamTcpException, ActorMaterializer, BindFailedException }
-import akka.stream.scaladsl._
-import akka.stream.testkit._
+import akka.http.impl.util._
+import akka.http.scaladsl.Http.ServerBinding
 import akka.http.scaladsl.model.HttpEntity._
 import akka.http.scaladsl.model.HttpMethods._
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.model.headers._
-import akka.http.impl.util._
-
-import scala.util.Success
+import akka.http.{ ConnectionPoolSettings, ClientConnectionSettings, ServerSettings }
+import akka.stream.scaladsl._
+import akka.stream.testkit._
+import akka.stream.{ ActorMaterializer, BindFailedException, StreamTcpException }
+import akka.testkit.EventFilter
+import akka.util.ByteString
+import com.typesafe.config.{ Config, ConfigFactory }
+import org.scalatest.{ BeforeAndAfterAll, Matchers, WordSpec }
 
 class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
   val testConf: Config = ConfigFactory.parseString("""
@@ -55,7 +56,7 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
       sub.cancel()
     }
 
-    "report failure if bind fails" in {
+    "report failure if bind fails" in EventFilter[BindException](occurrences = 2).intercept {
       val (_, hostname, port) = TestUtils.temporaryServerHostnameAndPort()
       val binding = Http().bind(hostname, port)
       val probe1 = TestSubscriber.manualProbe[Http.IncomingConnection]()
@@ -138,9 +139,158 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
       Await.result(b1.unbind(), 1.second)
     }
 
+    "timeouts" should {
+      def bindServer(hostname: String, port: Int, serverTimeout: FiniteDuration): (Promise[Long], ServerBinding) = {
+        val s = ServerSettings(system)
+        val settings = s.copy(timeouts = s.timeouts.copy(idleTimeout = serverTimeout))
+
+        val receivedRequest = Promise[Long]()
+
+        def handle(req: HttpRequest): Future[HttpResponse] = {
+          receivedRequest.complete(Success(System.nanoTime()))
+          Promise().future // never complete the request with a response; we're waiting for the timeout to happen, nothing else
+        }
+
+        val binding = Http().bindAndHandleAsync(handle, hostname, port, settings = settings)
+        val b1 = Await.result(binding, 3.seconds)
+        (receivedRequest, b1)
+      }
+
+      "support server timeouts" should {
+        "close connection with idle client after idleTimeout" in {
+          val serverTimeout = 300.millis
+          val (_, hostname, port) = TestUtils.temporaryServerHostnameAndPort()
+          val (receivedRequest: Promise[Long], b1: ServerBinding) = bindServer(hostname, port, serverTimeout)
+
+          try {
+            def runIdleRequest(uri: Uri): Future[HttpResponse] = {
+              val itNeverEnds = Chunked.fromData(ContentTypes.`text/plain(UTF-8)`, Source.maybe[ByteString])
+              Http().outgoingConnection(hostname, port)
+                .runWith(Source.single(HttpRequest(PUT, uri, entity = itNeverEnds)), Sink.head)
+                ._2
+            }
+
+            val clientsResponseFuture = runIdleRequest("/")
+
+            // await for the server to get the request
+            val serverReceivedRequestAtNanos = Await.result(receivedRequest.future, 2.seconds)
+
+            // waiting for the timeout to happen on the client
+            intercept[StreamTcpException] {
+              Await.result(clientsResponseFuture, 2.second)
+            }
+            (System.nanoTime() - serverReceivedRequestAtNanos).millis should be >= serverTimeout
+          } finally Await.result(b1.unbind(), 1.second)
+        }
+      }
+
+      "support client timeouts" should {
+        "close connection with idle server after idleTimeout (using connection level client API)" in {
+          val serverTimeout = 10.seconds
+
+          val cs = ClientConnectionSettings(system)
+          val clientTimeout = 345.millis
+          val clientSettings = cs.copy(idleTimeout = clientTimeout)
+
+          val (_, hostname, port) = TestUtils.temporaryServerHostnameAndPort()
+          val (receivedRequest: Promise[Long], b1: ServerBinding) = bindServer(hostname, port, serverTimeout)
+
+          try {
+            def runRequest(uri: Uri): Future[HttpResponse] = {
+              val itNeverSends = Chunked.fromData(ContentTypes.`text/plain(UTF-8)`, Source.maybe[ByteString])
+              Http().outgoingConnection(hostname, port, settings = clientSettings)
+                .runWith(Source.single(HttpRequest(POST, uri, entity = itNeverSends)), Sink.head)
+                ._2
+            }
+
+            val clientsResponseFuture = runRequest("/")
+
+            // await for the server to get the request
+            val serverReceivedRequestAtNanos = Await.result(receivedRequest.future, 2.seconds)
+
+            // waiting for the timeout to happen on the client
+            intercept[TimeoutException] {
+              Await.result(clientsResponseFuture, 2.second)
+            }
+            val actualTimeout = System.nanoTime() - serverReceivedRequestAtNanos
+            actualTimeout.nanos should be >= clientTimeout
+            actualTimeout.nanos should be < serverTimeout
+          } finally Await.result(b1.unbind(), 1.second)
+        }
+
+        "close connection with idle server after idleTimeout (using pool level client API)" in {
+          val serverTimeout = 10.seconds
+
+          val cs = ConnectionPoolSettings(system)
+          val clientTimeout = 345.millis
+          val clientPoolSettings = cs.copy(idleTimeout = clientTimeout)
+
+          val (_, hostname, port) = TestUtils.temporaryServerHostnameAndPort()
+          val (receivedRequest: Promise[Long], b1: ServerBinding) = bindServer(hostname, port, serverTimeout)
+
+          try {
+            val pool = Http().cachedHostConnectionPool[Int](hostname, port, clientPoolSettings)
+
+            def runRequest(uri: Uri): Future[(Try[HttpResponse], Int)] = {
+              val itNeverSends = Chunked.fromData(ContentTypes.`text/plain(UTF-8)`, Source.maybe[ByteString])
+              Source.single(HttpRequest(POST, uri, entity = itNeverSends) -> 1)
+                .via(pool)
+                .runWith(Sink.head)
+            }
+
+            val clientsResponseFuture = runRequest("/")
+
+            // await for the server to get the request
+            val serverReceivedRequestAtNanos = Await.result(receivedRequest.future, 2.seconds)
+
+            // waiting for the timeout to happen on the client
+            intercept[TimeoutException] {
+              Await.result(clientsResponseFuture, 2.second)
+            }
+            val actualTimeout = System.nanoTime() - serverReceivedRequestAtNanos
+            actualTimeout.nanos should be >= clientTimeout
+            actualTimeout.nanos should be < serverTimeout
+          } finally Await.result(b1.unbind(), 1.second)
+        }
+
+        "close connection with idle server after idleTimeout (using request level client API)" in {
+          val serverTimeout = 10.seconds
+
+          val cs = ConnectionPoolSettings(system)
+          val clientTimeout = 345.millis
+          val clientPoolSettings = cs.copy(idleTimeout = clientTimeout)
+
+          val (_, hostname, port) = TestUtils.temporaryServerHostnameAndPort()
+          val (receivedRequest: Promise[Long], b1: ServerBinding) = bindServer(hostname, port, serverTimeout)
+
+          try {
+            def runRequest(uri: Uri): Future[HttpResponse] = {
+              val itNeverSends = Chunked.fromData(ContentTypes.`text/plain(UTF-8)`, Source.maybe[ByteString])
+              Http().singleRequest(HttpRequest(POST, uri, entity = itNeverSends), settings = clientPoolSettings)
+            }
+
+            val clientsResponseFuture = runRequest(s"http://$hostname:$port/")
+
+            // await for the server to get the request
+            val serverReceivedRequestAtNanos = Await.result(receivedRequest.future, 2.seconds)
+
+            // waiting for the timeout to happen on the client
+            intercept[TimeoutException] {
+              Await.result(clientsResponseFuture, 3.second)
+            }
+            val actualTimeout = System.nanoTime() - serverReceivedRequestAtNanos
+            actualTimeout.nanos should be >= clientTimeout
+            actualTimeout.nanos should be < serverTimeout
+          } finally Await.result(b1.unbind(), 1.second)
+        }
+      }
+    }
+
     "log materialization errors in `bindAndHandle`" which {
 
       "are triggered in `transform`" in Utils.assertAllStagesStopped {
+        // FIXME racy feature, needs https://github.com/akka/akka/issues/17849 to be fixed
+        pending
         val (_, hostname, port) = TestUtils.temporaryServerHostnameAndPort()
         val flow = Flow[HttpRequest].transform[HttpResponse](() ⇒ sys.error("BOOM"))
         val binding = Http(system2).bindAndHandle(flow, hostname, port)(materializer2)
@@ -160,6 +310,8 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
       }(materializer2)
 
       "are triggered in `mapMaterialized`" in Utils.assertAllStagesStopped {
+        // FIXME racy feature, needs https://github.com/akka/akka/issues/17849 to be fixed
+        pending
         val (_, hostname, port) = TestUtils.temporaryServerHostnameAndPort()
         val flow = Flow[HttpRequest].map(_ ⇒ HttpResponse()).mapMaterializedValue(_ ⇒ sys.error("BOOM"))
         val binding = Http(system2).bindAndHandle(flow, hostname, port)(materializer2)
@@ -202,10 +354,8 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
         toStrict(response.entity) shouldEqual HttpEntity("yeah")
 
         clientOutSub.sendComplete()
-        serverInSub.request(1) // work-around for #16552
         serverIn.expectComplete()
         serverOutSub.expectCancellation()
-        clientInSub.request(1) // work-around for #16552
         clientIn.expectComplete()
 
         binding.foreach(_.unbind())
@@ -218,7 +368,7 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
         val (serverIn, serverOut) = acceptConnection()
 
         val chunks = List(Chunk("abc"), Chunk("defg"), Chunk("hijkl"), LastChunk)
-        val chunkedContentType: ContentType = MediaTypes.`application/base64`
+        val chunkedContentType: ContentType = MediaTypes.`application/base64` withCharset HttpCharsets.`UTF-8`
         val chunkedEntity = HttpEntity.Chunked(chunkedContentType, Source(chunks))
 
         val clientOutSub = clientOut.expectSubscription()
@@ -242,10 +392,8 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
         Await.result(chunkStream2.grouped(1000).runWith(Sink.head), 100.millis) shouldEqual chunks
 
         clientOutSub.sendComplete()
-        serverInSub.request(1) // work-around for #16552
         serverIn.expectComplete()
         serverOutSub.expectCancellation()
-        clientInSub.request(1) // work-around for #16552
         clientIn.expectComplete()
 
         connSourceSub.cancel()
@@ -275,10 +423,8 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
         val response = clientIn.expectNext()
         toStrict(response.entity) shouldEqual HttpEntity("yeah")
 
-        serverInSub.request(1) // work-around for #16552
         serverIn.expectComplete()
         serverOutSub.expectCancellation()
-        clientInSub.request(1) // work-around for #16552
         clientIn.expectComplete()
 
         connSourceSub.cancel()
@@ -323,13 +469,10 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
     def acceptConnection(): (TestSubscriber.ManualProbe[HttpRequest], TestPublisher.ManualProbe[HttpResponse]) = {
       connSourceSub.request(1)
       val incomingConnection = connSource.expectNext()
-      val sink = Sink.publisher[HttpRequest]
+      val sink = Sink.publisher[HttpRequest](false)
       val source = Source.subscriber[HttpResponse]
 
-      val handler = Flow(sink, source)(Keep.both) { implicit b ⇒
-        (snk, src) ⇒
-          (snk.inlet, src.outlet)
-      }
+      val handler = Flow.fromSinkAndSourceMat(sink, source)(Keep.both)
 
       val (pub, sub) = incomingConnection.handleWith(handler)
       val requestSubscriberProbe = TestSubscriber.manualProbe[HttpRequest]()

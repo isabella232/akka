@@ -7,6 +7,7 @@ package directives
 
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.server.{ Route, ValidationRejection }
+import akka.testkit.EventFilter
 
 class RouteDirectivesExamplesSpec extends RoutingSpec {
 
@@ -16,10 +17,11 @@ class RouteDirectivesExamplesSpec extends RoutingSpec {
         complete(HttpResponse(entity = "foo"))
       } ~
         path("b") {
-          complete(StatusCodes.Created, "bar")
+          complete((StatusCodes.Created, "bar"))
         } ~
         (path("c") & complete("baz")) // `&` also works with `complete` as the 2nd argument
 
+    // tests:
     Get("/a") ~> route ~> check {
       status shouldEqual StatusCodes.OK
       responseAs[String] shouldEqual "foo"
@@ -50,6 +52,7 @@ class RouteDirectivesExamplesSpec extends RoutingSpec {
           reject(ValidationRejection("Restricted!"))
         }
 
+    // tests:
     Get("/a") ~> route ~> check {
       responseAs[String] shouldEqual "foo"
     }
@@ -70,6 +73,7 @@ class RouteDirectivesExamplesSpec extends RoutingSpec {
           }
       }
 
+    // tests:
     Get("/foo/") ~> route ~> check {
       responseAs[String] shouldEqual "yes"
     }
@@ -80,12 +84,13 @@ class RouteDirectivesExamplesSpec extends RoutingSpec {
     }
   }
 
-  "failwith-examples" in {
+  "failwith-examples" in EventFilter[RuntimeException](start = "Error during processing of request", occurrences = 1).intercept {
     val route =
       path("foo") {
         failWith(new RuntimeException("Oops."))
       }
 
+    // tests:
     Get("/foo") ~> Route.seal(route) ~> check {
       status shouldEqual StatusCodes.InternalServerError
       responseAs[String] shouldEqual "There was an internal server error."

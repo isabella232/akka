@@ -4,19 +4,19 @@
 
 package akka.http.impl.util
 
-import java.io.InputStream
-import java.util.concurrent.atomic.{ AtomicReference, AtomicBoolean }
-import akka.stream.impl.StreamLayout.Module
-import akka.stream.impl.{ SourceModule, SinkModule, PublisherSink }
-import akka.stream.scaladsl.FlexiMerge._
-import org.reactivestreams.{ Subscription, Processor, Subscriber, Publisher }
-import scala.collection.immutable
-import scala.concurrent.{ Promise, ExecutionContext, Future }
-import akka.util.ByteString
+import java.util.concurrent.atomic.{ AtomicBoolean, AtomicReference }
+
 import akka.http.scaladsl.model.RequestEntity
 import akka.stream._
+import akka.stream.impl.StreamLayout.Module
+import akka.stream.impl.{ PublisherSink, SinkModule, SourceModule }
 import akka.stream.scaladsl._
 import akka.stream.stage._
+import akka.util.ByteString
+import org.reactivestreams.{ Processor, Publisher, Subscriber, Subscription }
+
+import scala.collection.immutable
+import scala.concurrent.{ ExecutionContext, Future, Promise }
 
 /**
  * INTERNAL API
@@ -159,11 +159,11 @@ private[http] object StreamUtils {
       case Nil      ⇒ Nil
       case Seq(one) ⇒ Vector(input.via(one))
       case multiple ⇒
-        val (fanoutSub, fanoutPub) = Source.subscriber[ByteString].toMat(Sink.fanoutPublisher(16, 16))(Keep.both).run()
+        val (fanoutSub, fanoutPub) = Source.subscriber[ByteString].toMat(Sink.publisher(true))(Keep.both).run()
         val sources = transformers.map { flow ⇒
           // Doubly wrap to ensure that subscription to the running publisher happens before the final sources
           // are exposed, so there is no race
-          Source(Source(fanoutPub).viaMat(flow)(Keep.right).runWith(Sink.publisher))
+          Source(Source(fanoutPub).viaMat(flow)(Keep.right).runWith(Sink.publisher(false)))
         }
         // The fanout publisher must be wired to the original source after all fanout subscribers have been subscribed
         input.runWith(Sink(fanoutSub))
@@ -246,18 +246,6 @@ private[http] object StreamUtils {
         throw new IllegalStateException("Value can be only set once.")
   }
 
-  /** A merge for two streams that just forwards all elements and closes the connection eagerly. */
-  class EagerCloseMerge2[T](name: String) extends FlexiMerge[T, FanInShape2[T, T, T]](new FanInShape2(name), Attributes.name(name)) {
-    def createMergeLogic(s: FanInShape2[T, T, T]): MergeLogic[T] =
-      new MergeLogic[T] {
-        def initialState: State[T] = State[T](ReadAny(s.in0, s.in1)) {
-          case (ctx, port, in) ⇒ ctx.emit(in); SameState
-        }
-
-        override def initialCompletionHandling: CompletionHandling = eagerClose
-      }
-  }
-
   // TODO: remove after #16394 is cleared
   def recover[A, B >: A](pf: PartialFunction[Throwable, B]): () ⇒ PushPullStage[A, B] = {
     val stage = new PushPullStage[A, B] {
@@ -315,6 +303,23 @@ private[http] object StreamUtils {
       (stage, promise.future)
     }
     Flow[T].transformMaterializing(newForeachStage)
+  }
+
+  /**
+   * Similar to Source.maybe but doesn't rely on materialization. Can only be used once.
+   */
+  trait OneTimeValve {
+    def source[T]: Source[T, Unit]
+    def open(): Unit
+  }
+  object OneTimeValve {
+    def apply(): OneTimeValve = new OneTimeValve {
+      val promise = Promise[Unit]()
+      val _source = Source(promise.future).drop(1) // we are only interested in the completion event
+
+      def source[T]: Source[T, Unit] = _source.asInstanceOf[Source[T, Unit]] // safe, because source won't generate any elements
+      def open(): Unit = promise.success(())
+    }
   }
 }
 

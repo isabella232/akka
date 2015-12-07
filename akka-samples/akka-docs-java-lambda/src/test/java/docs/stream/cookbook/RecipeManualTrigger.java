@@ -7,7 +7,10 @@ import akka.actor.ActorSystem;
 import akka.japi.Pair;
 import akka.stream.ActorMaterializer;
 import akka.stream.FanInShape2;
+import akka.stream.FlowShape;
 import akka.stream.Materializer;
+import akka.stream.SourceShape;
+import akka.stream.ClosedShape;
 import akka.stream.javadsl.*;
 import akka.stream.javadsl.ZipWith;
 import akka.stream.testkit.*;
@@ -48,25 +51,30 @@ public class RecipeManualTrigger extends RecipeTest {
   public void zipped() throws Exception {
     new JavaTestKit(system) {
       {
-        Source<Message, BoxedUnit> elements = Source.from(Arrays.asList("1", "2", "3", "4")).map(t -> new Message(t));
-
         final Source<Trigger, TestPublisher.Probe<Trigger>> triggerSource = TestSource.probe(system);
         final Sink<Message, TestSubscriber.Probe<Message>> messageSink = TestSink.probe(system);
 
         //#manually-triggered-stream
-        Flow<Pair<Message, Trigger>, Message, BoxedUnit> takeMessage =
-          Flow.<Pair<Message, Trigger>> create().map(p -> p.first());
-
         final RunnableGraph<Pair<TestPublisher.Probe<Trigger>, TestSubscriber.Probe<Message>>> g =
-          FlowGraph.factory().closed(triggerSource, messageSink,
-            (p, s) -> new Pair<TestPublisher.Probe<Trigger>, TestSubscriber.Probe<Message>>(p, s),
-            (builder, source, sink) -> {
-          final FanInShape2<Message, Trigger, Pair<Message, Trigger>> zip =
-            builder.graph(Zip.create());
-          builder.from(elements).to(zip.in0());
-          builder.from(source).to(zip.in1());
-          builder.from(zip.out()).via(takeMessage).to(sink);
-        });
+          RunnableGraph.<Pair<TestPublisher.Probe<Trigger>, TestSubscriber.Probe<Message>>>fromGraph(
+            GraphDSL.create(
+              triggerSource,
+              messageSink,
+              (p, s) -> new Pair<>(p, s),
+              (builder, source, sink) -> {
+                SourceShape<Message> elements =
+                  builder.add(Source.from(Arrays.asList("1", "2", "3", "4")).map(t -> new Message(t)));
+                FlowShape<Pair<Message, Trigger>, Message> takeMessage =
+                  builder.add(Flow.<Pair<Message, Trigger>>create().map(p -> p.first()));
+                final FanInShape2<Message, Trigger, Pair<Message, Trigger>> zip =
+                  builder.add(Zip.create());
+                builder.from(elements).toInlet(zip.in0());
+                builder.from(source).toInlet(zip.in1());
+                builder.from(zip.out()).via(takeMessage).to(sink);
+                return ClosedShape.getInstance();
+              }
+            )
+          );
         //#manually-triggered-stream
 
         Pair<TestPublisher.Probe<Trigger>, TestSubscriber.Probe<Message>> pubSub = g.run(mat);
@@ -98,22 +106,28 @@ public class RecipeManualTrigger extends RecipeTest {
   public void zipWith() throws Exception {
     new JavaTestKit(system) {
       {
-        Source<Message, BoxedUnit> elements = Source.from(Arrays.asList("1", "2", "3", "4")).map(t -> new Message(t));
-
         final Source<Trigger, TestPublisher.Probe<Trigger>> triggerSource = TestSource.probe(system);
         final Sink<Message, TestSubscriber.Probe<Message>> messageSink = TestSink.probe(system);
 
         //#manually-triggered-stream-zipwith
         final RunnableGraph<Pair<TestPublisher.Probe<Trigger>, TestSubscriber.Probe<Message>>> g =
-          FlowGraph.factory().closed(triggerSource, messageSink,
-            (p, s) -> new Pair<TestPublisher.Probe<Trigger>, TestSubscriber.Probe<Message>>(p, s),
-            (builder, source, sink) -> {
-          final FanInShape2<Message, Trigger, Message> zipWith =
-            builder.graph(ZipWith.create((msg, trigger) -> msg));
-          builder.from(elements).to(zipWith.in0());
-          builder.from(source).to(zipWith.in1());
-          builder.from(zipWith.out()).to(sink);
-        });
+          RunnableGraph.<Pair<TestPublisher.Probe<Trigger>, TestSubscriber.Probe<Message>>>fromGraph(
+            GraphDSL.create(
+              triggerSource,
+              messageSink,
+              (p, s) -> new Pair<>(p, s),
+              (builder, source, sink) -> {
+                final SourceShape<Message> elements =
+                  builder.add(Source.from(Arrays.asList("1", "2", "3", "4")).map(t -> new Message(t)));
+                final FanInShape2<Message, Trigger, Message> zipWith =
+                  builder.add(ZipWith.create((msg, trigger) -> msg));
+                builder.from(elements).toInlet(zipWith.in0());
+                builder.from(source).toInlet(zipWith.in1());
+                builder.from(zipWith.out()).to(sink);
+                return ClosedShape.getInstance();
+              }
+            )
+          );
         //#manually-triggered-stream-zipwith
 
         Pair<TestPublisher.Probe<Trigger>, TestSubscriber.Probe<Message>> pubSub = g.run(mat);

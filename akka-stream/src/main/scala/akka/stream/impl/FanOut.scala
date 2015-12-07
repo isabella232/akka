@@ -3,7 +3,6 @@
  */
 package akka.stream.impl
 
-import akka.stream.scaladsl.FlexiRoute.RouteLogic
 import akka.stream.{ AbruptTerminationException, Shape, ActorMaterializerSettings }
 
 import scala.collection.immutable
@@ -141,7 +140,7 @@ private[akka] object FanOut {
       while (!(marked(id) && pending(id))) {
         id += 1
         if (id == outputCount) id = 0
-        assert(id != preferredId, "Tried to enqueue without waiting for any demand")
+        require(id != preferredId, "Tried to enqueue without waiting for any demand")
       }
       id
     }
@@ -196,7 +195,7 @@ private[akka] object FanOut {
     /**
      * Will only transfer an element when all marked outputs
      * have demand, and will complete as soon as any of the marked
-     * outputs have cancelled.
+     * outputs have canceled.
      */
     val AllOfMarkedOutputs = new TransferState {
       override def isCompleted: Boolean = markedCancelled > 0 || markedCount == 0
@@ -206,7 +205,7 @@ private[akka] object FanOut {
     /**
      * Will transfer an element when any of the  marked outputs
      * have demand, and will complete when all of the marked
-     * outputs have cancelled.
+     * outputs have canceled.
      */
     val AnyOfMarkedOutputs = new TransferState {
       override def isCompleted: Boolean = markedCancelled == markedCount
@@ -288,54 +287,6 @@ private[akka] abstract class FanOut(val settings: ActorMaterializerSettings, val
 /**
  * INTERNAL API
  */
-private[akka] object Broadcast {
-  def props(settings: ActorMaterializerSettings, eagerCancel: Boolean, outputPorts: Int): Props =
-    Props(new Broadcast(settings, outputPorts, eagerCancel)).withDeploy(Deploy.local)
-}
-
-/**
- * INTERNAL API
- */
-private[akka] class Broadcast(_settings: ActorMaterializerSettings, _outputPorts: Int, eagerCancel: Boolean) extends FanOut(_settings, _outputPorts) {
-  outputBunch.unmarkCancelledOutputs(!eagerCancel)
-  outputBunch.markAllOutputs()
-
-  initialPhase(1, TransferPhase(primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs) { () ⇒
-    val elem = primaryInputs.dequeueInputElement()
-    outputBunch.enqueueMarked(elem)
-  })
-}
-
-/**
- * INTERNAL API
- */
-private[akka] object Balance {
-  def props(settings: ActorMaterializerSettings, outputPorts: Int, waitForAllDownstreams: Boolean): Props =
-    Props(new Balance(settings, outputPorts, waitForAllDownstreams)).withDeploy(Deploy.local)
-}
-
-/**
- * INTERNAL API
- */
-private[akka] class Balance(_settings: ActorMaterializerSettings, _outputPorts: Int, waitForAllDownstreams: Boolean) extends FanOut(_settings, _outputPorts) {
-  outputBunch.markAllOutputs()
-
-  val runningPhase = TransferPhase(primaryInputs.NeedsInput && outputBunch.AnyOfMarkedOutputs) { () ⇒
-    val elem = primaryInputs.dequeueInputElement()
-    outputBunch.enqueueAndYield(elem)
-  }
-
-  if (waitForAllDownstreams)
-    initialPhase(1, TransferPhase(primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs) { () ⇒
-      nextPhase(runningPhase)
-    })
-  else
-    initialPhase(1, runningPhase)
-}
-
-/**
- * INTERNAL API
- */
 private[akka] object Unzip {
   def props(settings: ActorMaterializerSettings): Props =
     Props(new Unzip(settings)).withDeploy(Deploy.local)
@@ -363,12 +314,4 @@ private[akka] class Unzip(_settings: ActorMaterializerSettings) extends FanOut(_
             s"can only handle Tuple2 and akka.japi.Pair!")
     }
   })
-}
-
-/**
- * INTERNAL API
- */
-private[akka] object FlexiRoute {
-  def props[T, S <: Shape](settings: ActorMaterializerSettings, ports: S, routeLogic: RouteLogic[T]): Props =
-    Props(new FlexiRouteImpl(settings, ports, routeLogic)).withDeploy(Deploy.local)
 }

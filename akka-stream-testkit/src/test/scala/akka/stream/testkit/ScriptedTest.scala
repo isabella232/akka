@@ -4,23 +4,23 @@
 package akka.stream.testkit
 
 import akka.actor.ActorSystem
-import akka.stream.ActorMaterializerSettings
-import akka.stream.scaladsl.{ Sink, Source, Flow }
-import akka.stream.testkit._
-import akka.stream.testkit.StreamTestKit._
+import akka.stream.testkit.TestPublisher._
+import akka.stream.testkit.TestSubscriber._
+import akka.stream.{ ActorMaterializer, ActorMaterializerSettings }
+import akka.stream.scaladsl.{ Flow, Sink, Source }
 import org.reactivestreams.Publisher
 import org.scalatest.Matchers
+
 import scala.annotation.tailrec
 import scala.concurrent.duration._
 import scala.concurrent.forkjoin.ThreadLocalRandom
-import akka.stream.ActorMaterializer
 
 trait ScriptedTest extends Matchers {
 
   class ScriptException(msg: String) extends RuntimeException(msg)
 
   def toPublisher[In, Out]: (Source[Out, _], ActorMaterializer) ⇒ Publisher[Out] =
-    (f, m) ⇒ f.runWith(Sink.publisher)(m)
+    (f, m) ⇒ f.runWith(Sink.publisher(false))(m)
 
   object Script {
     def apply[In, Out](phases: (Seq[In], Seq[Out])*): Script[In, Out] = {
@@ -34,35 +34,40 @@ trait ScriptedTest extends Matchers {
         jumps ++= Vector.fill(ins.size - 1)(0) ++ Vector(outs.size)
       }
 
-      Script(providedInputs, expectedOutputs, jumps, inputCursor = 0, outputCursor = 0, outputEndCursor = 0, completed = false)
+      new Script(providedInputs, expectedOutputs, jumps, inputCursor = 0, outputCursor = 0, outputEndCursor = 0, completed = false)
     }
   }
 
-  final case class Script[In, Out](
-    providedInputs: Vector[In],
-    expectedOutputs: Vector[Out],
-    jumps: Vector[Int],
-    inputCursor: Int,
-    outputCursor: Int,
-    outputEndCursor: Int,
-    completed: Boolean) {
+  final class Script[In, Out](
+    val providedInputs: Vector[In],
+    val expectedOutputs: Vector[Out],
+    val jumps: Vector[Int],
+    val inputCursor: Int,
+    val outputCursor: Int,
+    val outputEndCursor: Int,
+    val completed: Boolean) {
     require(jumps.size == providedInputs.size)
 
     def provideInput: (In, Script[In, Out]) =
       if (noInsPending)
         throw new ScriptException("Script cannot provide more input.")
       else
-        (providedInputs(inputCursor), this.copy(inputCursor = inputCursor + 1, outputEndCursor = outputEndCursor + jumps(inputCursor)))
+        (providedInputs(inputCursor),
+          new Script(providedInputs, expectedOutputs, jumps, inputCursor = inputCursor + 1,
+            outputCursor, outputEndCursor = outputEndCursor + jumps(inputCursor), completed))
 
     def consumeOutput(out: Out): Script[In, Out] = {
       if (noOutsPending)
         throw new ScriptException(s"Tried to produce element ${out} but no elements should be produced right now.")
       out should be(expectedOutputs(outputCursor))
-      this.copy(outputCursor = outputCursor + 1)
+      new Script(providedInputs, expectedOutputs, jumps, inputCursor,
+        outputCursor = outputCursor + 1, outputEndCursor, completed)
     }
 
     def complete(): Script[In, Out] = {
-      if (finished) copy(completed = true)
+      if (finished)
+        new Script(providedInputs, expectedOutputs, jumps, inputCursor,
+          outputCursor = outputCursor + 1, outputEndCursor, completed = true)
       else fail("received onComplete prematurely")
     }
 

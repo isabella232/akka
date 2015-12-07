@@ -3,15 +3,19 @@
  */
 package akka.stream.impl
 
-import java.util.concurrent.atomic.AtomicBoolean
-import akka.actor.{ ActorRef, Cancellable, PoisonPill, Props }
-import akka.stream.impl.StreamLayout.Module
+import java.util.concurrent.atomic.AtomicInteger
+
+import akka.actor._
 import akka.stream._
+import akka.stream.impl.AcknowledgePublisher.{ Ok, Rejected }
+import akka.stream.impl.StreamLayout.Module
+import akka.util.Timeout
 import org.reactivestreams._
+
 import scala.annotation.unchecked.uncheckedVariance
-import scala.concurrent.duration.FiniteDuration
-import scala.concurrent.{ Promise }
-import scala.util.{ Failure, Success }
+import scala.concurrent.duration.{ FiniteDuration, _ }
+import scala.concurrent.{ Future, Promise }
+import scala.language.postfixOps
 
 /**
  * INTERNAL API
@@ -73,60 +77,13 @@ private[akka] final class PublisherSource[Out](p: Publisher[Out], val attributes
 /**
  * INTERNAL API
  */
-private[akka] final class LazyEmptySource[Out](val attributes: Attributes, shape: SourceShape[Out]) extends SourceModule[Out, Promise[Unit]](shape) {
-  import ReactiveStreamsCompliance._
-
+private[akka] final class MaybeSource[Out](val attributes: Attributes, shape: SourceShape[Out]) extends SourceModule[Out, Promise[Option[Out]]](shape) {
   override def create(context: MaterializationContext) = {
-    val p = Promise[Unit]()
-
-    val pub = new Publisher[Unit] {
-      override def subscribe(s: Subscriber[_ >: Unit]) = {
-        requireNonNullSubscriber(s)
-        tryOnSubscribe(s, new Subscription {
-          override def request(n: Long): Unit = ()
-          override def cancel(): Unit = p.trySuccess(())
-        })
-        p.future.onComplete {
-          case Success(_)  ⇒ tryOnComplete(s)
-          case Failure(ex) ⇒ tryOnError(s, ex) // due to external signal
-        }(context.materializer.executionContext)
-      }
-    }
-
-    pub.asInstanceOf[Publisher[Out]] → p
+    val p = Promise[Option[Out]]()
+    new MaybePublisher[Out](p, attributes.nameOrDefault("MaybeSource"))(context.materializer.executionContext) → p
   }
-
-  override protected def newInstance(shape: SourceShape[Out]): SourceModule[Out, Promise[Unit]] = new LazyEmptySource[Out](attributes, shape)
-  override def withAttributes(attr: Attributes): Module = new LazyEmptySource(attr, amendShape(attr))
-}
-
-/**
- * INTERNAL API
- * Elements are emitted periodically with the specified interval.
- * The tick element will be delivered to downstream consumers that has requested any elements.
- * If a consumer has not requested any elements at the point in time when the tick
- * element is produced it will not receive that tick element later. It will
- * receive new tick elements as soon as it has requested more elements.
- */
-private[akka] final class TickSource[Out](initialDelay: FiniteDuration, interval: FiniteDuration, tick: Out, val attributes: Attributes, shape: SourceShape[Out]) extends SourceModule[Out, Cancellable](shape) {
-
-  override def create(context: MaterializationContext) = {
-    val cancelled = new AtomicBoolean(false)
-    val actorMaterializer = ActorMaterializer.downcast(context.materializer)
-    val effectiveSettings = actorMaterializer.effectiveSettings(context.effectiveAttributes)
-    val ref = actorMaterializer.actorOf(context,
-      TickPublisher.props(initialDelay, interval, tick, effectiveSettings, cancelled))
-    (ActorPublisher[Out](ref), new Cancellable {
-      override def cancel(): Boolean = {
-        if (!isCancelled) ref ! PoisonPill
-        true
-      }
-      override def isCancelled: Boolean = cancelled.get()
-    })
-  }
-
-  override protected def newInstance(shape: SourceShape[Out]): SourceModule[Out, Cancellable] = new TickSource[Out](initialDelay, interval, tick, attributes, shape)
-  override def withAttributes(attr: Attributes): Module = new TickSource(initialDelay, interval, tick, attr, amendShape(attr))
+  override protected def newInstance(shape: SourceShape[Out]): SourceModule[Out, Promise[Option[Out]]] = new MaybeSource[Out](attributes, shape)
+  override def withAttributes(attr: Attributes): Module = new MaybeSource(attr, amendShape(attr))
 }
 
 /**
@@ -141,7 +98,8 @@ private[akka] final class ActorPublisherSource[Out](props: Props, val attributes
     (akka.stream.actor.ActorPublisher[Out](publisherRef), publisherRef)
   }
 
-  override protected def newInstance(shape: SourceShape[Out]): SourceModule[Out, ActorRef] = new ActorPublisherSource[Out](props, attributes, shape)
+  override protected def newInstance(shape: SourceShape[Out]): SourceModule[Out, ActorRef] =
+    new ActorPublisherSource[Out](props, attributes, shape)
   override def withAttributes(attr: Attributes): Module = new ActorPublisherSource(props, attr, amendShape(attr))
 }
 
@@ -162,4 +120,33 @@ private[akka] final class ActorRefSource[Out](
     new ActorRefSource[Out](bufferSize, overflowStrategy, attributes, shape)
   override def withAttributes(attr: Attributes): Module =
     new ActorRefSource(bufferSize, overflowStrategy, attr, amendShape(attr))
+}
+
+/**
+ * INTERNAL API
+ */
+private[akka] final class AcknowledgeSource[Out](bufferSize: Int, overflowStrategy: OverflowStrategy,
+                                                 val attributes: Attributes, shape: SourceShape[Out],
+                                                 timeout: FiniteDuration = 5 seconds)
+  extends SourceModule[Out, SourceQueue[Out]](shape) {
+
+  override def create(context: MaterializationContext) = {
+    import akka.pattern.ask
+    val ref = ActorMaterializer.downcast(context.materializer).actorOf(context,
+      AcknowledgePublisher.props(bufferSize, overflowStrategy))
+    implicit val t = Timeout(timeout)
+
+    (akka.stream.actor.ActorPublisher[Out](ref), new SourceQueue[Out] {
+      implicit val ctx = context.materializer.executionContext
+      override def offer(out: Out): Future[Boolean] = (ref ? out).map {
+        case Ok()       ⇒ true
+        case Rejected() ⇒ false
+      }
+    })
+  }
+
+  override protected def newInstance(shape: SourceShape[Out]): SourceModule[Out, SourceQueue[Out]] =
+    new AcknowledgeSource[Out](bufferSize, overflowStrategy, attributes, shape, timeout)
+  override def withAttributes(attr: Attributes): Module =
+    new AcknowledgeSource(bufferSize, overflowStrategy, attr, amendShape(attr), timeout)
 }

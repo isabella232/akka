@@ -14,7 +14,7 @@ private[akka] object FixedSizeBuffer {
   /**
    * INTERNAL API
    *
-   * Returns a fixed size buffer backed by an array. The buffer implementation DOES NOT check agains overflow or
+   * Returns a fixed size buffer backed by an array. The buffer implementation DOES NOT check against overflow or
    * underflow, it is the responsibility of the user to track or check the capacity of the buffer before enqueueing
    * dequeueing or dropping.
    *
@@ -26,6 +26,7 @@ private[akka] object FixedSizeBuffer {
     else new ModuloFixedSizeBuffer(size)
 
   sealed abstract class FixedSizeBuffer[T](val size: Int) {
+    override def toString = s"Buffer($size, $readIdx, $writeIdx)(${(readIdx until writeIdx).map(get).mkString(", ")})"
     private val buffer = new Array[AnyRef](size)
 
     protected var readIdx = 0

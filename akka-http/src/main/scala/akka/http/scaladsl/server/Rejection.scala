@@ -70,7 +70,7 @@ case class MalformedHeaderRejection(headerName: String, errorMsg: String,
  * Rejection created by unmarshallers.
  * Signals that the request was rejected because the requests content-type is unsupported.
  */
-case class UnsupportedRequestContentTypeRejection(supported: Set[ContentTypeRange]) extends Rejection
+case class UnsupportedRequestContentTypeRejection(supported: immutable.Set[ContentTypeRange]) extends Rejection
 
 /**
  * Rejection created by decoding filters.
@@ -83,7 +83,7 @@ case class UnsupportedRequestEncodingRejection(supported: HttpEncoding) extends 
  * Signals that the request was rejected because the requests contains only unsatisfiable ByteRanges.
  * The actualEntityLength gives the client a hint to create satisfiable ByteRanges.
  */
-case class UnsatisfiableRangeRejection(unsatisfiableRanges: Seq[ByteRange], actualEntityLength: Long) extends Rejection
+case class UnsatisfiableRangeRejection(unsatisfiableRanges: immutable.Seq[ByteRange], actualEntityLength: Long) extends Rejection
 
 /**
  * Rejection created by range directives.
@@ -112,14 +112,14 @@ case object RequestEntityExpectedRejection extends Rejection
  * Signals that the request was rejected because the service is not capable of producing a response entity whose
  * content type is accepted by the client
  */
-case class UnacceptedResponseContentTypeRejection(supported: Set[ContentType]) extends Rejection
+case class UnacceptedResponseContentTypeRejection(supported: immutable.Set[ContentNegotiator.Alternative]) extends Rejection
 
 /**
  * Rejection created by encoding filters.
  * Signals that the request was rejected because the service is not capable of producing a response entity whose
  * content encoding is accepted by the client
  */
-case class UnacceptedResponseEncodingRejection(supported: Set[HttpEncoding]) extends Rejection
+case class UnacceptedResponseEncodingRejection(supported: immutable.Set[HttpEncoding]) extends Rejection
 object UnacceptedResponseEncodingRejection {
   def apply(supported: HttpEncoding): UnacceptedResponseEncodingRejection = UnacceptedResponseEncodingRejection(Set(supported))
 }
@@ -169,6 +169,12 @@ case class MissingCookieRejection(cookieName: String) extends Rejection
 case object ExpectedWebsocketRequestRejection extends Rejection
 
 /**
+ * Rejection created when a websocket request was not handled because none of the given subprotocols
+ * was supported.
+ */
+case class UnsupportedWebsocketSubprotocolRejection(supportedProtocol: String) extends Rejection
+
+/**
  * Rejection created by the `validation` directive as well as for `IllegalArgumentExceptions`
  * thrown by domain model constructors (e.g. via `require`).
  * It signals that an expected value was semantically invalid.
@@ -190,7 +196,7 @@ case class ValidationRejection(message: String, cause: Option[Throwable] = None)
  * 3. A TransformationRejection holding a function filtering out the MethodRejection
  *
  * so that in the end the RejectionHandler will only see one rejection (the ValidationRejection), because the
- * MethodRejection added by the ``get`` directive is cancelled by the ``put`` directive (since the HTTP method
+ * MethodRejection added by the ``get`` directive is canceled by the ``put`` directive (since the HTTP method
  * did indeed match eventually).
  */
 case class TransformationRejection(transform: immutable.Seq[Rejection] ⇒ immutable.Seq[Rejection]) extends Rejection

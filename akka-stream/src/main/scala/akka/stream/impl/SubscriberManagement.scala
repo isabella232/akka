@@ -71,7 +71,7 @@ private[akka] trait SubscriberManagement[T] extends ResizableMultiReaderRingBuff
 
   /**
    * called before `shutdown()` if the stream is *not* being regularly completed
-   * but shut-down due to the last subscriber having cancelled its subscription
+   * but shut-down due to the last subscriber having canceled its subscription
    */
   protected def cancelUpstream(): Unit
 
@@ -173,7 +173,7 @@ private[akka] trait SubscriberManagement[T] extends ResizableMultiReaderRingBuff
             val element = buffer.read(head)
             head.dispatch(element)
             head.totalDemand -= 1
-            dispatch(tail, true)
+            dispatch(tail, sent = true)
           } else dispatch(tail, sent)
         case _ ⇒ sent
       }

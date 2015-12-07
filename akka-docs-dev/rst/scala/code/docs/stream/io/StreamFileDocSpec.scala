@@ -6,8 +6,6 @@ package docs.stream.io
 import java.io.File
 
 import akka.stream._
-import akka.stream.io.SynchronousFileSink
-import akka.stream.io.SynchronousFileSource
 import akka.stream.scaladsl.Sink
 import akka.stream.scaladsl.Source
 import akka.stream.testkit.Utils._
@@ -32,6 +30,7 @@ class StreamFileDocSpec extends AkkaSpec(UnboundedMailboxConfig) {
     //#file-source
     import akka.stream.io._
     //#file-source
+    Thread.sleep(0) // needs a statement here for valid syntax and to avoid "unused" warnings
   }
 
   {
@@ -47,7 +46,7 @@ class StreamFileDocSpec extends AkkaSpec(UnboundedMailboxConfig) {
 
     //#file-source
 
-    val foreach: Future[Long] = SynchronousFileSource(file)
+    val foreach: Future[Long] = Source.file(file)
       .to(Sink.ignore)
       .run()
     //#file-source
@@ -55,16 +54,8 @@ class StreamFileDocSpec extends AkkaSpec(UnboundedMailboxConfig) {
 
   "configure dispatcher in code" in {
     //#custom-dispatcher-code
-    SynchronousFileSink(file)
-      .withAttributes(ActorAttributes.dispatcher("custom-file-io-dispatcher"))
+    Sink.file(file)
+      .withAttributes(ActorAttributes.dispatcher("custom-blocking-io-dispatcher"))
     //#custom-dispatcher-code
-  }
-
-  "show Implicits" in {
-    //#source-sink-implicits
-    import akka.stream.io.Implicits._
-
-    Source.synchronousFile(file) to Sink.outputStream(() ⇒ System.out)
-    //#source-sink-implicits
   }
 }

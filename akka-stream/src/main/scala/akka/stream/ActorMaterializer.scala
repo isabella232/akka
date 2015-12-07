@@ -5,9 +5,10 @@ package akka.stream
 
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.{ AtomicInteger, AtomicBoolean }
 
 import akka.actor.{ ActorContext, ActorRef, ActorRefFactory, ActorSystem, ExtendedActorSystem, Props }
+import akka.event.LoggingAdapter
 import akka.stream.impl._
 import com.typesafe.config.Config
 
@@ -31,11 +32,11 @@ object ActorMaterializer {
    * the processing steps. The default `namePrefix` is `"flow"`. The actor names are built up of
    * `namePrefix-flowNumber-flowStepNumber-stepName`.
    */
-  def apply(materializerSettings: Option[ActorMaterializerSettings] = None, namePrefix: Option[String] = None, optimizations: Optimizations = Optimizations.none)(implicit context: ActorRefFactory): ActorMaterializer = {
+  def apply(materializerSettings: Option[ActorMaterializerSettings] = None, namePrefix: Option[String] = None)(implicit context: ActorRefFactory): ActorMaterializer = {
     val system = actorSystemOf(context)
 
     val settings = materializerSettings getOrElse ActorMaterializerSettings(system)
-    apply(settings, namePrefix.getOrElse("flow"), optimizations)(context)
+    apply(settings, namePrefix.getOrElse("flow"))(context)
   }
 
   /**
@@ -49,7 +50,7 @@ object ActorMaterializer {
    * the processing steps. The default `namePrefix` is `"flow"`. The actor names are built up of
    * `namePrefix-flowNumber-flowStepNumber-stepName`.
    */
-  def apply(materializerSettings: ActorMaterializerSettings, namePrefix: String, optimizations: Optimizations)(implicit context: ActorRefFactory): ActorMaterializer = {
+  def apply(materializerSettings: ActorMaterializerSettings, namePrefix: String)(implicit context: ActorRefFactory): ActorMaterializer = {
     val haveShutDown = new AtomicBoolean(false)
     val system = actorSystemOf(context)
 
@@ -57,11 +58,9 @@ object ActorMaterializer {
       system,
       materializerSettings,
       system.dispatchers,
-      context.actorOf(StreamSupervisor.props(materializerSettings, haveShutDown).withDispatcher(materializerSettings.dispatcher)),
+      context.actorOf(StreamSupervisor.props(materializerSettings, haveShutDown).withDispatcher(materializerSettings.dispatcher), StreamSupervisor.nextName()),
       haveShutDown,
-      FlowNameCounter(system).counter,
-      namePrefix,
-      optimizations)
+      FlowNames(system).name.copy(namePrefix))
   }
 
   /**
@@ -171,6 +170,11 @@ abstract class ActorMaterializer extends Materializer {
    */
   private[akka] def system: ActorSystem
 
+  /**
+   * INTERNAL API
+   */
+  private[akka] def logger: LoggingAdapter
+
   /** INTERNAL API */
   private[akka] def supervisor: ActorRef
 
@@ -200,10 +204,10 @@ object ActorMaterializerSettings {
     subscriptionTimeoutSettings: StreamSubscriptionTimeoutSettings,
     debugLogging: Boolean,
     outputBurstLimit: Int,
-    optimizations: Optimizations) =
+    fuzzingMode: Boolean) =
     new ActorMaterializerSettings(
       initialInputBufferSize, maxInputBufferSize, dispatcher, supervisionDecider, subscriptionTimeoutSettings, debugLogging,
-      outputBurstLimit, optimizations)
+      outputBurstLimit, fuzzingMode)
 
   /**
    * Create [[ActorMaterializerSettings]].
@@ -229,7 +233,7 @@ object ActorMaterializerSettings {
       subscriptionTimeoutSettings = StreamSubscriptionTimeoutSettings(config),
       debugLogging = config.getBoolean("debug-logging"),
       outputBurstLimit = config.getInt("output-burst-limit"),
-      optimizations = Optimizations.none)
+      fuzzingMode = config.getBoolean("debug.fuzzing-mode"))
 
   /**
    * Java API
@@ -248,6 +252,7 @@ object ActorMaterializerSettings {
    */
   def create(config: Config): ActorMaterializerSettings =
     apply(config)
+
 }
 
 /**
@@ -264,7 +269,7 @@ final class ActorMaterializerSettings(
   val subscriptionTimeoutSettings: StreamSubscriptionTimeoutSettings,
   val debugLogging: Boolean,
   val outputBurstLimit: Int,
-  val optimizations: Optimizations) {
+  val fuzzingMode: Boolean) {
 
   require(initialInputBufferSize > 0, "initialInputBufferSize must be > 0")
 
@@ -279,24 +284,30 @@ final class ActorMaterializerSettings(
     subscriptionTimeoutSettings: StreamSubscriptionTimeoutSettings = this.subscriptionTimeoutSettings,
     debugLogging: Boolean = this.debugLogging,
     outputBurstLimit: Int = this.outputBurstLimit,
-    optimizations: Optimizations = this.optimizations) =
+    fuzzingMode: Boolean = this.fuzzingMode) =
     new ActorMaterializerSettings(
       initialInputBufferSize, maxInputBufferSize, dispatcher, supervisionDecider, subscriptionTimeoutSettings, debugLogging,
-      outputBurstLimit, optimizations)
+      outputBurstLimit, fuzzingMode)
 
-  def withInputBuffer(initialSize: Int, maxSize: Int): ActorMaterializerSettings =
-    copy(initialInputBufferSize = initialSize, maxInputBufferSize = maxSize)
+  def withInputBuffer(initialSize: Int, maxSize: Int): ActorMaterializerSettings = {
+    if (initialSize == this.initialInputBufferSize && maxSize == this.maxInputBufferSize) this
+    else copy(initialInputBufferSize = initialSize, maxInputBufferSize = maxSize)
+  }
 
-  def withDispatcher(dispatcher: String): ActorMaterializerSettings =
-    copy(dispatcher = dispatcher)
+  def withDispatcher(dispatcher: String): ActorMaterializerSettings = {
+    if (this.dispatcher == dispatcher) this
+    else copy(dispatcher = dispatcher)
+  }
 
   /**
    * Scala API: Decides how exceptions from application code are to be handled, unless
    * overridden for specific flows of the stream operations with
    * [[akka.stream.Attributes#supervisionStrategy]].
    */
-  def withSupervisionStrategy(decider: Supervision.Decider): ActorMaterializerSettings =
-    copy(supervisionDecider = decider)
+  def withSupervisionStrategy(decider: Supervision.Decider): ActorMaterializerSettings = {
+    if (decider eq this.supervisionDecider) this
+    else copy(supervisionDecider = decider)
+  }
 
   /**
    * Java API: Decides how exceptions from application code are to be handled, unless
@@ -313,11 +324,15 @@ final class ActorMaterializerSettings(
     })
   }
 
-  def withDebugLogging(enable: Boolean): ActorMaterializerSettings =
-    copy(debugLogging = enable)
+  def withFuzzing(enable: Boolean): ActorMaterializerSettings = {
+    if (enable == this.fuzzingMode) this
+    else copy(fuzzingMode = enable)
+  }
 
-  def withOptimizations(optimizations: Optimizations): ActorMaterializerSettings =
-    copy(optimizations = optimizations)
+  def withDebugLogging(enable: Boolean): ActorMaterializerSettings = {
+    if (enable == this.debugLogging) this
+    else copy(debugLogging = enable)
+  }
 
   private def requirePowerOfTwo(n: Integer, name: String): Unit = {
     require(n > 0, s"$name must be > 0")
@@ -365,11 +380,3 @@ object StreamSubscriptionTimeoutTerminationMode {
 
 }
 
-final object Optimizations {
-  val none: Optimizations = Optimizations(collapsing = false, elision = false, simplification = false, fusion = false)
-  val all: Optimizations = Optimizations(collapsing = true, elision = true, simplification = true, fusion = true)
-}
-
-final case class Optimizations(collapsing: Boolean, elision: Boolean, simplification: Boolean, fusion: Boolean) {
-  def isEnabled: Boolean = collapsing || elision || simplification || fusion
-}

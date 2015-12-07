@@ -1,4 +1,4 @@
-.. _Directives:
+.. _directives:
 
 Directives
 ==========
@@ -137,6 +137,9 @@ transformations, both (or either) on the request and on the response side.
 
 Composing Directives
 --------------------
+
+.. note:: Gotcha: forgetting the ``~`` (tilde) character in between directives can often result in perfectly valid
+  Scala code that compiles but lead to your composed directive only containing the up to where ``~`` is missing.
 
 As you have seen from the examples presented so far the "normal" way of composing directives is nesting.
 Let's take a look at this concrete example:

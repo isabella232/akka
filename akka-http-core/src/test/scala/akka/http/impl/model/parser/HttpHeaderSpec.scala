@@ -4,7 +4,8 @@
 
 package akka.http.impl.model.parser
 
-import akka.http.scaladsl.model.HttpHeader.ParsingResult
+import akka.http.ParserSettings.CookieParsingMode
+import akka.http.impl.model.parser.HeaderParser.Settings
 import org.scalatest.{ Matchers, FreeSpec }
 import org.scalatest.matchers.{ Matcher, MatchResult }
 import akka.http.impl.util._
@@ -18,7 +19,7 @@ import HttpEncodings._
 import HttpMethods._
 
 class HttpHeaderSpec extends FreeSpec with Matchers {
-  val `application/vnd.spray` = MediaType.custom("application/vnd.spray", MediaType.Encoding.Binary)
+  val `application/vnd.spray` = MediaType.applicationBinary("vnd.spray", MediaType.Compressible)
   val PROPFIND = HttpMethod.custom("PROPFIND")
 
   "The HTTP header model must correctly parse and render the headers" - {
@@ -37,9 +38,9 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
       "Accept: */*, text/*; foo=bar, custom/custom; bar=\"b>az\"" =!=
         Accept(`*/*`,
           MediaRange.custom("text", Map("foo" -> "bar")),
-          MediaType.custom("custom", "custom", MediaType.Encoding.Binary, params = Map("bar" -> "b>az")))
+          MediaType.customBinary("custom", "custom", MediaType.Compressible, params = Map("bar" -> "b>az")))
       "Accept: application/*+xml; version=2" =!=
-        Accept(MediaType.custom("application", "*+xml", MediaType.Encoding.Binary, params = Map("version" -> "2")))
+        Accept(MediaType.customBinary("application", "*+xml", MediaType.Compressible, params = Map("version" -> "2")))
     }
 
     "Accept-Charset" in {
@@ -145,9 +146,9 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
       "Authorization: NoParamScheme" =!=
         Authorization(GenericHttpCredentials("NoParamScheme", Map.empty[String, String]))
       "Authorization: QVFJQzV3TTJMWTRTZmN3Zk=" =!=
-        ErrorInfo("Illegal HTTP header 'Authorization': Invalid input '=', expected tchar, '\\r', WSP, token68-start or 'EOI' (line 1, column 23)",
+        ErrorInfo("Illegal HTTP header 'Authorization': Invalid input '=', expected auth-param, OWS, token68, 'EOI' or tchar (line 1, column 23)",
           """QVFJQzV3TTJMWTRTZmN3Zk=
-            |                      ^""".stripMargin)
+            |                      ^""".stripMarginWithNewline("\n"))
     }
 
     "Cache-Control" in {
@@ -196,17 +197,18 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
       "Content-Type: text/plain; charset=utf8" =!=
         `Content-Type`(ContentType(`text/plain`, `UTF-8`)).renderedTo("text/plain; charset=UTF-8")
       "Content-Type: text/xml2; version=3; charset=windows-1252" =!=
-        `Content-Type`(ContentType(MediaType.custom("text", "xml2", encoding = MediaType.Encoding.Open,
-          params = Map("version" -> "3")), HttpCharsets.getForKey("windows-1252")))
+        `Content-Type`(MediaType.customWithOpenCharset("text", "xml2", params = Map("version" -> "3"))
+          withCharset HttpCharsets.getForKey("windows-1252").get)
       "Content-Type: text/plain; charset=fancy-pants" =!=
-        `Content-Type`(ContentType(`text/plain`, HttpCharset.custom("fancy-pants")))
+        `Content-Type`(`text/plain` withCharset HttpCharset.custom("fancy-pants"))
       "Content-Type: multipart/mixed; boundary=ABC123" =!=
-        `Content-Type`(ContentType(`multipart/mixed` withBoundary "ABC123"))
+        `Content-Type`(`multipart/mixed` withBoundary "ABC123" withCharset `UTF-8`)
+        .renderedTo("multipart/mixed; boundary=ABC123; charset=UTF-8")
       "Content-Type: multipart/mixed; boundary=\"ABC/123\"" =!=
-        `Content-Type`(ContentType(`multipart/mixed` withBoundary "ABC/123"))
+        `Content-Type`(`multipart/mixed` withBoundary "ABC/123" withCharset `UTF-8`)
+        .renderedTo("""multipart/mixed; boundary="ABC/123"; charset=UTF-8""")
       "Content-Type: application/*" =!=
-        `Content-Type`(ContentType(MediaType.custom("application", "*", MediaType.Encoding.Binary,
-          allowArbitrarySubtypes = true)))
+        `Content-Type`(MediaType.customBinary("application", "*", MediaType.Compressible, allowArbitrarySubtypes = true))
     }
 
     "Content-Range" in {
@@ -217,13 +219,36 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
         .renderedTo("bytes */999999999999999999")
     }
 
-    "Cookie" in {
+    "Cookie (RFC 6265)" in {
       "Cookie: SID=31d4d96e407aad42" =!= Cookie("SID" -> "31d4d96e407aad42")
       "Cookie: SID=31d4d96e407aad42; lang=en>US" =!= Cookie("SID" -> "31d4d96e407aad42", "lang" -> "en>US")
+      "Cookie: a=1; b=2" =!= Cookie("a" -> "1", "b" -> "2")
       "Cookie: a=1;b=2" =!= Cookie("a" -> "1", "b" -> "2").renderedTo("a=1; b=2")
       "Cookie: a=1 ;b=2" =!= Cookie("a" -> "1", "b" -> "2").renderedTo("a=1; b=2")
-      "Cookie: a=1; b=2" =!= Cookie("a" -> "1", "b" -> "2")
-      "Cookie: a=1,b=2" =!= Cookie("a" -> "1", "b" -> "2").renderedTo("a=1; b=2")
+
+      "Cookie: z=0;a=1,b=2" =!= Cookie("z" -> "0").renderedTo("z=0")
+      """Cookie: a=1;b="test"""" =!= Cookie("a" -> "1", "b" -> "test").renderedTo("a=1; b=test")
+
+      "Cookie: a=1; b=f\"d\"c\"; c=xyz" =!= Cookie("a" -> "1", "c" -> "xyz").renderedTo("a=1; c=xyz")
+      "Cookie: a=1; b=ä; c=d" =!= Cookie("a" -> "1", "c" -> "d").renderedTo("a=1; c=d")
+
+      "Cookie: a=1,2" =!=
+        ErrorInfo(
+          "Illegal HTTP header 'Cookie'",
+          "Cookie header contained no parsable cookie values.")
+    }
+
+    "Cookie (Raw)" in {
+      "Cookie: SID=31d4d96e407aad42" =!= Cookie("SID" -> "31d4d96e407aad42").withCookieParsingMode(CookieParsingMode.Raw)
+      "Cookie: SID=31d4d96e407aad42; lang=en>US" =!= Cookie("SID" -> "31d4d96e407aad42", "lang" -> "en>US").withCookieParsingMode(CookieParsingMode.Raw)
+      "Cookie: a=1; b=2" =!= Cookie("a" -> "1", "b" -> "2").withCookieParsingMode(CookieParsingMode.Raw)
+      "Cookie: a=1;b=2" =!= Cookie("a" -> "1", "b" -> "2").renderedTo("a=1; b=2").withCookieParsingMode(CookieParsingMode.Raw)
+      "Cookie: a=1 ;b=2" =!= Cookie(List(HttpCookiePair.raw("a" -> "1 "), HttpCookiePair("b" -> "2"))).renderedTo("a=1 ; b=2").withCookieParsingMode(CookieParsingMode.Raw)
+
+      "Cookie: z=0; a=1,b=2" =!= Cookie(List(HttpCookiePair("z" -> "0"), HttpCookiePair.raw("a" -> "1,b=2"))).withCookieParsingMode(CookieParsingMode.Raw)
+      """Cookie: a=1;b="test"""" =!= Cookie(List(HttpCookiePair("a" -> "1"), HttpCookiePair.raw("b" -> "\"test\""))).renderedTo("a=1; b=\"test\"").withCookieParsingMode(CookieParsingMode.Raw)
+      "Cookie: a=1; b=f\"d\"c\"; c=xyz" =!= Cookie(List(HttpCookiePair("a" -> "1"), HttpCookiePair.raw("b" -> "f\"d\"c\""), HttpCookiePair("c" -> "xyz"))).withCookieParsingMode(CookieParsingMode.Raw)
+      "Cookie: a=1; b=ä; c=d" =!= Cookie(List(HttpCookiePair("a" -> "1"), HttpCookiePair.raw("b" -> "ä"), HttpCookiePair("c" -> "d"))).withCookieParsingMode(CookieParsingMode.Raw)
     }
 
     "Date" in {
@@ -300,7 +325,7 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
       "Location: https://spray.io/{sec}" =!= Location(Uri("https://spray.io/{sec}")).renderedTo(
         "https://spray.io/%7Bsec%7D")
       "Location: https://spray.io/ sec" =!= ErrorInfo("Illegal HTTP header 'Location': Invalid input ' ', " +
-        "expected path-segment-char, '%', '/', '?', '#' or 'EOI' (line 1, column 18)", "https://spray.io/ sec\n                 ^")
+        "expected '/', 'EOI', '#', segment or '?' (line 1, column 18)", "https://spray.io/ sec\n                 ^")
     }
 
     "Link" in {
@@ -471,7 +496,7 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
 
       "Set-Cookie: lang=; Expires=xxxx" =!=
         ErrorInfo(
-          "Illegal HTTP header 'Set-Cookie': Invalid input 'x', expected '\\r', WSP, 'S', 'M', 'T', 'W', 'F' or '0' (line 1, column 16)",
+          "Illegal HTTP header 'Set-Cookie': Invalid input 'x', expected OWS or HTTP-date (line 1, column 16)",
           "lang=; Expires=xxxx\n               ^")
 
       // extra examples from play
@@ -562,10 +587,10 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
     }
     "not accept illegal header values" in {
       parse("Foo", "ba\u0000r") shouldEqual ParsingResult.Error(ErrorInfo(
-        "Illegal HTTP header value: Invalid input '\\u0000', expected VCHAR, obs-text, WSP, '\\r' or 'EOI' (line 1, column 3)",
+        "Illegal HTTP header value: Invalid input '\\u0000', expected field-value-char, FWS or 'EOI' (line 1, column 3)",
         "ba\u0000r\n  ^"))
       parse("Flood-Resistant-Hammerdrill", "árvíztűrő ütvefúrógép") shouldEqual ParsingResult.Error(ErrorInfo(
-        "Illegal HTTP header value: Invalid input 'ű', expected VCHAR, obs-text, WSP, '\\r' or 'EOI' (line 1, column 7)",
+        "Illegal HTTP header value: Invalid input 'ű', expected field-value-char, FWS or 'EOI' (line 1, column 7)",
         "árvíztűrő ütvefúrógép\n      ^"))
     }
     "compress value whitespace into single spaces and trim" in {
@@ -573,6 +598,12 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
     }
     "resolve obs-fold occurrences" in {
       parse("Foo", "b\r\n\ta \r\n r") shouldEqual ParsingResult.Ok(RawHeader("Foo", "b a r"), Nil)
+    }
+
+    "parse with custom uri parsing mode" in {
+      val targetUri = Uri("http://example.org/?abc=def=ghi", Uri.ParsingMode.Relaxed)
+      HeaderParser.parseFull("location", "http://example.org/?abc=def=ghi", HeaderParser.Settings(uriParsingMode = Uri.ParsingMode.Relaxed)) shouldEqual
+        Right(Location(targetUri))
     }
   }
 
@@ -585,12 +616,13 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
     }
   }
   sealed trait TestExample extends (String ⇒ Unit)
-  implicit class TestHeader(val header: HttpHeader) extends TestExample {
+  implicit class TestHeader(val header: HttpHeader) extends TestExample { outer ⇒
     def apply(line: String) = {
       val Array(name, value) = line.split(": ", 2)
-      HttpHeader.parse(name, value) should (equal(HttpHeader.ParsingResult.Ok(header, Nil)) and renderFromHeaderTo(this, line))
+      HttpHeader.parse(name, value, settings) should (equal(HttpHeader.ParsingResult.Ok(header, Nil)) and renderFromHeaderTo(this, line))
     }
     def rendering(line: String): String = line
+    def settings: HeaderParser.Settings = HeaderParser.DefaultSettings
     def renderedTo(expectedRendering: String): TestHeader =
       new TestHeader(header) {
         override def rendering(line: String): String =
@@ -598,6 +630,16 @@ class HttpHeaderSpec extends FreeSpec with Matchers {
             case x: ModeledHeader ⇒ x.name + ": " + expectedRendering
             case _                ⇒ expectedRendering
           }
+
+        override def settings: Settings = outer.settings
+      }
+    def withCookieParsingMode(mode: CookieParsingMode): TestHeader =
+      withParserSettings(Settings(settings.uriParsingMode, mode))
+
+    def withParserSettings(newSettings: HeaderParser.Settings): TestHeader =
+      new TestHeader(header) {
+        override def rendering(line: String): String = outer.rendering(line)
+        override def settings = newSettings
       }
   }
   implicit class TestError(expectedError: ErrorInfo) extends TestExample {

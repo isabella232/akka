@@ -4,6 +4,9 @@
 
 package akka.http
 
+import java.util.Random
+
+import akka.http.impl.engine.ws.Randoms
 import com.typesafe.config.Config
 
 import scala.language.implicitConversions
@@ -23,6 +26,7 @@ final case class ServerSettings(
   serverHeader: Option[Server],
   timeouts: ServerSettings.Timeouts,
   maxConnections: Int,
+  pipeliningLimit: Int,
   remoteAddressHeader: Boolean,
   rawRequestUriHeader: Boolean,
   transparentHeadRequests: Boolean,
@@ -31,9 +35,11 @@ final case class ServerSettings(
   backlog: Int,
   socketOptions: immutable.Traversable[SocketOption],
   defaultHostHeader: Host,
+  websocketRandomFactory: () ⇒ Random,
   parserSettings: ParserSettings) {
 
   require(0 < maxConnections, "max-connections must be > 0")
+  require(0 < pipeliningLimit && pipeliningLimit <= 1024, "pipelining-limit must be > 0 and <= 1024")
   require(0 < responseHeaderSizeHint, "response-size-hint must be > 0")
   require(0 < backlog, "backlog must be > 0")
 }
@@ -45,19 +51,20 @@ object ServerSettings extends SettingsCompanion[ServerSettings]("akka.http.serve
   }
   implicit def timeoutsShortcut(s: ServerSettings): Timeouts = s.timeouts
 
-  def fromSubConfig(c: Config) = apply(
+  def fromSubConfig(root: Config, c: Config) = apply(
     c.getString("server-header").toOption.map(Server(_)),
     Timeouts(
       c getPotentiallyInfiniteDuration "idle-timeout",
       c getFiniteDuration "bind-timeout"),
     c getInt "max-connections",
+    c getInt "pipelining-limit",
     c getBoolean "remote-address-header",
     c getBoolean "raw-request-uri-header",
     c getBoolean "transparent-head-requests",
     c getBoolean "verbose-error-messages",
     c getIntBytes "response-header-size-hint",
     c getInt "backlog",
-    SocketOptionSettings fromSubConfig c.getConfig("socket-options"),
+    SocketOptionSettings.fromSubConfig(root, c.getConfig("socket-options")),
     defaultHostHeader =
       HttpHeader.parse("Host", c getString "default-host-header") match {
         case HttpHeader.ParsingResult.Ok(x: Host, Nil) ⇒ x
@@ -65,7 +72,8 @@ object ServerSettings extends SettingsCompanion[ServerSettings]("akka.http.serve
           val info = result.errors.head.withSummary("Configured `default-host-header` is illegal")
           throw new ConfigurationException(info.formatPretty)
       },
-    ParserSettings fromSubConfig c.getConfig("parsing"))
+    Randoms.SecureRandomInstances, // can currently only be overridden from code
+    ParserSettings.fromSubConfig(root, c.getConfig("parsing")))
 
   def apply(optionalSettings: Option[ServerSettings])(implicit actorRefFactory: ActorRefFactory): ServerSettings =
     optionalSettings getOrElse apply(actorSystem)

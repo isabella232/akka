@@ -1,5 +1,6 @@
 package docs.stream.cookbook
 
+import akka.stream.FlowShape
 import akka.stream.scaladsl._
 import akka.testkit.TestProbe
 
@@ -18,9 +19,9 @@ class RecipeWorkerPool extends RecipeSpec {
 
       //#worker-pool
       def balancer[In, Out](worker: Flow[In, Out, Any], workerCount: Int): Flow[In, Out, Unit] = {
-        import FlowGraph.Implicits._
+        import GraphDSL.Implicits._
 
-        Flow() { implicit b =>
+        Flow.fromGraph(GraphDSL.create() { implicit b =>
           val balancer = b.add(Balance[In](workerCount, waitForAllDownstreams = true))
           val merge = b.add(Merge[Out](workerCount))
 
@@ -30,8 +31,8 @@ class RecipeWorkerPool extends RecipeSpec {
             balancer ~> worker ~> merge
           }
 
-          (balancer.in, merge.out)
-        }
+          FlowShape(balancer.in, merge.out)
+        })
       }
 
       val processedJobs: Source[Result, Unit] = myJobs.via(balancer(worker, 3))

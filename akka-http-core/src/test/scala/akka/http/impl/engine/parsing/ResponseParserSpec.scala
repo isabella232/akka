@@ -14,7 +14,6 @@ import org.scalatest.matchers.Matcher
 import akka.util.ByteString
 import akka.actor.ActorSystem
 import akka.stream.scaladsl._
-import akka.stream.scaladsl.FlattenStrategy
 import akka.stream.ActorMaterializer
 import akka.http.scaladsl.util.FastFuture._
 import akka.http.impl.util._
@@ -57,6 +56,17 @@ class ResponseParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
         closeAfterResponseCompletion shouldEqual Seq(false)
       }
 
+      "a response with a simple body" in new Test {
+        collectBlocking(rawParse(GET,
+          prep {
+            """HTTP/1.1 200 Ok
+              |Content-Length: 4
+              |
+              |ABCD"""
+          })) shouldEqual Seq(Right(HttpResponse(entity = "ABCD".getBytes)))
+        closeAfterResponseCompletion shouldEqual Seq(false)
+      }
+
       "a response with a custom status code" in new Test {
         override def parserSettings: ParserSettings =
           super.parserSettings.withCustomStatusCodes(ServerOnTheMove)
@@ -65,6 +75,11 @@ class ResponseParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
           |Content-Length: 0
           |
           |""" should parseTo(HttpResponse(ServerOnTheMove))
+        closeAfterResponseCompletion shouldEqual Seq(false)
+      }
+
+      "a response with a missing reason phrase" in new Test {
+        "HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n" should parseTo(HttpResponse(OK))
         closeAfterResponseCompletion shouldEqual Seq(false)
       }
 
@@ -215,6 +230,11 @@ class ResponseParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
         Seq("HTTP/1.1 204 12345678", "90123456789012\r\n") should generalMultiParseTo(Left(
           MessageStartError(400: StatusCode, ErrorInfo("Response reason phrase exceeds the configured limit of 21 characters"))))
       }
+
+      "with a missing reason phrase and no trailing space" in new Test {
+        Seq("HTTP/1.1 200\r\nContent-Length: 0\r\n\r\n") should generalMultiParseTo(Left(MessageStartError(
+          400: StatusCode, ErrorInfo("Status code misses trailing space"))))
+      }
     }
   }
 
@@ -259,32 +279,32 @@ class ResponseParserSpec extends FreeSpec with Matchers with BeforeAndAfterAll {
     def generalRawMultiParseTo(requestMethod: HttpMethod, expected: Either[ResponseOutput, HttpResponse]*): Matcher[Seq[String]] =
       equal(expected.map(strictEqualify))
         .matcher[Seq[Either[ResponseOutput, StrictEqualHttpResponse]]] compose { input: Seq[String] ⇒
-          val future =
-            Source(input.toList)
-              .map(ByteString.apply)
-              .transform(() ⇒ newParserStage(requestMethod)).named("parser")
-              .splitWhen(x ⇒ x.isInstanceOf[MessageStart] || x.isInstanceOf[EntityStreamError])
-              .via(headAndTailFlow)
-              .collect {
-                case (ResponseStart(statusCode, protocol, headers, createEntity, close), entityParts) ⇒
-                  closeAfterResponseCompletion :+= close
-                  Right(HttpResponse(statusCode, headers, createEntity(entityParts), protocol))
-                case (x @ (MessageStartError(_, _) | EntityStreamError(_)), _) ⇒ Left(x)
-              }.map { x ⇒
-                Source {
-                  x match {
-                    case Right(response) ⇒ compactEntity(response.entity).fast.map(x ⇒ Right(response.withEntity(x)))
-                    case Left(error)     ⇒ FastFuture.successful(Left(error))
-                  }
-                }
+          collectBlocking {
+            rawParse(requestMethod, input: _*)
+              .mapAsync(1) {
+                case Right(response) ⇒ compactEntity(response.entity).fast.map(x ⇒ Right(response.withEntity(x)))
+                case Left(error)     ⇒ FastFuture.successful(Left(error))
               }
-              .flatten(FlattenStrategy.concat)
-              .map(strictEqualify)
-              .grouped(100000).runWith(Sink.head)
-          Await.result(future, 500.millis)
+          }.map(strictEqualify)
         }
 
-    def parserSettings: ParserSettings = ParserSettings(system)
+    def rawParse(requestMethod: HttpMethod, input: String*): Source[Either[ResponseOutput, HttpResponse], Unit] =
+      Source(input.toList)
+        .map(ByteString.apply)
+        .transform(() ⇒ newParserStage(requestMethod)).named("parser")
+        .splitWhen(x ⇒ x.isInstanceOf[MessageStart] || x.isInstanceOf[EntityStreamError])
+        .via(headAndTailFlow)
+        .collect {
+          case (ResponseStart(statusCode, protocol, headers, createEntity, close), entityParts) ⇒
+            closeAfterResponseCompletion :+= close
+            Right(HttpResponse(statusCode, headers, createEntity(entityParts), protocol))
+          case (x @ (MessageStartError(_, _) | EntityStreamError(_)), _) ⇒ Left(x)
+        }
+
+    def collectBlocking[T](source: Source[T, Any]): Seq[T] =
+      Await.result(source.grouped(100000).runWith(Sink.head), 500.millis)
+
+    protected def parserSettings: ParserSettings = ParserSettings(system)
 
     def newParserStage(requestMethod: HttpMethod = GET) = {
       val parser = new HttpResponseParser(parserSettings, HttpHeaderParser(parserSettings)())

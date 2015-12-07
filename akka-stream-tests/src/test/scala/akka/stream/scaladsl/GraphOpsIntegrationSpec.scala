@@ -3,16 +3,13 @@ package akka.stream.scaladsl
 import scala.collection.immutable
 import scala.concurrent.{ Future, Await }
 import scala.concurrent.duration._
-import akka.stream.ActorMaterializer
-import akka.stream.ActorMaterializerSettings
+import akka.stream._
 import akka.stream.testkit._
 import akka.util.ByteString
-import akka.stream.{ Inlet, Outlet, Shape, Graph }
 import org.scalactic.ConversionCheckedTripleEquals
-import akka.stream.Attributes
 
 object GraphOpsIntegrationSpec {
-  import FlowGraph.Implicits._
+  import GraphDSL.Implicits._
 
   object Shuffle {
 
@@ -33,7 +30,7 @@ object GraphOpsIntegrationSpec {
     }
 
     def apply[In, Out](pipeline: Flow[In, Out, _]): Graph[ShufflePorts[In, Out], Unit] = {
-      FlowGraph.partial() { implicit b ⇒
+      GraphDSL.create() { implicit b ⇒
         val merge = b.add(Merge[In](2))
         val balance = b.add(Balance[Out](2))
         merge.out ~> pipeline ~> balance.in
@@ -47,7 +44,7 @@ object GraphOpsIntegrationSpec {
 
 class GraphOpsIntegrationSpec extends AkkaSpec with ConversionCheckedTripleEquals {
   import akka.stream.scaladsl.GraphOpsIntegrationSpec._
-  import FlowGraph.Implicits._
+  import GraphDSL.Implicits._
 
   val settings = ActorMaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 16)
@@ -57,7 +54,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec with ConversionCheckedTripleEqual
   "FlowGraphs" must {
 
     "support broadcast - merge layouts" in {
-      val resultFuture = FlowGraph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
+      val resultFuture = RunnableGraph.fromGraph(GraphDSL.create(Sink.head[Seq[Int]]) { implicit b ⇒
         (sink) ⇒
           val bcast = b.add(Broadcast[Int](2))
           val merge = b.add(Merge[Int](2))
@@ -66,14 +63,15 @@ class GraphOpsIntegrationSpec extends AkkaSpec with ConversionCheckedTripleEqual
           bcast.out(0) ~> merge.in(0)
           bcast.out(1).map(_ + 3) ~> merge.in(1)
           merge.out.grouped(10) ~> sink.inlet
-      }.run()
+          ClosedShape
+      }).run()
 
       Await.result(resultFuture, 3.seconds).sorted should be(List(1, 2, 3, 4, 5, 6))
     }
 
     "support balance - merge (parallelization) layouts" in {
       val elements = 0 to 10
-      val out = FlowGraph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
+      val out = RunnableGraph.fromGraph(GraphDSL.create(Sink.head[Seq[Int]]) { implicit b ⇒
         (sink) ⇒
           val balance = b.add(Balance[Int](5))
           val merge = b.add(Merge[Int](5))
@@ -83,7 +81,8 @@ class GraphOpsIntegrationSpec extends AkkaSpec with ConversionCheckedTripleEqual
           for (i ← 0 until 5) balance.out(i) ~> merge.in(i)
 
           merge.out.grouped(elements.size * 2) ~> sink.inlet
-      }.run()
+          ClosedShape
+      }).run()
 
       Await.result(out, 3.seconds).sorted should be(elements)
     }
@@ -93,7 +92,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec with ConversionCheckedTripleEqual
       // see https://en.wikipedia.org/wiki/Topological_sorting#mediaviewer/File:Directed_acyclic_graph.png
       val seqSink = Sink.head[Seq[Int]]
 
-      val (resultFuture2, resultFuture9, resultFuture10) = FlowGraph.closed(seqSink, seqSink, seqSink)(Tuple3.apply) { implicit b ⇒
+      val (resultFuture2, resultFuture9, resultFuture10) = RunnableGraph.fromGraph(GraphDSL.create(seqSink, seqSink, seqSink)(Tuple3.apply) { implicit b ⇒
         (sink2, sink9, sink10) ⇒
           val b3 = b.add(Broadcast[Int](2))
           val b7 = b.add(Broadcast[Int](2))
@@ -129,7 +128,8 @@ class GraphOpsIntegrationSpec extends AkkaSpec with ConversionCheckedTripleEqual
           m9.out.grouped(1000) ~> sink9.inlet
           m10.out.grouped(1000) ~> sink10.inlet
 
-      }.run()
+          ClosedShape
+      }).run()
 
       Await.result(resultFuture2, 3.seconds).sorted should be(List(5, 7))
       Await.result(resultFuture9, 3.seconds).sorted should be(List(3, 5, 7, 7))
@@ -139,7 +139,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec with ConversionCheckedTripleEqual
 
     "allow adding of flows to sources and sinks to flows" in {
 
-      val resultFuture = FlowGraph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
+      val resultFuture = RunnableGraph.fromGraph(GraphDSL.create(Sink.head[Seq[Int]]) { implicit b ⇒
         (sink) ⇒
           val bcast = b.add(Broadcast[Int](2))
           val merge = b.add(Merge[Int](2))
@@ -148,18 +148,20 @@ class GraphOpsIntegrationSpec extends AkkaSpec with ConversionCheckedTripleEqual
           bcast.out(0) ~> merge.in(0)
           bcast.out(1).map(_ + 3) ~> merge.in(1)
           merge.out.grouped(10) ~> sink.inlet
-      }.run()
+          ClosedShape
+      }).run()
 
       Await.result(resultFuture, 3.seconds) should contain theSameElementsAs (Seq(2, 4, 6, 5, 7, 9))
     }
 
     "be able to run plain flow" in {
-      val p = Source(List(1, 2, 3)).runWith(Sink.publisher)
+      val p = Source(List(1, 2, 3)).runWith(Sink.publisher(false))
       val s = TestSubscriber.manualProbe[Int]
       val flow = Flow[Int].map(_ * 2)
-      FlowGraph.closed() { implicit builder ⇒
+      RunnableGraph.fromGraph(GraphDSL.create() { implicit builder ⇒
         Source(p) ~> flow ~> Sink(s)
-      }.run()
+        ClosedShape
+      }).run()
       val sub = s.expectSubscription()
       sub.request(10)
       s.expectNext(1 * 2)
@@ -171,7 +173,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec with ConversionCheckedTripleEqual
     "be possible to use as lego bricks" in {
       val shuffler = Shuffle(Flow[Int].map(_ + 1))
 
-      val f: Future[Seq[Int]] = FlowGraph.closed(shuffler, shuffler, shuffler, Sink.head[Seq[Int]])((_, _, _, fut) ⇒ fut) { implicit b ⇒
+      val f: Future[Seq[Int]] = RunnableGraph.fromGraph(GraphDSL.create(shuffler, shuffler, shuffler, Sink.head[Seq[Int]])((_, _, _, fut) ⇒ fut) { implicit b ⇒
         (s1, s2, s3, sink) ⇒
           val merge = b.add(Merge[Int](2))
 
@@ -188,7 +190,8 @@ class GraphOpsIntegrationSpec extends AkkaSpec with ConversionCheckedTripleEqual
           s3.out2 ~> merge.in(1)
 
           merge.out.grouped(1000) ~> sink
-      }.run()
+          ClosedShape
+      }).run()
 
       val result = Await.result(f, 3.seconds)
 

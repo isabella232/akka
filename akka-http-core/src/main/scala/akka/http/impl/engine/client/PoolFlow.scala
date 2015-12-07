@@ -11,7 +11,7 @@ import scala.concurrent.{ Promise, Future }
 import scala.util.Try
 import akka.event.LoggingAdapter
 import akka.actor._
-import akka.stream.Materializer
+import akka.stream.{ FlowShape, Materializer }
 import akka.stream.scaladsl._
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.Http
@@ -70,11 +70,11 @@ private object PoolFlow {
   def apply(connectionFlow: Flow[HttpRequest, HttpResponse, Future[Http.OutgoingConnection]],
             remoteAddress: InetSocketAddress, settings: ConnectionPoolSettings, log: LoggingAdapter)(
               implicit system: ActorSystem, fm: Materializer): Flow[RequestContext, ResponseContext, Unit] =
-    Flow() { implicit b ⇒
+    Flow.fromGraph(GraphDSL.create[FlowShape[RequestContext, ResponseContext]]() { implicit b ⇒
       import settings._
-      import FlowGraph.Implicits._
+      import GraphDSL.Implicits._
 
-      val conductor = b.add(PoolConductor(maxConnections, maxRetries, pipeliningLimit, log))
+      val conductor = b.add(PoolConductor(maxConnections, pipeliningLimit, log))
       val slots = Vector
         .tabulate(maxConnections)(PoolSlot(_, connectionFlow, remoteAddress, settings))
         .map(b.add(_))
@@ -87,6 +87,6 @@ private object PoolFlow {
         slot.out0 ~> responseMerge.in(ix)
         slot.out1 ~> slotEventMerge.in(ix)
       }
-      (conductor.requestIn, responseMerge.out)
-    }
+      FlowShape(conductor.requestIn, responseMerge.out)
+    })
 }

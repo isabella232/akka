@@ -174,7 +174,7 @@ class ResponseRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll
 
       "status 400, a few headers and a body with an explicitly suppressed Content Type header" in new TestSetup() {
         HttpResponse(400, List(Age(30), Connection("Keep-Alive")),
-          HttpEntity(contentType = ContentTypes.NoContentType, "Small f*ck up overhere!")) should renderTo {
+          HttpEntity(ContentTypes.NoContentType, ByteString("Small f*ck up overhere!"))) should renderTo {
             """HTTP/1.1 400 Bad Request
               |Age: 30
               |Server: akka-http/1.0.0
@@ -202,7 +202,7 @@ class ResponseRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll
     "a response with a Default (streamed with explicit content-length body," - {
       "status 400 and a few headers" in new TestSetup() {
         HttpResponse(400, List(Age(30), Connection("Keep-Alive")),
-          entity = Default(contentType = ContentTypes.`text/plain(UTF-8)`, 23, source(ByteString("Small f*ck up overhere!")))) should renderTo {
+          entity = Default(ContentTypes.`text/plain(UTF-8)`, 23, source(ByteString("Small f*ck up overhere!")))) should renderTo {
             """HTTP/1.1 400 Bad Request
               |Age: 30
               |Server: akka-http/1.0.0
@@ -303,7 +303,7 @@ class ResponseRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll
       "with one chunk and an explicit LastChunk" in new TestSetup() {
         HttpResponse(entity = Chunked(ContentTypes.`text/plain(UTF-8)`,
           source(Chunk(ByteString("body123"), """key=value;another="tl;dr""""),
-            LastChunk("foo=bar", List(Age(30), RawHeader("Cache-Control", "public")))).via(printEvent("source")))) should renderTo {
+            LastChunk("foo=bar", List(Age(30), RawHeader("Cache-Control", "public")))))) should renderTo {
           """HTTP/1.1 200 OK
             |Server: akka-http/1.0.0
             |Date: Thu, 25 Aug 2011 09:10:29 GMT

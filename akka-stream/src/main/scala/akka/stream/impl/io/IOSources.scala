@@ -6,27 +6,29 @@ package akka.stream.impl.io
 import java.io.{ File, InputStream }
 
 import akka.stream._
+import akka.stream.ActorAttributes.Dispatcher
 import akka.stream.impl.StreamLayout.Module
+import akka.stream.impl.Stages.DefaultAttributes.IODispatcher
 import akka.stream.impl.{ ErrorPublisher, SourceModule }
 import akka.util.ByteString
 import org.reactivestreams._
-
 import scala.concurrent.{ Future, Promise }
 
 /**
  * INTERNAL API
  * Creates simple synchronous (Java 6 compatible) Source backed by the given file.
  */
-private[akka] final class SynchronousFileSource(f: File, chunkSize: Int, val attributes: Attributes, shape: SourceShape[ByteString])
+private[akka] final class FileSource(f: File, chunkSize: Int, val attributes: Attributes, shape: SourceShape[ByteString])
   extends SourceModule[ByteString, Future[Long]](shape) {
+  require(chunkSize > 0, "chunkSize must be greater than 0")
   override def create(context: MaterializationContext) = {
-    // FIXME rewrite to be based on AsyncStage rather than dangerous downcasts
+    // FIXME rewrite to be based on GraphStage rather than dangerous downcasts
     val mat = ActorMaterializer.downcast(context.materializer)
     val settings = mat.effectiveSettings(context.effectiveAttributes)
 
     val bytesReadPromise = Promise[Long]()
-    val props = SynchronousFilePublisher.props(f, bytesReadPromise, chunkSize, settings.initialInputBufferSize, settings.maxInputBufferSize)
-    val dispatcher = IOSettings.fileIoDispatcher(context)
+    val props = FilePublisher.props(f, bytesReadPromise, chunkSize, settings.initialInputBufferSize, settings.maxInputBufferSize)
+    val dispatcher = context.effectiveAttributes.get[Dispatcher](IODispatcher).dispatcher
 
     val ref = mat.actorOf(context, props.withDispatcher(dispatcher))
 
@@ -34,10 +36,10 @@ private[akka] final class SynchronousFileSource(f: File, chunkSize: Int, val att
   }
 
   override protected def newInstance(shape: SourceShape[ByteString]): SourceModule[ByteString, Future[Long]] =
-    new SynchronousFileSource(f, chunkSize, attributes, shape)
+    new FileSource(f, chunkSize, attributes, shape)
 
   override def withAttributes(attr: Attributes): Module =
-    new SynchronousFileSource(f, chunkSize, attr, amendShape(attr))
+    new FileSource(f, chunkSize, attr, amendShape(attr))
 }
 
 /**

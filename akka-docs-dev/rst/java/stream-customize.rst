@@ -9,6 +9,210 @@ is sometimes necessary to define new transformation stages either because some f
 stock operations, or for performance reasons. In this part we show how to build custom processing stages and graph
 junctions of various kinds.
 
+.. _graphstage-java:
+
+Custom processing with GraphStage
+=================================
+
+The :class:`GraphStage` abstraction can be used to create arbitrary graph processing stages with any number of input
+or output ports. It is a counterpart of the ``GraphDSL.create()`` method which creates new stream processing
+stages by composing  others. Where :class:`GraphStage` differs is that it creates a stage that is itself not divisible into
+smaller ones, and allows state to be maintained inside it in a safe way.
+
+As a first motivating example, we will build a new :class:`Source` that will simply emit numbers from 1 until it is
+cancelled. To start, we need to define the "interface" of our stage, which is called *shape* in Akka Streams terminology
+(this is explained in more detail in the section :ref:`composition-java`).
+
+.. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/GraphStageDocTest.java#simple-source
+
+As you see, in itself the :class:`GraphStage` only defines the ports of this stage and a shape that contains the ports.
+It also has a user implemented method called ``createLogic``. If you recall, stages are reusable in multiple
+materializations, each resulting in a different executing entity. In the case of :class:`GraphStage` the actual running
+logic is modeled as an instance of a :class:`GraphStageLogic` which will be created by the materializer by calling
+the ``createLogic`` method.
+
+In order to emit from a :class:`Source` in a backpressured stream one needs first to have demand from downstream.
+To receive the necessary events one needs to register a subclass of :class:`AbstractOutHandler` with the output port
+(:class:`Outlet`). This handler will receive events related to the lifecycle of the port. In our case we need to
+override ``onPull()`` which indicates that we are free to emit a single element. There is another callback,
+``onDownstreamFinish()`` which is called if the downstream cancelled. Since the default behavior of that callback is
+to stop the stage, we don't need to override it. In the ``onPull`` callback we simply emit the next number.
+
+Instances of the above :class:`GraphStage` are subclasses of ``Graph<SourceShape<Int>,Unit>`` which means
+that they are already usable in many situations, but do not provide the DSL methods we usually have for other
+:class:`Source` s. In order to convert this :class:`Graph` to a proper :class:`Source` we need to wrap it using
+``Source.fromGraph`` (see :ref:`composition-java` for more details about graphs and DSLs). Now we can use the
+source as any other built-in one:
+
+.. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/GraphStageDocTest.java#simple-source-usage
+
+Port states, AbstractInHandler and AbstractOutHandler
+-----------------------------------------------------
+
+In order to interact with a port (:class:`Inlet` or :class:`Outlet`) of the stage we need to be able to receive events
+and generate new events belonging to the port. From the :class:`GraphStageLogic` the following operations are available
+on an output port:
+
+* ``push(out,elem)`` pushes an element to the output port. Only possible after the port has been pulled by downstream.
+* ``complete(out)`` closes the output port normally.
+* ``fail(out,exception)`` closes the port with a failure signal.
+
+
+The events corresponding to an *output* port can be received in an :class:`AbstractOutHandler` instance registered to the
+output port using ``setHandler(out,handler)``. This handler has two callbacks:
+
+* ``onPull()`` is called when the output port is ready to emit the next element, ``push(out, elem)`` is now allowed
+  to be called on this port.
+* ``onDownstreamFinish()`` is called once the downstream has cancelled and no longer allows messages to be pushed to it.
+  No more ``onPull()`` will arrive after this event. If not overridden this will default to stopping the stage.
+
+Also, there are two query methods available for output ports:
+
+* ``isAvailable(out)`` returns true if the port can be pushed.
+* ``isClosed(out)`` returns true if the port is closed. At this point the port can not be pushed and will not be pulled anymore.
+
+The relationship of the above operations, events and queries are summarized in the state machine below. Green shows
+the initial state while orange indicates the end state. If an operation is not listed for a state, then it is invalid
+to call it while the port is in that state. If an event is not listed for a state, then that event cannot happen
+in that state.
+
+|
+
+.. image:: ../images/outport_transitions.png
+:align: center
+
+|
+
+The following operations are available for *input* ports:
+
+* ``pull(in)`` requests a new element from an input port. This is only possible after the port has been pushed by upstream.
+* ``grab(in)`` acquires the element that has been received during an ``onPush()``. It cannot be called again until the
+  port is pushed again by the upstream.
+* ``cancel(in)`` closes the input port.
+
+The events corresponding to an *input* port can be received in an :class:`AbstractInHandler` instance registered to the
+input port using ``setHandler(in, handler)``. This handler has three callbacks:
+
+* ``onPush()`` is called when the output port has now a new element. Now it is possible to aquire this element using
+  ``grab(in)`` and/or call ``pull(in)`` on the port to request the next element. It is not mandatory to grab the
+  element, but if it is pulled while the element has not been grabbed it will drop the buffered element.
+* ``onUpstreamFinish()`` is called once the upstream has completed and no longer can be pulled for new elements.
+  No more ``onPush()`` will arrive after this event. If not overridden this will default to stopping the stage.
+* ``onUpstreamFailure()`` is called if the upstream failed with an exception and no longer can be pulled for new elements.
+  No more ``onPush()`` will arrive after this event. If not overridden this will default to failing the stage.
+
+Also, there are three query methods available for input ports:
+
+* ``isAvailable(in)`` returns true if a data element can be grabbed from the port
+* ``hasBeenPulled(in)`` returns true if the port has been already pulled. Calling ``pull(in)`` in this state is illegal.
+* ``isClosed(in)`` returns true if the port is closed. At this point the port can not be pulled and will not be pushed anymore.
+
+The relationship of the above operations, events and queries are summarized in the state machine below. Green shows
+the initial state while orange indicates the end state. If an operation is not listed for a state, then it is invalid
+to call it while the port is in that state. If an event is not listed for a state, then that event cannot happen
+in that state.
+
+|
+
+.. image:: ../images/inport_transitions.png
+:align: center
+
+|
+
+Finally, there are two methods available for convenience to complete the stage and all of its ports:
+
+* ``completeStage()`` is equivalent to closing all output ports and cancelling all input ports.
+* ``failStage(exception)`` is equivalent to failing all output ports and cancelling all input ports.
+
+
+Completion
+----------
+
+**This section is a stub and will be extended in the next release**
+
+Stages by default automatically stop once all of their ports (input and output) have been closed externally or internally.
+It is possible to opt out from this behavior by overriding ``keepGoingAfterAllPortsClosed`` and returning true in
+the :class:`GraphStageLogic` implementation. In this case the stage **must** be explicitly closed by calling ``completeStage()``
+or ``failStage(exception)``. This feature carries the risk of leaking streams and actors, therefore it should be used
+with care.
+
+Using timers
+------------
+
+**This section is a stub and will be extended in the next release**
+
+It is possible to use timers in :class:`GraphStages` by using :class:`TimerGraphStageLogic` as the base class for
+the returned logic. Timers can be scheduled by calling one of ``scheduleOnce(key,delay)``, ``schedulePeriodically(key,period)`` or
+``schedulePeriodicallyWithInitialDelay(key,delay,period)`` and passing an object as a key for that timer (can be any object, for example
+a :class:`String`). The ``onTimer(key)`` method needs to be overridden and it will be called once the timer of ``key``
+fires. It is possible to cancel a timer using ``cancelTimer(key)`` and check the status of a timer with
+``isTimerActive(key)``. Timers will be automatically cleaned up when the stage completes.
+
+Timers can not be scheduled from the constructor of the logic, but it is possible to schedule them from the
+``preStart()`` lifecycle hook.
+
+Using asynchronous side-channels
+--------------------------------
+
+**This section is a stub and will be extended in the next release**
+
+In order to receive asynchronous events that are not arriving as stream elements (for example a completion of a future
+or a callback from a 3rd party API) one must acquire a :class:`AsyncCallback` by calling ``getAsyncCallback()`` from the
+stage logic. The method ``getAsyncCallback`` takes as a parameter a callback that will be called once the asynchronous
+event fires. It is important to **not call the callback directly**, instead, the external API must call the
+``invoke(event)`` method on the returned :class:`AsyncCallback`. The execution engine will take care of calling the
+provided callback in a thread-safe way. The callback can safely access the state of the :class:`GraphStageLogic`
+implementation.
+
+Sharing the AsyncCallback from the constructor risks race conditions, therefore it is recommended to use the
+``preStart()`` lifecycle hook instead.
+
+Integration with actors
+-----------------------
+
+**This section is a stub and will be extended in the next release**
+**This is an experimental feature***
+
+It is possible to acquire an ActorRef that can be addressed from the outside of the stage, similarly how
+:class:`AsyncCallback` allows injecting asynchronous events into a stage logic. This reference can be obtained
+by calling ``getStageActorRef(receive)`` passing in a function that takes a :class:`Pair` of the sender
+:class:`ActorRef` and the received message. This reference can be used to watch other actors by calling its ``watch(ref)``
+or ``unwatch(ref)`` methods. The reference can be also watched by external actors. The current limitations of this
+:class:`ActorRef` are:
+
+ - they are not location transparent, they cannot be accessed via remoting.
+ - they cannot be returned as materialized values.
+ - they cannot be accessed from the constructor of the :class:`GraphStageLogic`, but they can be accessed from the
+   ``preStart()`` method.
+
+Custom materialized values
+--------------------------
+
+**This section is a stub and will be extended in the next release**
+
+Custom stages can return materialized values instead of ``Unit`` by inheriting from :class:`GraphStageWithMaterializedValue`
+instead of the simpler :class:`GraphStage`. The difference is that in this case the method
+``createLogicAndMaterializedValue(inheritedAttributes)`` needs to be overridden, overridden, and in addition to the
+stage logic the materialized value must be provided
+
+.. warning::
+   There is no built-in synchronization of accessing this value from both of the thread where the logic runs and
+   the thread that got hold of the materialized value. It is the responsibility of the programmer to add the
+   necessary (non-blocking) synchronization and visibility guarantees to this shared object.
+
+Using attributes to affect the behavior of a stage
+--------------------------------------------------
+
+**This section is a stub and will be extended in the next release**
+
+Stages can access the :class:`Attributes` object created by the materializer. This contains all the applied (inherited)
+attributes applying to the stage, ordered from least specific (outermost) towards the most specific (innermost)
+attribute. It is the responsibility of the stage to decide how to reconcile this inheritance chain to a final effective
+decision.
+
+See :ref:`composition-java` for an explanation on how attributes work.
+
+
 Custom linear processing stages
 ===============================
 
@@ -169,6 +373,10 @@ In the second scenario the "event token" is somewhere upstream when the terminat
 Observe, that in both scenarios ``onPull()`` kicks off the continuation of the processing logic, the only difference is
 whether it is the downstream or the ``absorbTermination()`` call that calls the event handler.
 
+.. warning::
+  It is not allowed to call ``absorbTermination()`` from ``onDownstreamFinish()``. If the method is called anyway,
+  it will be logged at ``ERROR`` level, but no further action will be taken as at that point there is no active
+  downstream to propagate the error to. Cancellation in the upstream direction will continue undisturbed.
 
 Using PushStage
 ---------------
@@ -183,19 +391,6 @@ The reason to use ``PushStage`` is not just cosmetic: internal optimizations rel
 only calls ``ctx.pull()`` and allow the environment do process elements faster than without this knowledge. By
 extending ``PushStage`` the environment can be sure that ``onPull()`` was not overridden since it is ``final`` on
 ``PushStage``.
-
-
-Using StatefulStage
--------------------
-
-On top of ``PushPullStage`` which is the most elementary and low-level abstraction and ``PushStage`` that is a
-convenience class that also informs the environment about possible optimizations ``StatefulStage`` is a new tool that
-builds on ``PushPullStage`` directly, adding various convenience methods on top of it. It is possible to explicitly
-maintain state-machine like states using its ``become()`` method to encapsulates states explicitly. There is also
-a handy ``emit()`` method that simplifies emitting multiple values given as an iterator. To demonstrate this feature
-we reimplemented ``Duplicator`` in terms of a ``StatefulStage``:
-
-.. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/FlowStagesDocTest.java#doubler-stateful
 
 Using DetachedStage
 -------------------
@@ -243,179 +438,12 @@ The following code example demonstrates the buffer class corresponding to the me
 
 .. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/FlowStagesDocTest.java#detached
 
-Custom graph processing junctions
-=================================
-
-To extend available fan-in and fan-out structures (graph stages) Akka Streams include :class:`FlexiMerge` and
-:class:`FlexiRoute` which provide an intuitive DSL which allows to describe which upstream or downstream stream
-elements should be pulled from or emitted to.
-
-Using FlexiMerge
-----------------
-:class:`FlexiMerge` can be used to describe a fan-in element which contains some logic about which upstream stage the
-merge should consume elements. It is recommended to create your custom fan-in stage as a separate class, name it
-appropriately to the behavior it is exposing and reuse it this way – similarly as you would use built-in fan-in stages.
-
-The first flexi merge example we are going to implement is a so-called "preferring merge", in which one
-of the input ports is *preferred*, e.g. if the merge could pull from the preferred or another secondary input port,
-it will pull from the preferred port, only pulling from the secondary ports once the preferred one does not have elements
-available.
-
-Implementing a custom merge stage is done by extending the :class:`FlexiMerge` trait, exposing its input ports and finally
-defining the logic which will decide how this merge should behave. First we need to create the ports which are used
-to wire up the fan-in element in a :class:`FlowGraph`. These input ports *must* be properly typed and their names should
-indicate what kind of port it is.
-
-.. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/FlexiMergeDocTest.java#flexi-preferring-merge
-
-Next we implement the ``createMergeLogic`` method, which will be used as factory of merges :class:`MergeLogic`.
-A new :class:`MergeLogic` object will be created for each materialized stream, so it is allowed to be stateful.
-
-The :class:`MergeLogic` defines the behaviour of our merge stage, and may be *stateful* (for example to buffer some elements
-internally).
-
 .. warning::
-  While a :class:`MergeLogic` instance *may* be stateful, the :class:`FlexiMerge` instance
-  *must not* hold any mutable state, since it may be shared across several materialized ``FlowGraph`` instances.
-
-Next we implement the ``initialState`` method, which returns the behaviour of the merge stage. A ``MergeLogic#State``
-defines the behaviour of the merge by signaling which input ports it is interested in consuming, and how to handle
-the element once it has been pulled from its upstream. Signalling which input port we are interested in pulling data
-from is done by using an appropriate *read condition*. Available *read conditions* include:
-
-- ``Read(input)`` - reads from only the given input,
-- ``ReadAny(inputs)`` – reads from any of the given inputs,
-- ``ReadPreferred(preferred)(secondaries)`` – reads from the preferred input if elements available, otherwise from one of the secondaries,
-- ``ReadAll(inputs)`` – reads from *all* given inputs (like ``Zip``), and offers an :class:`ReadAllInputs` as the ``element`` passed into the state function, which allows to obtain the pulled element values in a type-safe way.
-
-In our case we use the :class:`ReadPreferred` read condition which has the exact semantics which we need to implement
-our preferring merge – it pulls elements from the preferred input port if there are any available, otherwise reverting
-to pulling from the secondary inputs. The context object passed into the state function allows us to interact with the
-connected streams, for example by emitting an ``element``, which was just pulled from the given ``input``, or signalling
-completion or failure to the merges downstream stage.
-
-The state function must always return the next behaviour to be used when an element should be pulled from its upstreams,
-we use the special :class:`SameState` object which signals :class:`FlexiMerge` that no state transition is needed.
-
-.. note::
-  As response to an input element it is allowed to emit at most one output element.
-
-Implementing Zip-like merges
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-More complex fan-in junctions may require not only multiple States but also sharing state between those states.
-As :class:`MergeLogic` is allowed to be stateful, it can be easily used to hold the state of the merge junction.
-
-We now implement the equivalent of the built-in ``Zip`` junction by using the property that a the MergeLogic can be stateful
-and that each read is followed by a state transition (much like in Akka FSM or ``Actor#become``).
-
-.. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/FlexiMergeDocTest.java#fleximerge-zip-states
-
-The above style of implementing complex flexi merges is useful when we need fine grained control over consuming from certain
-input ports. Sometimes however it is simpler to strictly consume all of a given set of inputs. In the ``Zip`` rewrite below
-we use the :class:`ReadAll` read condition, which behaves slightly differently than the other read conditions, as the element
-it is emitting is of the type :class:`ReadAllInputs` instead of directly handing over the pulled elements:
-
-.. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/FlexiMergeDocTest.java#fleximerge-zip-readall
-
-Thanks to being handed a :class:`ReadAllInputs` instance instead of the elements directly it is possible to pick elements
-in a type-safe way based on their input port.
-
-Connecting your custom junction is as simple as creating an instance and connecting Sources and Sinks to its ports
-(notice that the merged output port is named ``out``):
-
-.. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/FlexiMergeDocTest.java#fleximerge-zip-connecting
-
-.. _flexi-merge-completion-handling-java:
-
-Completion handling
-^^^^^^^^^^^^^^^^^^^
-Completion handling in :class:`FlexiMerge` is defined by an :class:`CompletionHandling` object which can react on
-completion and failure signals from its upstream input ports. The default strategy is to remain running while at-least-one
-upstream input port which are declared to be consumed in the current state is still running (i.e. has not signalled
-completion or failure).
-
-Customising completion can be done via overriding the ``MergeLogic#initialCompletionHandling`` method, or from within
-a :class:`State` by calling ``ctx.changeCompletionHandling(handling)``. Other than the default completion handling (as
-late as possible) :class:`FlexiMerge` also provides an ``eagerClose`` completion handling which completes (or fails) its
-downstream as soon as at least one of its upstream inputs completes (or fails).
-
-In the example below the we implement an ``ImportantWithBackups`` fan-in stage which can only keep operating while
-the ``important`` and at-least-one of the ``replica`` inputs are active. Therefore in our custom completion strategy we
-have to investigate which input has completed or failed and act accordingly. If the important input completed or failed
-we propagate this downstream completing the stream, on the other hand if the first replicated input fails, we log the
-exception and instead of failing the downstream swallow this exception (as one failed replica is still acceptable).
-Then we change the completion strategy to ``eagerClose`` which will propagate any future completion or failure event right
-to this stages downstream effectively shutting down the stream.
-
-.. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/FlexiMergeDocTest.java#fleximerge-completion
-
-In case you want to change back to the default completion handling, it is available as ``MergeLogic#defaultCompletionHandling``.
-
-It is not possible to emit elements from the completion handling, since completion
-handlers may be invoked at any time (without regard to downstream demand being available).
-
-Using FlexiRoute
-----------------
-Similarily to using :class:`FlexiMerge`, implementing custom fan-out stages requires extending the :class:`FlexiRoute` class
-and with a :class:`RouteLogic` object which determines how the route should behave.
-
-The first flexi route stage that we are going to implement is ``Unzip``, which consumes a stream of pairs and splits
-it into two streams of the first and second elements of each pair.
-
-A :class:`FlexiRoute` has exactly-one input port (in our example, type parameterized as ``Pair<A,B>``), and may have multiple
-output ports, all of which must be created beforehand (they can not be added dynamically). First we need to create the
-ports which are used to wire up the fan-in element in a :class:`FlowGraph`.
-
-.. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/FlexiRouteDocTest.java#flexiroute-unzip
-
-Next we implement ``RouteLogic#initialState`` by providing a State that uses the :class:`DemandFromAll` *demand condition*
-to signal to flexi route that elements can only be emitted from this stage when demand is available from all given downstream
-output ports. Other available demand conditions are:
-
-- ``DemandFrom(output)`` - triggers when the given output port has pending demand,
-- ``DemandFromAny(outputs)`` - triggers when any of the given output ports has pending demand,
-- ``DemandFromAll(outputs)`` - triggers when *all* of the given output ports has pending demand.
-
-Since the ``Unzip`` junction we're implementing signals both downstreams stages at the same time, we use ``DemandFromAll``,
-unpack the incoming pair in the state function and signal its first element to the ``left`` stream, and the second element
-of the pair to the ``right`` stream. Notice that since we are emitting values of different types (``A`` and ``B``),
-the output type parameter of this ``State`` must be set to ``Any``. This type can be utilised more efficiently when a junction
-is emitting the same type of element to its downstreams e.g. in all *strictly routing* stages.
-
-The state function must always return the next behaviour to be used when an element should be emitted,
-we use the special :class:`SameState` object which signals :class:`FlexiRoute` that no state transition is needed.
-
-.. warning::
-  While a :class:`RouteLogic` instance *may* be stateful, the :class:`FlexiRoute` instance
-  *must not* hold any mutable state, since it may be shared across several materialized ``FlowGraph`` instances.
-
-.. note::
-  It is only allowed to `emit` at most one element to each output in response to `onInput`, `IllegalStateException` is thrown.
-
-Completion handling
-^^^^^^^^^^^^^^^^^^^
-Completion handling in :class:`FlexiRoute` is handled similarily to :class:`FlexiMerge` (which is explained in depth in
-:ref:`flexi-merge-completion-handling-java`), however in addition to reacting to its upstreams *completion* or *failure*
-it can also react to its downstream stages *cancelling* their subscriptions. The default completion handling for
-:class:`FlexiRoute` (defined in ``RouteLogic#defaultCompletionHandling``) is to continue running until all of its
-downstreams have cancelled their subscriptions, or the upstream has completed / failed.
-
-In order to customise completion handling we can override overriding the ``RouteLogic#initialCompletionHandling`` method,
-or call ``ctx.changeCompletionHandling(handling)`` from within a :class:`State`. Other than the default completion handling
-(as late as possible) :class:`FlexiRoute` also provides an ``eagerClose`` completion handling which completes all its
-downstream streams as well as cancels its upstream as soon as *any* of its downstream stages cancels its subscription.
-
-In the example below we implement a custom completion handler which completes the entire stream eagerly if the ``important``
-downstream cancels, otherwise (if any other downstream cancels their subscription) the :class:`ImportantRoute` keeps running.
-
-.. includecode:: ../../../akka-samples/akka-docs-java-lambda/src/test/java/docs/stream/FlexiRouteDocTest.java#flexiroute-completion
-
-Notice that State changes are only allowed in reaction to downstream cancellations, and not in the upstream completion/failure
-cases. This is because since there is only one upstream, there is nothing else to do than possibly flush buffered elements
-and continue with shutting down the entire stream.
-
-It is not possible to emit elements from the completion handling, since completion
-handlers may be invoked at any time (without regard to downstream demand being available).
+  If ``absorbTermination()`` is called on a :class:`DetachedStage` while it holds downstream (``isHoldingDownstream``
+  returns true) then ``onPull()`` will be called on the stage. This ensures that the stage does not end up in a
+  deadlocked case. Since at the point when the termination is absorbed there will be no way to get any callbacks because
+  the downstream is held, so the framework invokes onPull() to avoid this situation. This is similar to the termination
+  logic already shown for :class:`PushPullStage`.
 
 Thread safety of custom processing stages
 =========================================

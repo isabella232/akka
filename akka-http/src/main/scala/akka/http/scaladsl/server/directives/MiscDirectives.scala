@@ -16,7 +16,7 @@ trait MiscDirectives {
    * If the condition fails the route is rejected with a [[ValidationRejection]].
    */
   def validate(check: ⇒ Boolean, errorMsg: String): Directive0 =
-    Directive { inner ⇒ if (check) inner() else reject(ValidationRejection(errorMsg)) }
+    Directive { inner ⇒ if (check) inner(()) else reject(ValidationRejection(errorMsg)) }
 
   /**
    * Extracts the client's IP from either the X-Forwarded-For, Remote-Address or X-Real-IP header
@@ -41,6 +41,20 @@ trait MiscDirectives {
    * be treated as if the request could not be matched.
    */
   def rejectEmptyResponse: Directive0 = MiscDirectives._rejectEmptyResponse
+
+  /**
+   * Inspects the request's `Accept-Language` header and determines,
+   * which of the given language alternatives is preferred by the client.
+   * (See http://tools.ietf.org/html/rfc7231#section-5.3.5 for more details on the
+   * negotiation logic.)
+   * If there are several best language alternatives that the client
+   * has equal preference for (even if this preference is zero!)
+   * the order of the arguments is used as a tie breaker (First one wins).
+   */
+  def selectPreferredLanguage(first: Language, more: Language*): Directive1[Language] =
+    BasicDirectives.extractRequest.map { request ⇒
+      LanguageNegotiator(request.headers).pickLanguage(first :: List(more: _*)) getOrElse first
+    }
 }
 
 object MiscDirectives extends MiscDirectives {
