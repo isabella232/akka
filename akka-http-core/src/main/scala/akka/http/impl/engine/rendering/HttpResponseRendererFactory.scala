@@ -54,7 +54,7 @@ private[http] class HttpResponseRendererFactory(serverHeader: Option[headers.Ser
 
   def newRenderer: HttpResponseRenderer = new HttpResponseRenderer
 
-  final class HttpResponseRenderer extends PushStage[ResponseRenderingContext, Source[ResponseRenderingOutput, Any]] {
+  final class HttpResponseRenderer extends PushStage[ResponseRenderingContext, /*Source[*/ ResponseRenderingOutput /*, Any]*/ ] {
 
     private[this] var closeMode: CloseMode = DontClose // signals what to do after the current response
     private[this] def close: Boolean = closeMode != DontClose
@@ -64,7 +64,9 @@ private[http] class HttpResponseRendererFactory(serverHeader: Option[headers.Ser
     // need this for testing
     private[http] def isComplete = close
 
-    override def onPush(ctx: ResponseRenderingContext, opCtx: Context[Source[ResponseRenderingOutput, Any]]): SyncDirective = {
+    type Ctx = Context[ResponseRenderingOutput]
+
+    override def onPush(ctx: ResponseRenderingContext, opCtx: Ctx): SyncDirective = {
       val r = new ByteStringRendering(responseHeaderSizeHint)
 
       import ctx.response._
@@ -172,7 +174,7 @@ private[http] class HttpResponseRendererFactory(serverHeader: Option[headers.Ser
       def byteStrings(entityBytes: ⇒ Source[ByteString, Any]): Source[ResponseRenderingOutput, Any] =
         renderByteStrings(r, entityBytes, skipEntity = noEntity).map(ResponseRenderingOutput.HttpData(_))
 
-      def completeResponseRendering(entity: ResponseEntity): Source[ResponseRenderingOutput, Any] =
+      def completeResponseRendering(entity: ResponseEntity): ResponseRenderingOutput =
         entity match {
           case HttpEntity.Strict(_, data) ⇒
             renderHeaders(headers.toList)
@@ -181,14 +183,14 @@ private[http] class HttpResponseRendererFactory(serverHeader: Option[headers.Ser
 
             if (!noEntity) r ~~ data
 
-            Source.single {
-              closeMode match {
-                case SwitchToWebsocket(handler) ⇒ ResponseRenderingOutput.SwitchToWebsocket(r.get, handler)
-                case _                          ⇒ ResponseRenderingOutput.HttpData(r.get)
-              }
+            //Source.single {
+            closeMode match {
+              case SwitchToWebsocket(handler) ⇒ ResponseRenderingOutput.SwitchToWebsocket(r.get, handler)
+              case _                          ⇒ ResponseRenderingOutput.HttpData(r.get)
             }
+          //}
 
-          case HttpEntity.Default(_, contentLength, data) ⇒
+          /*case HttpEntity.Default(_, contentLength, data) ⇒
             renderHeaders(headers.toList)
             renderEntityContentType(r, entity)
             renderContentLengthHeader(contentLength) ~~ CrLf
@@ -206,7 +208,7 @@ private[http] class HttpResponseRendererFactory(serverHeader: Option[headers.Ser
               renderHeaders(headers.toList)
               renderEntityContentType(r, entity) ~~ CrLf
               byteStrings(chunks.via(ChunkTransformer.flow))
-            }
+            }*/
         }
 
       renderStatusLine()

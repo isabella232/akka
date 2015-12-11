@@ -88,27 +88,17 @@ private[http] object HttpServerBluePrint {
 
     val prepareRequest =
       Flow[RequestOutput]
-        .splitWhen(x ⇒ x.isInstanceOf[MessageStart] || x == MessageEnd)
-        .via(headAndTailFlow)
         .map {
-          case (RequestStart(method, uri, protocol, hdrs, createEntity, _, _), entityParts) ⇒
+          case RequestStart(method, uri, protocol, hdrs, createEntity, _, _) ⇒
             val effectiveMethod = if (method == HttpMethods.HEAD && transparentHeadRequests) HttpMethods.GET else method
             val effectiveHeaders =
               if (settings.remoteAddressHeader && remoteAddress.isDefined)
                 headers.`Remote-Address`(RemoteAddress(remoteAddress.get)) +: hdrs
               else hdrs
 
-            val entity = createEntity(entityParts) withSizeLimit parserSettings.maxContentLength
+            val entity = createEntity(null) withSizeLimit parserSettings.maxContentLength
             HttpRequest(effectiveMethod, uri, effectiveHeaders, entity, protocol)
-          case (_, src) ⇒ src.runWith(Sink.ignore)
-        }.collect {
-          case r: HttpRequest ⇒ r
         }
-        // FIXME #16583 / #18170
-        // `buffer` is needed because of current behavior of collect which will queue completion
-        // behind an ignored (= not collected) element if there is no demand.
-        // `buffer` will ensure demand and therefore make sure that completion is reported eagerly.
-        .buffer(1, OverflowStrategy.backpressure)
 
     BidiFlow.fromFlows(Flow[HttpResponse], prepareRequest)
   }
@@ -150,7 +140,7 @@ private[http] object HttpServerBluePrint {
 
     Flow[ResponseRenderingContext]
       .via(Flow[ResponseRenderingContext].transform(() ⇒ responseRendererFactory.newRenderer).named("renderer"))
-      .flatMapConcat(ConstantFun.scalaIdentityFunction)
+      //.flatMapConcat(ConstantFun.scalaIdentityFunction)
       .via(Flow[ResponseRenderingOutput].transform(() ⇒ errorLogger(log, "Outgoing response stream error")).named("errorLogger"))
   }
 

@@ -588,7 +588,7 @@ class ResponseRendererSpec extends FreeSpec with Matchers with BeforeAndAfterAll
           .transform(() ⇒ renderer).named("renderer")
           .runWith(Sink.head), 1.second)
         val future =
-          rendererOutputSource.grouped(1000).map(
+          Source.single(rendererOutputSource).grouped(1000).map(
             _.map {
               case ResponseRenderingOutput.HttpData(bytes)      ⇒ bytes
               case _: ResponseRenderingOutput.SwitchToWebsocket ⇒ throw new IllegalStateException("Didn't expect websocket response")
