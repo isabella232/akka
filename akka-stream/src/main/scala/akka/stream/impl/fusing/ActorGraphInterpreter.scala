@@ -317,10 +317,12 @@ private[stream] final class GraphInterpreterShell(
   import ActorGraphInterpreter._
 
   private var self: ActorRef = _
+  private var dispatch: (GraphInterpreterShell, GraphStageLogic, Any, Any ⇒ Unit) ⇒ Unit = _
   lazy val log = Logging(mat.system.eventStream, self)
 
-  lazy val interpreter = new GraphInterpreter(assembly, mat, log, inHandlers, outHandlers, logics,
-    (logic, event, handler) ⇒ self ! AsyncInput(this, logic, event, handler), settings.fuzzingMode)
+  lazy val interpreter =
+    new GraphInterpreter(assembly, mat, log, inHandlers, outHandlers, logics,
+      (logic, event, handler) ⇒ dispatch(this, logic, event, handler), settings.fuzzingMode)
 
   private val inputs = new Array[BatchingActorInputBoundary](shape.inlets.size)
   private val outputs = new Array[ActorOutputBoundary](shape.outlets.size)
@@ -345,8 +347,9 @@ private[stream] final class GraphInterpreterShell(
 
   def isInitialized: Boolean = self != null
 
-  def init(self: ActorRef, subMat: SubFusingActorMaterializerImpl): Unit = {
+  def init(self: ActorRef, dispatch: (GraphInterpreterShell, GraphStageLogic, Any, Any ⇒ Unit) ⇒ Unit, subMat: SubFusingActorMaterializerImpl): Unit = {
     this.self = self
+    this.dispatch = dispatch
     var i = 0
     while (i < inputs.length) {
       val in = new BatchingActorInputBoundary(settings.maxInputBufferSize, i)
@@ -433,7 +436,7 @@ private[stream] final class GraphInterpreterShell(
 
   private val resume = Resume(this)
 
-  private def runBatch(): Unit = {
+  def runBatch(): Unit = {
     try {
       val effectiveLimit = {
         if (!settings.fuzzingMode) eventLimit
@@ -501,7 +504,7 @@ private[stream] class ActorGraphInterpreter(_initial: GraphInterpreterShell) ext
 
   def tryInit(shell: GraphInterpreterShell): Boolean =
     try {
-      shell.init(self, subFusingMaterializerImpl)
+      shell.init(self, dispatch, subFusingMaterializerImpl)
       if (GraphInterpreter.Debug) println(s"registering new shell in ${_initial}\n  ${shell.toString.replace("\n", "\n  ")}")
       if (shell.isTerminated) false
       else {
@@ -519,6 +522,16 @@ private[stream] class ActorGraphInterpreter(_initial: GraphInterpreterShell) ext
     self ! Resume
     self
   }
+
+  val selfRunning = new ThreadLocal[Boolean]() {
+    override def initialValue(): Boolean = false
+  }
+  var tryAllShells = false
+  def dispatch(shell: GraphInterpreterShell, logic: GraphStageLogic, evt: Any, handler: Any ⇒ Unit): Unit =
+    if (selfRunning.get) {
+      shell.interpreter.runAsyncInput(logic, evt, handler)
+      tryAllShells = true
+    } else self ! AsyncInput(shell, logic, evt, handler)
 
   /*
    * Avoid performing the initialization (which start the first runBatch())
@@ -542,15 +555,27 @@ private[stream] class ActorGraphInterpreter(_initial: GraphInterpreterShell) ext
     if (activeInterpreters.isEmpty) context.stop(self)
   }
 
+  @tailrec private def runRest(): Unit =
+    if (tryAllShells) {
+      tryAllShells = false
+      activeInterpreters.foreach { i ⇒
+        if (i.interpreter.isSuspended) i.runBatch()
+      }
+      runRest()
+    }
+
   override def receive: Receive = {
     case b: BoundaryEvent ⇒
       val shell = b.shell
       if (!shell.isTerminated && (shell.isInitialized || tryInit(shell))) {
-        shell.receive(b)
+        selfRunning.set(true)
+        try shell.receive(b)
+        finally selfRunning.set(false)
         if (shell.isTerminated) {
           activeInterpreters -= shell
           if (activeInterpreters.isEmpty && newShells.isEmpty) context.stop(self)
         }
+        if (tryAllShells) runRest()
       }
     case Resume ⇒ finishShellRegistration()
     case StreamSupervisor.PrintDebugDump ⇒

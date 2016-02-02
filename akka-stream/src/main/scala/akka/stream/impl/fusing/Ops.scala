@@ -684,7 +684,7 @@ private[akka] final case class MapAsync[In, Out](parallelism: Int, f: In ⇒ Fut
           case NonFatal(ex) ⇒
             if (decider(ex) == Supervision.Stop) failStage(ex)
         }
-        if (todo < parallelism) tryPull(in)
+        if (todo < parallelism && !hasBeenPulled(in)) tryPull(in)
       }
       override def onUpstreamFinish(): Unit = {
         if (todo == 0) completeStage()
