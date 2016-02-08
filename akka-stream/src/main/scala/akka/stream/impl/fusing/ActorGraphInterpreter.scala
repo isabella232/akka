@@ -523,12 +523,10 @@ private[stream] class ActorGraphInterpreter(_initial: GraphInterpreterShell) ext
     self
   }
 
-  val selfRunning = new ThreadLocal[Boolean]() {
-    override def initialValue(): Boolean = false
-  }
+  @volatile var selfRunning = false
   var tryAllShells = false
   def dispatch(shell: GraphInterpreterShell, logic: GraphStageLogic, evt: Any, handler: Any ⇒ Unit): Unit =
-    if (selfRunning.get) {
+    if (selfRunning) {
       shell.interpreter.runAsyncInput(logic, evt, handler)
       tryAllShells = true
     } else self ! AsyncInput(shell, logic, evt, handler)
@@ -566,17 +564,19 @@ private[stream] class ActorGraphInterpreter(_initial: GraphInterpreterShell) ext
 
   override def receive: Receive = {
     case b: BoundaryEvent ⇒
-      val shell = b.shell
-      if (!shell.isTerminated && (shell.isInitialized || tryInit(shell))) {
-        selfRunning.set(true)
-        try shell.receive(b)
-        finally selfRunning.set(false)
-        if (shell.isTerminated) {
-          activeInterpreters -= shell
-          if (activeInterpreters.isEmpty && newShells.isEmpty) context.stop(self)
+      selfRunning = true
+      try {
+        val shell = b.shell
+        if (!shell.isTerminated && (shell.isInitialized || tryInit(shell))) {
+          shell.receive(b)
+
+          if (shell.isTerminated) {
+            activeInterpreters -= shell
+            if (activeInterpreters.isEmpty && newShells.isEmpty) context.stop(self)
+          }
+          if (tryAllShells) runRest()
         }
-        if (tryAllShells) runRest()
-      }
+      } finally { selfRunning = false }
     case Resume ⇒ finishShellRegistration()
     case StreamSupervisor.PrintDebugDump ⇒
       println(s"activeShells:")
